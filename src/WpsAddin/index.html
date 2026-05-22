@@ -20,6 +20,7 @@
     <button class="tab active" data-tab="panel">控制面板</button>
     <button class="tab" data-tab="batch">批量生成</button>
     <button class="tab" data-tab="templates">模板管理</button>
+    <button class="tab" data-tab="knowledge">知识库管理</button>
     <button class="tab" data-tab="license">软件激活</button>
     <button class="tab" data-tab="logs">查看日志</button>
   </nav>
@@ -92,6 +93,48 @@
       </div>
       <div class="templateList" id="templateList"></div>
       <pre id="templateResult" class="resultBox"></pre>
+    </section>
+
+    <section id="knowledge" class="tabPanel">
+      <div class="sectionHeader">
+        <div>
+          <h2>知识库管理</h2>
+          <p id="knowledgeSummary">正在读取规范知识库...</p>
+        </div>
+        <button id="refreshKnowledge" class="primary">查询知识库</button>
+      </div>
+      <form id="knowledgeForm" class="formGrid">
+        <label>分部工程<input name="division" value="主体结构"></label>
+        <label>分项名称<input name="subItem" value="钢筋安装"></label>
+        <label>项目类型
+          <select name="itemType">
+            <option value="">全部</option>
+            <option value="主控项目">主控项目</option>
+            <option value="一般项目">一般项目</option>
+            <option value="允许偏差">允许偏差</option>
+          </select>
+        </label>
+      </form>
+      <div class="tableScroller">
+        <table class="knowledgeTable">
+          <thead>
+            <tr>
+              <th>专业</th>
+              <th>分部</th>
+              <th>分项</th>
+              <th>项目类型</th>
+              <th>项目名称</th>
+              <th>合格标准</th>
+              <th>允许偏差</th>
+              <th>检查方法</th>
+              <th>引用标准</th>
+              <th>版本</th>
+            </tr>
+          </thead>
+          <tbody id="knowledgeRows"></tbody>
+        </table>
+      </div>
+      <pre id="knowledgeResult" class="resultBox"></pre>
     </section>
 
     <section id="license" class="tabPanel">

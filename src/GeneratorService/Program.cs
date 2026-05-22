@@ -84,6 +84,21 @@ app.MapGet("/api/templates", (TemplateCatalog catalog) =>
     });
 });
 
+app.MapGet("/api/knowledge/items", (
+    string? division,
+    string? subItem,
+    string? itemType,
+    KnowledgeRepository repository) =>
+{
+    var items = repository.ListItems(division, subItem, itemType);
+    return Results.Ok(new
+    {
+        success = true,
+        total = items.Count,
+        items
+    });
+});
+
 app.MapPost("/api/generate/current", async (
     GenerateRequest request,
     ExcelGenerationService generationService) =>

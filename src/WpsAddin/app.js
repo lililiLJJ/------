@@ -79,6 +79,9 @@ function setServiceOffline() {
   $("#serviceStartCommand").textContent = serviceStartCommand;
   setGenerateDisabled(true);
   renderTemplateList();
+  $("#knowledgeSummary").textContent = "本地服务未启动，暂时无法读取知识库。";
+  renderKnowledgeItems([]);
+  showResult("#knowledgeResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“查询知识库”。");
 }
 
 async function retryServiceStatus() {
@@ -88,6 +91,7 @@ async function retryServiceStatus() {
   }
 
   await loadTemplates().catch((error) => showResult("#generateResult", error));
+  await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
   await refreshLicense();
 }
 
@@ -96,6 +100,7 @@ function setGenerateDisabled(disabled) {
   $("#generateBatch").disabled = disabled;
   $("#reloadTemplates").disabled = disabled;
   $("#refreshTemplateList").disabled = disabled;
+  $("#refreshKnowledge").disabled = disabled;
 }
 
 async function copyStartCommand() {
@@ -170,6 +175,71 @@ async function refreshTemplateManagement() {
   } catch (error) {
     $("#templateSummary").textContent = "模板读取失败。";
     showResult("#templateResult", error);
+  }
+}
+
+function getKnowledgeFilters() {
+  const data = Object.fromEntries(new FormData($("#knowledgeForm")).entries());
+  return {
+    division: data.division || "",
+    subItem: data.subItem || "",
+    itemType: data.itemType || ""
+  };
+}
+
+function buildQueryString(params) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) {
+      query.set(key, value);
+    }
+  }
+
+  const text = query.toString();
+  return text ? `?${text}` : "";
+}
+
+function renderKnowledgeItems(items) {
+  const rows = $("#knowledgeRows");
+  rows.innerHTML = "";
+
+  for (const item of items) {
+    const tr = document.createElement("tr");
+    const values = [
+      item.profession,
+      item.division,
+      item.subItem,
+      item.itemType,
+      item.itemName,
+      item.qualifiedStandard,
+      item.allowableDeviation || "",
+      item.checkMethod,
+      item.standardCode,
+      item.standardVersion
+    ];
+
+    for (const value of values) {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    }
+
+    rows.appendChild(tr);
+  }
+}
+
+async function loadKnowledgeItems() {
+  showResult("#knowledgeResult", "正在查询知识库...");
+  try {
+    const result = await api(`/api/knowledge/items${buildQueryString(getKnowledgeFilters())}`);
+    const items = result.items || [];
+    $("#knowledgeSummary").textContent = `当前查询到 ${items.length} 条规范数据。`;
+    renderKnowledgeItems(items);
+    showResult("#knowledgeResult", result);
+  } catch (error) {
+    $("#knowledgeSummary").textContent = "知识库读取失败。";
+    renderKnowledgeItems([]);
+    showResult("#knowledgeResult", error);
   }
 }
 
@@ -308,6 +378,7 @@ async function boot() {
   $("#copyStartCommand").addEventListener("click", copyStartCommand);
   $("#reloadTemplates").addEventListener("click", loadTemplates);
   $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);
+  $("#refreshKnowledge").addEventListener("click", loadKnowledgeItems);
   $("#generateCurrent").addEventListener("click", generateCurrent);
   $("#addBatchRow").addEventListener("click", () => createBatchRow());
   $("#generateBatch").addEventListener("click", generateBatch);
@@ -320,6 +391,7 @@ async function boot() {
   const online = await refreshStatus();
   if (online || serviceAvailable) {
     await loadTemplates().catch((error) => showResult("#generateResult", error));
+    await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
     await refreshLicense();
   }
   activateTabFromHash();

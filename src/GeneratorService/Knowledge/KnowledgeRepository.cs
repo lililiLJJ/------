@@ -87,6 +87,45 @@ public sealed class KnowledgeRepository
         return items;
     }
 
+    public IReadOnlyList<KnowledgeItem> ListItems(string? division, string? subItem, string? itemType)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT profession, division, sub_item, item_type, item_name,
+                   qualified_standard, allowable_deviation, check_method,
+                   standard_code, standard_version, source_note
+            FROM quality_items
+            WHERE ($division IS NULL OR division = $division)
+              AND ($subItem IS NULL OR sub_item = $subItem)
+              AND ($itemType IS NULL OR item_type = $itemType)
+            ORDER BY division, sub_item, item_type, id;
+            """;
+        command.Parameters.AddWithValue("$division", string.IsNullOrWhiteSpace(division) ? DBNull.Value : division);
+        command.Parameters.AddWithValue("$subItem", string.IsNullOrWhiteSpace(subItem) ? DBNull.Value : subItem);
+        command.Parameters.AddWithValue("$itemType", string.IsNullOrWhiteSpace(itemType) ? DBNull.Value : itemType);
+
+        using var reader = command.ExecuteReader();
+        var items = new List<KnowledgeItem>();
+        while (reader.Read())
+        {
+            items.Add(new KnowledgeItem(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.GetString(7),
+                reader.GetString(8),
+                reader.GetString(9),
+                reader.GetString(10)));
+        }
+
+        return items;
+    }
+
     private SqliteConnection OpenConnection()
     {
         var dbPath = _config.GetKnowledgeBasePath(_rootPath);

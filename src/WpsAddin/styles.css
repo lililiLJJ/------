@@ -335,6 +335,30 @@ textarea {
   background: #fff;
 }
 
+.licenseCard {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.licenseRow {
+  display: grid;
+  gap: 4px;
+}
+
+.licenseRow span {
+  color: var(--muted);
+}
+
+.licenseRow strong {
+  color: var(--text);
+  word-break: break-all;
+}
+
 .noticeBox {
   margin: 14px 0;
   padding: 10px 12px;

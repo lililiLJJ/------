@@ -165,6 +165,27 @@
 
     <section id="license" class="tabPanel">
       <div class="licenseStatus" id="licenseStatus">正在读取授权状态...</div>
+      <div class="licenseCard">
+        <div class="licenseRow">
+          <span>机器码 Hash</span>
+          <strong id="licenseMachineCode">读取中...</strong>
+        </div>
+        <div class="licenseRow">
+          <span>授权类型</span>
+          <strong id="licenseTypeText">读取中...</strong>
+        </div>
+        <div class="licenseRow">
+          <span>授权模块</span>
+          <strong id="licenseModules">读取中...</strong>
+        </div>
+        <div class="licenseRow">
+          <span>到期时间</span>
+          <strong id="licenseExpireDate">读取中...</strong>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="copyMachineCode">复制机器码</button>
+      </div>
       <label class="wideLabel">激活码<textarea id="activationCode" rows="5" placeholder="输入 Base64(JSON) 激活码。正式版可替换为 RSA 签名激活码。"></textarea></label>
       <div class="actions">
         <button id="activateLicense" class="primary">激活</button>

@@ -393,9 +393,32 @@ async function refreshLicense() {
   try {
     const status = await api("/api/license/status");
     $("#licenseStatus").textContent = `${status.message}｜机器码Hash：${status.machineCodeHash}｜试用：${status.trialUsed}/${status.trialLimit}`;
+    $("#licenseMachineCode").textContent = status.machineCodeHash;
+    $("#licenseTypeText").textContent = status.licenseType;
+    $("#licenseModules").textContent = (status.modules || []).join("、") || "无";
+    $("#licenseExpireDate").textContent = status.expireDate || "无期限 / 试用版";
   } catch (error) {
     $("#licenseStatus").textContent = "授权状态读取失败";
+    $("#licenseMachineCode").textContent = "读取失败";
+    $("#licenseTypeText").textContent = "读取失败";
+    $("#licenseModules").textContent = "读取失败";
+    $("#licenseExpireDate").textContent = "读取失败";
     showResult("#licenseResult", error);
+  }
+}
+
+async function copyMachineCode() {
+  const machineCode = $("#licenseMachineCode").textContent.trim();
+  if (!machineCode || machineCode === "读取中..." || machineCode === "读取失败") {
+    showResult("#licenseResult", "当前没有可复制的机器码，请先刷新授权状态。");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(machineCode);
+    showResult("#licenseResult", "机器码已复制，可发送给授权方生成离线激活码。");
+  } catch {
+    showResult("#licenseResult", `无法自动复制，请手动复制：\n${machineCode}`);
   }
 }
 
@@ -464,6 +487,7 @@ async function boot() {
   $("#addBatchRow").addEventListener("click", () => createBatchRow());
   $("#generateBatch").addEventListener("click", generateBatch);
   $("#refreshLicense").addEventListener("click", refreshLicense);
+  $("#copyMachineCode").addEventListener("click", copyMachineCode);
   $("#activateLicense").addEventListener("click", activateLicense);
   $("#loadLogs").addEventListener("click", loadLogs);
 

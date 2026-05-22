@@ -1,5 +1,7 @@
 const serviceBaseUrl = "http://127.0.0.1:5188";
+const serviceStartCommand = 'cd "D:\\YY\\编程\\工程资料制作"; dotnet run --project "src/GeneratorService"';
 let templates = [];
+let serviceAvailable = false;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -42,12 +44,65 @@ async function api(path, options = {}) {
 }
 
 async function refreshStatus() {
+  setServiceChecking();
   try {
     const data = await api("/api/health");
-    $("#serviceStatus").textContent = `服务正常｜版本 ${data.version}｜AI ${data.aiEnabled ? "已启用" : "未启用"}`;
+    setServiceOnline(data);
+    return true;
   } catch {
-    $("#serviceStatus").textContent = "本地服务未启动，请先运行 GeneratorService";
-    $("#serviceStatus").classList.add("error");
+    setServiceOffline();
+    return false;
+  }
+}
+
+function setServiceChecking() {
+  const status = $("#serviceStatus");
+  status.textContent = "正在检查本地服务...";
+  status.className = "statusText checking";
+}
+
+function setServiceOnline(data) {
+  serviceAvailable = true;
+  const status = $("#serviceStatus");
+  status.textContent = `服务正常｜版本 ${data.version}｜AI ${data.aiEnabled ? "已启用" : "未启用"}`;
+  status.className = "statusText online";
+  $("#serviceGuide").classList.add("hidden");
+  setGenerateDisabled(false);
+}
+
+function setServiceOffline() {
+  serviceAvailable = false;
+  const status = $("#serviceStatus");
+  status.textContent = "本地生成服务未启动";
+  status.className = "statusText offline";
+  $("#serviceGuide").classList.remove("hidden");
+  $("#serviceStartCommand").textContent = serviceStartCommand;
+  setGenerateDisabled(true);
+}
+
+async function retryServiceStatus() {
+  const online = await refreshStatus();
+  if (!online) {
+    return;
+  }
+
+  await loadTemplates().catch((error) => showResult("#generateResult", error));
+  await refreshLicense();
+}
+
+function setGenerateDisabled(disabled) {
+  $("#generateCurrent").disabled = disabled;
+  $("#generateBatch").disabled = disabled;
+  $("#reloadTemplates").disabled = disabled;
+}
+
+async function copyStartCommand() {
+  const command = $("#serviceStartCommand").textContent;
+  try {
+    await navigator.clipboard.writeText(command);
+    showResult("#generateResult", "启动命令已复制。请打开 PowerShell，粘贴并执行，然后点击“重新检测服务”。");
+  } catch {
+    showResult("#generateResult", `无法自动复制，请手动复制：\n${command}`);
   }
 }
 
@@ -196,6 +251,8 @@ function activateTabFromHash() {
 async function boot() {
   bindTabs();
   $("#refreshStatus").addEventListener("click", refreshStatus);
+  $("#retryServiceStatus").addEventListener("click", retryServiceStatus);
+  $("#copyStartCommand").addEventListener("click", copyStartCommand);
   $("#reloadTemplates").addEventListener("click", loadTemplates);
   $("#generateCurrent").addEventListener("click", generateCurrent);
   $("#addBatchRow").addEventListener("click", () => createBatchRow());
@@ -206,9 +263,11 @@ async function boot() {
 
   createBatchRow();
   createBatchRow({ location: "4层梁板", date: "2026-05-23" });
-  await refreshStatus();
-  await loadTemplates().catch((error) => showResult("#generateResult", error));
-  await refreshLicense();
+  const online = await refreshStatus();
+  if (online || serviceAvailable) {
+    await loadTemplates().catch((error) => showResult("#generateResult", error));
+    await refreshLicense();
+  }
   activateTabFromHash();
 }
 

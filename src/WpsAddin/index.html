@@ -11,7 +11,7 @@
   <header class="topbar">
     <div>
       <h1>工程资料</h1>
-      <p id="serviceStatus">正在检查本地服务...</p>
+      <p id="serviceStatus" class="statusText checking">正在检查本地服务...</p>
     </div>
     <button id="refreshStatus" class="iconButton" title="刷新服务状态">↻</button>
   </header>
@@ -24,6 +24,20 @@
   </nav>
 
   <main>
+    <section id="serviceGuide" class="serviceGuide hidden" aria-live="polite">
+      <div>
+        <h2>本地生成服务未启动</h2>
+        <p>请先启动 GeneratorService，插件才能读取模板、查询知识库并生成资料。</p>
+      </div>
+      <div class="commandBox">
+        <code id="serviceStartCommand">cd "D:\YY\编程\工程资料制作"; dotnet run --project "src/GeneratorService"</code>
+      </div>
+      <div class="actions compactActions">
+        <button id="copyStartCommand">复制启动命令</button>
+        <button id="retryServiceStatus" class="primary">重新检测服务</button>
+      </div>
+    </section>
+
     <section id="panel" class="tabPanel active">
       <form id="generateForm" class="formGrid">
         <label>工程名称<input name="projectName" value="XX项目" required></label>

@@ -7,6 +7,9 @@
   --primary: #176b5d;
   --primary-hover: #105348;
   --danger: #b42318;
+  --danger-bg: #fff1f0;
+  --ok: #13795b;
+  --warn: #8a5a00;
 }
 
 * {
@@ -42,6 +45,22 @@ p {
   color: var(--muted);
 }
 
+.statusText {
+  font-weight: 700;
+}
+
+.statusText.online {
+  color: var(--ok);
+}
+
+.statusText.offline {
+  color: var(--danger);
+}
+
+.statusText.checking {
+  color: var(--warn);
+}
+
 .tabs {
   display: flex;
   gap: 6px;
@@ -64,6 +83,11 @@ button {
 
 button:hover {
   border-color: var(--primary);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .primary {
@@ -92,6 +116,43 @@ button:hover {
 
 main {
   padding: 14px;
+}
+
+.serviceGuide {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #f1aaa5;
+  border-radius: 6px;
+  background: var(--danger-bg);
+}
+
+.serviceGuide h2 {
+  margin: 0;
+  color: var(--danger);
+  font-size: 16px;
+}
+
+.commandBox {
+  overflow-x: auto;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.commandBox code {
+  white-space: nowrap;
+  color: #1f2937;
+}
+
+.compactActions {
+  margin: 0;
+}
+
+.hidden {
+  display: none;
 }
 
 .tabPanel {

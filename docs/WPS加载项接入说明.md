@@ -113,3 +113,21 @@ WPS 表格顶部出现“工程资料”
 点击生成当前资料后 Export 目录出现 xlsx
 查看日志和授权状态正常
 ```
+
+## 服务未启动提示
+
+如果没有启动 `GeneratorService`，任务窗格会显示：
+
+```text
+本地生成服务未启动
+复制启动命令
+重新检测服务
+```
+
+其中“复制启动命令”会复制：
+
+```powershell
+cd "D:\YY\编程\工程资料制作"; dotnet run --project "src/GeneratorService"
+```
+
+复制后打开 PowerShell 粘贴执行。看到服务监听 `http://127.0.0.1:5188` 后，再回到 WPS 任务窗格点击“重新检测服务”。

@@ -38,6 +38,9 @@ function OnAction(control) {
     case "btnSettings":
       openEngineeringDocsPane("settings");
       break;
+    case "btnEnvironmentCheck":
+      openEngineeringDocsPane("environment");
+      break;
     case "btnViewLogs":
       openEngineeringDocsPane("logs");
       break;

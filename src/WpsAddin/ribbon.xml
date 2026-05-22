@@ -14,6 +14,7 @@
           <button id="btnAiText" label="AI文本" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnActivation" label="软件激活" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnSettings" label="设置" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+          <button id="btnEnvironmentCheck" label="环境自检" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnViewLogs" label="查看日志" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
         </group>
       </tab>

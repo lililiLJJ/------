@@ -119,6 +119,67 @@ app.MapGet("/api/settings", (AppConfig currentConfig, DirectoryInfo workspaceRoo
     });
 });
 
+app.MapGet("/api/environment/check", (
+    AppConfig currentConfig,
+    DirectoryInfo workspaceRoot,
+    TemplateCatalog catalog,
+    LicenseService licenseService) =>
+{
+    var templatePath = currentConfig.GetTemplatePath(workspaceRoot);
+    var exportPath = currentConfig.GetExportPath(workspaceRoot);
+    var knowledgeBasePath = currentConfig.GetKnowledgeBasePath(workspaceRoot);
+    var logPath = currentConfig.GetLogPath(workspaceRoot);
+    var license = licenseService.GetStatus();
+    var templateCount = catalog.ListTemplates().Count;
+
+    var items = new List<EnvironmentCheckItem>
+    {
+        new("service", "本地服务", "ok", $"服务已启动，监听端口 {currentConfig.Service.Port}"),
+        new("templates", "模板目录", Directory.Exists(templatePath) ? "ok" : "error",
+            Directory.Exists(templatePath)
+                ? $"目录存在，当前识别到 {templateCount} 个模板"
+                : $"目录不存在：{templatePath}"),
+        new("knowledge", "知识库文件", File.Exists(knowledgeBasePath) ? "ok" : "error",
+            File.Exists(knowledgeBasePath)
+                ? $"知识库已就绪：{knowledgeBasePath}"
+                : $"知识库文件不存在：{knowledgeBasePath}"),
+        new("logs", "日志目录", Directory.Exists(logPath) ? "ok" : "warning",
+            Directory.Exists(logPath)
+                ? $"日志目录可用：{logPath}"
+                : $"日志目录不存在：{logPath}"),
+        new("export", "输出目录", Directory.Exists(exportPath) ? "ok" : "warning",
+            Directory.Exists(exportPath)
+                ? $"输出目录可用：{exportPath}"
+                : $"输出目录尚未创建：{exportPath}"),
+        new("ai", "AI 配置",
+            currentConfig.EnableAI
+                ? (!string.IsNullOrWhiteSpace(currentConfig.DeepSeek.ApiKey) ? "ok" : "warning")
+                : "warning",
+            currentConfig.EnableAI
+                ? (!string.IsNullOrWhiteSpace(currentConfig.DeepSeek.ApiKey)
+                    ? $"AI 已启用，模型：{currentConfig.DeepSeek.Model}"
+                    : $"AI 已启用，但未配置 API Key，当前将使用兜底文本。模型：{currentConfig.DeepSeek.Model}")
+                : "AI 未启用，当前将使用兜底文本。"),
+        new("license", "授权状态",
+            license.Activated ? "ok" : (license.CanGenerate ? "warning" : "error"),
+            license.Activated
+                ? $"授权有效，类型：{license.LicenseType}"
+                : $"{license.Message}，试用次数：{license.TrialUsed}/{license.TrialLimit}")
+    };
+
+    var okCount = items.Count(item => item.Status == "ok");
+    var warningCount = items.Count(item => item.Status == "warning");
+    var errorCount = items.Count(item => item.Status == "error");
+    var overallStatus = errorCount > 0 ? "error" : (warningCount > 0 ? "warning" : "ok");
+
+    return Results.Ok(new EnvironmentCheckResult(
+        overallStatus,
+        okCount,
+        warningCount,
+        errorCount,
+        items));
+});
+
 app.MapPost("/api/generate/current", async (
     GenerateRequest request,
     ExcelGenerationService generationService) =>

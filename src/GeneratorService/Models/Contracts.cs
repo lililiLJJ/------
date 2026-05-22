@@ -42,6 +42,19 @@ public sealed record SettingsInfo(
     string DeepSeekModel,
     bool HasDeepSeekApiKey);
 
+public sealed record EnvironmentCheckItem(
+    string Key,
+    string Label,
+    string Status,
+    string Detail);
+
+public sealed record EnvironmentCheckResult(
+    string OverallStatus,
+    int OkCount,
+    int WarningCount,
+    int ErrorCount,
+    IReadOnlyList<EnvironmentCheckItem> Items);
+
 public sealed record GenerationResult(
     bool Success,
     IReadOnlyList<string> Files,

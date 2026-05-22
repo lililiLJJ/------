@@ -24,6 +24,7 @@
     <button class="tab" data-tab="ai">AI文本</button>
     <button class="tab" data-tab="license">软件激活</button>
     <button class="tab" data-tab="settings">设置</button>
+    <button class="tab" data-tab="environment">环境自检</button>
     <button class="tab" data-tab="logs">查看日志</button>
   </nav>
 
@@ -204,6 +205,18 @@
       </div>
       <div class="settingsGrid" id="settingsGrid"></div>
       <pre id="settingsResult" class="resultBox"></pre>
+    </section>
+
+    <section id="environment" class="tabPanel">
+      <div class="sectionHeader">
+        <div>
+          <h2>环境自检</h2>
+          <p id="environmentSummary">正在等待自检...</p>
+        </div>
+        <button id="runEnvironmentCheck" class="primary">开始自检</button>
+      </div>
+      <div class="diagnosticGrid" id="environmentGrid"></div>
+      <pre id="environmentResult" class="resultBox"></pre>
     </section>
 
     <section id="logs" class="tabPanel">

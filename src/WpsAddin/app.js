@@ -87,6 +87,9 @@ function setServiceOffline() {
   $("#settingsSummary").textContent = "本地服务未启动，暂时无法读取设置。";
   $("#settingsGrid").innerHTML = "";
   showResult("#settingsResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“刷新设置”。");
+  $("#environmentSummary").textContent = "本地服务未启动，暂时无法执行环境自检。";
+  $("#environmentGrid").innerHTML = "";
+  showResult("#environmentResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“开始自检”。");
 }
 
 async function retryServiceStatus() {
@@ -98,6 +101,7 @@ async function retryServiceStatus() {
   await loadTemplates().catch((error) => showResult("#generateResult", error));
   await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
   await loadSettings().catch((error) => showResult("#settingsResult", error));
+  await runEnvironmentCheck().catch((error) => showResult("#environmentResult", error));
   await refreshLicense();
 }
 
@@ -109,6 +113,7 @@ function setGenerateDisabled(disabled) {
   $("#refreshKnowledge").disabled = disabled;
   $("#previewAiText").disabled = disabled;
   $("#loadSettings").disabled = disabled;
+  $("#runEnvironmentCheck").disabled = disabled;
 }
 
 async function copyStartCommand() {
@@ -322,6 +327,48 @@ async function loadSettings() {
   }
 }
 
+function renderEnvironmentCheck(result) {
+  const grid = $("#environmentGrid");
+  grid.innerHTML = "";
+
+  for (const item of result.items || []) {
+    const card = document.createElement("article");
+    card.className = `diagnosticCard ${item.status}`;
+
+    const header = document.createElement("div");
+    header.className = "diagnosticHeader";
+
+    const label = document.createElement("h3");
+    label.textContent = item.label;
+
+    const badge = document.createElement("span");
+    badge.className = `diagnosticBadge ${item.status}`;
+    badge.textContent = item.status === "ok" ? "正常" : item.status === "warning" ? "警告" : "错误";
+
+    header.append(label, badge);
+
+    const detail = document.createElement("p");
+    detail.textContent = item.detail;
+
+    card.append(header, detail);
+    grid.appendChild(card);
+  }
+}
+
+async function runEnvironmentCheck() {
+  showResult("#environmentResult", "正在执行环境自检...");
+  try {
+    const result = await api("/api/environment/check");
+    $("#environmentSummary").textContent = `正常 ${result.okCount} 项｜警告 ${result.warningCount} 项｜错误 ${result.errorCount} 项`;
+    renderEnvironmentCheck(result);
+    showResult("#environmentResult", result);
+  } catch (error) {
+    $("#environmentSummary").textContent = "环境自检失败。";
+    $("#environmentGrid").innerHTML = "";
+    showResult("#environmentResult", error);
+  }
+}
+
 async function generateCurrent() {
   showResult("#generateResult", "正在生成...");
   try {
@@ -483,6 +530,7 @@ async function boot() {
   $("#refreshKnowledge").addEventListener("click", loadKnowledgeItems);
   $("#previewAiText").addEventListener("click", previewAiText);
   $("#loadSettings").addEventListener("click", loadSettings);
+  $("#runEnvironmentCheck").addEventListener("click", runEnvironmentCheck);
   $("#generateCurrent").addEventListener("click", generateCurrent);
   $("#addBatchRow").addEventListener("click", () => createBatchRow());
   $("#generateBatch").addEventListener("click", generateBatch);
@@ -498,6 +546,7 @@ async function boot() {
     await loadTemplates().catch((error) => showResult("#generateResult", error));
     await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
     await loadSettings().catch((error) => showResult("#settingsResult", error));
+    await runEnvironmentCheck().catch((error) => showResult("#environmentResult", error));
     await refreshLicense();
   }
   activateTabFromHash();

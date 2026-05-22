@@ -394,6 +394,76 @@ textarea {
   word-break: break-all;
 }
 
+.diagnosticGrid {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.diagnosticCard {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.diagnosticCard.ok {
+  border-color: #b8d8cf;
+  background: #f3fbf8;
+}
+
+.diagnosticCard.warning {
+  border-color: #f0d28a;
+  background: #fff8e5;
+}
+
+.diagnosticCard.error {
+  border-color: #f1aaa5;
+  background: #fff1f0;
+}
+
+.diagnosticHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.diagnosticHeader h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.diagnosticCard p {
+  margin: 0;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.diagnosticBadge {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.diagnosticBadge.ok {
+  color: #176b5d;
+  background: #dff4ec;
+}
+
+.diagnosticBadge.warning {
+  color: #8a5a00;
+  background: #fdecc1;
+}
+
+.diagnosticBadge.error {
+  color: #b42318;
+  background: #fde2df;
+}
+
 .error {
   color: var(--danger);
 }

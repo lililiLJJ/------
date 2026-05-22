@@ -84,6 +84,9 @@ function setServiceOffline() {
   showResult("#knowledgeResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“查询知识库”。");
   $("#aiSummary").textContent = "本地服务未启动，暂时无法生成 AI 文本预览。";
   showResult("#aiResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“生成预览”。");
+  $("#settingsSummary").textContent = "本地服务未启动，暂时无法读取设置。";
+  $("#settingsGrid").innerHTML = "";
+  showResult("#settingsResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“刷新设置”。");
 }
 
 async function retryServiceStatus() {
@@ -94,6 +97,7 @@ async function retryServiceStatus() {
 
   await loadTemplates().catch((error) => showResult("#generateResult", error));
   await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
+  await loadSettings().catch((error) => showResult("#settingsResult", error));
   await refreshLicense();
 }
 
@@ -104,6 +108,7 @@ function setGenerateDisabled(disabled) {
   $("#refreshTemplateList").disabled = disabled;
   $("#refreshKnowledge").disabled = disabled;
   $("#previewAiText").disabled = disabled;
+  $("#loadSettings").disabled = disabled;
 }
 
 async function copyStartCommand() {
@@ -272,6 +277,51 @@ async function previewAiText() {
   }
 }
 
+function renderSettings(settings) {
+  const grid = $("#settingsGrid");
+  grid.innerHTML = "";
+
+  const rows = [
+    ["服务端口", settings.servicePort],
+    ["AI启用", settings.enableAI ? "已启用" : "未启用"],
+    ["模板目录", settings.templatePath],
+    ["输出目录", settings.exportPath],
+    ["知识库路径", settings.knowledgeBasePath],
+    ["日志目录", settings.logPath],
+    ["DeepSeek地址", settings.deepSeekBaseUrl],
+    ["DeepSeek模型", settings.deepSeekModel],
+    ["API Key", settings.hasDeepSeekApiKey ? "已配置" : "未配置"]
+  ];
+
+  for (const [label, value] of rows) {
+    const item = document.createElement("div");
+    item.className = "settingItem";
+
+    const labelElement = document.createElement("span");
+    labelElement.textContent = label;
+
+    const valueElement = document.createElement("strong");
+    valueElement.textContent = String(value);
+
+    item.append(labelElement, valueElement);
+    grid.appendChild(item);
+  }
+}
+
+async function loadSettings() {
+  showResult("#settingsResult", "正在读取设置...");
+  try {
+    const result = await api("/api/settings");
+    $("#settingsSummary").textContent = "当前为只读设置，修改配置请编辑 config.json 后重启服务。";
+    renderSettings(result.settings);
+    showResult("#settingsResult", result);
+  } catch (error) {
+    $("#settingsSummary").textContent = "设置读取失败。";
+    $("#settingsGrid").innerHTML = "";
+    showResult("#settingsResult", error);
+  }
+}
+
 async function generateCurrent() {
   showResult("#generateResult", "正在生成...");
   try {
@@ -409,6 +459,7 @@ async function boot() {
   $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);
   $("#refreshKnowledge").addEventListener("click", loadKnowledgeItems);
   $("#previewAiText").addEventListener("click", previewAiText);
+  $("#loadSettings").addEventListener("click", loadSettings);
   $("#generateCurrent").addEventListener("click", generateCurrent);
   $("#addBatchRow").addEventListener("click", () => createBatchRow());
   $("#generateBatch").addEventListener("click", generateBatch);
@@ -422,6 +473,7 @@ async function boot() {
   if (online || serviceAvailable) {
     await loadTemplates().catch((error) => showResult("#generateResult", error));
     await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
+    await loadSettings().catch((error) => showResult("#settingsResult", error));
     await refreshLicense();
   }
   activateTabFromHash();

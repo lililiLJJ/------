@@ -77,6 +77,7 @@ http://127.0.0.1:3889
 ├── 知识库管理
 ├── AI文本
 ├── 软件激活
+├── 设置
 └── 查看日志
 ```
 
@@ -173,6 +174,24 @@ POST /api/ai/preview
 
 如果 `config.json` 或 `config.example.json` 中 `EnableAI` 为 `false`，或者没有配置 DeepSeek `ApiKey`，服务会返回兜底文本，保证资料生成流程不被 AI 接口阻塞。
 
+## 设置
+
+“设置”页签调用接口：
+
+```text
+GET /api/settings
+```
+
+当前只做只读查看，展示：
+
+```text
+服务端口、AI启用状态、模板目录、输出目录、知识库路径、日志目录、DeepSeek地址、DeepSeek模型、API Key是否已配置
+```
+
+接口不会返回 DeepSeek `ApiKey` 原文，只返回是否已配置。
+
+如果需要修改配置，仍然编辑 `config.json`，然后重启 `GeneratorService`。
+
 ## 验收标准
 
 ```text
@@ -182,6 +201,7 @@ WPS 表格顶部出现“工程资料”
 模板管理能列出 Templates 目录下的 xlsx 模板
 知识库管理能查询到钢筋安装规范数据
 AI文本能预览申请语或验收意见
+设置能显示服务端口、模板目录、输出目录、知识库路径和AI状态
 点击生成当前资料后 Export 目录出现 xlsx
 查看日志和授权状态正常
 ```

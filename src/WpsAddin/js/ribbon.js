@@ -35,6 +35,9 @@ function OnAction(control) {
     case "btnActivation":
       openEngineeringDocsPane("license");
       break;
+    case "btnSettings":
+      openEngineeringDocsPane("settings");
+      break;
     case "btnViewLogs":
       openEngineeringDocsPane("logs");
       break;

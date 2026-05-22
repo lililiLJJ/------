@@ -99,6 +99,26 @@ app.MapGet("/api/knowledge/items", (
     });
 });
 
+app.MapGet("/api/settings", (AppConfig currentConfig, DirectoryInfo workspaceRoot) =>
+{
+    var settings = new SettingsInfo(
+        currentConfig.Service.Port,
+        currentConfig.EnableAI,
+        currentConfig.GetTemplatePath(workspaceRoot),
+        currentConfig.GetExportPath(workspaceRoot),
+        currentConfig.GetKnowledgeBasePath(workspaceRoot),
+        currentConfig.GetLogPath(workspaceRoot),
+        currentConfig.DeepSeek.BaseUrl,
+        currentConfig.DeepSeek.Model,
+        !string.IsNullOrWhiteSpace(currentConfig.DeepSeek.ApiKey));
+
+    return Results.Ok(new
+    {
+        success = true,
+        settings
+    });
+});
+
 app.MapPost("/api/generate/current", async (
     GenerateRequest request,
     ExcelGenerationService generationService) =>

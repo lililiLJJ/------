@@ -31,6 +31,17 @@ public sealed record AiPreviewRequest(string FieldName, GenerateRequest Context)
 
 public sealed record AiPreviewResult(bool Success, string FieldName, string Text, string Message);
 
+public sealed record SettingsInfo(
+    int ServicePort,
+    bool EnableAI,
+    string TemplatePath,
+    string ExportPath,
+    string KnowledgeBasePath,
+    string LogPath,
+    string DeepSeekBaseUrl,
+    string DeepSeekModel,
+    bool HasDeepSeekApiKey);
+
 public sealed record GenerationResult(
     bool Success,
     IReadOnlyList<string> Files,

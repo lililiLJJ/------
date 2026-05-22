@@ -23,6 +23,7 @@
     <button class="tab" data-tab="knowledge">知识库管理</button>
     <button class="tab" data-tab="ai">AI文本</button>
     <button class="tab" data-tab="license">软件激活</button>
+    <button class="tab" data-tab="settings">设置</button>
     <button class="tab" data-tab="logs">查看日志</button>
   </nav>
 
@@ -170,6 +171,18 @@
         <button id="refreshLicense">刷新授权状态</button>
       </div>
       <pre id="licenseResult" class="resultBox"></pre>
+    </section>
+
+    <section id="settings" class="tabPanel">
+      <div class="sectionHeader">
+        <div>
+          <h2>设置</h2>
+          <p id="settingsSummary">正在读取配置...</p>
+        </div>
+        <button id="loadSettings" class="primary">刷新设置</button>
+      </div>
+      <div class="settingsGrid" id="settingsGrid"></div>
+      <pre id="settingsResult" class="resultBox"></pre>
     </section>
 
     <section id="logs" class="tabPanel">

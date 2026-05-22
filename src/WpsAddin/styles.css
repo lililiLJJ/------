@@ -345,6 +345,31 @@ textarea {
   line-height: 1.6;
 }
 
+.settingsGrid {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.settingItem {
+  display: grid;
+  gap: 5px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.settingItem span {
+  color: var(--muted);
+}
+
+.settingItem strong {
+  color: var(--text);
+  font-weight: 700;
+  word-break: break-all;
+}
+
 .error {
   color: var(--danger);
 }

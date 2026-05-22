@@ -37,6 +37,7 @@ http://127.0.0.1:5188/api/health
 ```text
 src/WpsAddin          WPS 加载项 MVP 页面
 src/GeneratorService 本地生成服务
+src/LicenseTool      离线激活码生成工具
 Templates            Excel 模板库
 KnowledgeBase        SQLite 知识库
 Export               生成输出目录
@@ -47,6 +48,6 @@ docs                 开发与使用文档
 ## 安全约定
 
 - `config.json` 不提交 Git。
-- 私钥、激活码生成器、授权文件不提交 Git。
+- 私钥、授权文件不提交 Git。
 - `Export/` 和 `Logs/` 不提交 Git。
 - 规范数据只来自 SQLite，AI 只生成自然语言。

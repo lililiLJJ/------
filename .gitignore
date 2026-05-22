@@ -5,7 +5,6 @@ Logs/
 *.pfx
 *.license
 config.json
-src/LicenseTool/
 bin/
 obj/
 node_modules/

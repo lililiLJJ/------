@@ -81,3 +81,16 @@ $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 - `Keys/license-private.pem` 只保留在发码方电脑
 - `Keys/license-public.pem` 需要随客户端一起发布
 - 工具生成的 `激活码 Base64` 是发给客户的最终文本
+
+为了方便日常使用，仓库里还提供了两个双击脚本：
+
+```text
+tools/LicenseTool/1-生成RSA密钥对.cmd
+tools/LicenseTool/2-交互式生成激活码.cmd
+```
+
+客户沟通模板见：
+
+```text
+docs/客户机器码收集模板.md
+```

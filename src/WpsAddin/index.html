@@ -19,6 +19,7 @@
   <nav class="tabs" aria-label="功能菜单">
     <button class="tab active" data-tab="panel">控制面板</button>
     <button class="tab" data-tab="batch">批量生成</button>
+    <button class="tab" data-tab="templates">模板管理</button>
     <button class="tab" data-tab="license">软件激活</button>
     <button class="tab" data-tab="logs">查看日志</button>
   </nav>
@@ -79,6 +80,18 @@
         <tbody id="batchRows"></tbody>
       </table>
       <pre id="batchResult" class="resultBox"></pre>
+    </section>
+
+    <section id="templates" class="tabPanel">
+      <div class="sectionHeader">
+        <div>
+          <h2>模板管理</h2>
+          <p id="templateSummary">正在读取模板库...</p>
+        </div>
+        <button id="refreshTemplateList" class="primary">刷新模板</button>
+      </div>
+      <div class="templateList" id="templateList"></div>
+      <pre id="templateResult" class="resultBox"></pre>
     </section>
 
     <section id="license" class="tabPanel">

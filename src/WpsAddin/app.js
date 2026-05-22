@@ -78,6 +78,7 @@ function setServiceOffline() {
   $("#serviceGuide").classList.remove("hidden");
   $("#serviceStartCommand").textContent = serviceStartCommand;
   setGenerateDisabled(true);
+  renderTemplateList();
 }
 
 async function retryServiceStatus() {
@@ -94,6 +95,7 @@ function setGenerateDisabled(disabled) {
   $("#generateCurrent").disabled = disabled;
   $("#generateBatch").disabled = disabled;
   $("#reloadTemplates").disabled = disabled;
+  $("#refreshTemplateList").disabled = disabled;
 }
 
 async function copyStartCommand() {
@@ -118,6 +120,57 @@ async function loadTemplates() {
     select.appendChild(option);
   }
   refreshBatchTemplateOptions();
+  renderTemplateList();
+  return templates;
+}
+
+function renderTemplateList() {
+  const list = $("#templateList");
+  const summary = $("#templateSummary");
+  list.innerHTML = "";
+
+  if (!serviceAvailable) {
+    summary.textContent = "本地服务未启动，暂时无法读取模板库。";
+    showResult("#templateResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“刷新模板”。");
+    return;
+  }
+
+  if (templates.length === 0) {
+    summary.textContent = "当前模板库为空。";
+    showResult("#templateResult", "请把 .xlsx 模板文件放入 Templates 目录，然后点击“刷新模板”。");
+    return;
+  }
+
+  summary.textContent = `当前共读取到 ${templates.length} 个模板。`;
+  for (const template of templates) {
+    const item = document.createElement("article");
+    item.className = "templateItem";
+
+    const content = document.createElement("div");
+    const name = document.createElement("h3");
+    name.textContent = template.name;
+    const path = document.createElement("p");
+    path.textContent = template.fullPath;
+    content.append(name, path);
+
+    const badge = document.createElement("span");
+    badge.className = "templateBadge";
+    badge.textContent = "xlsx";
+
+    item.append(content, badge);
+    list.appendChild(item);
+  }
+  showResult("#templateResult", templates);
+}
+
+async function refreshTemplateManagement() {
+  showResult("#templateResult", "正在刷新模板列表...");
+  try {
+    await loadTemplates();
+  } catch (error) {
+    $("#templateSummary").textContent = "模板读取失败。";
+    showResult("#templateResult", error);
+  }
 }
 
 async function generateCurrent() {
@@ -254,6 +307,7 @@ async function boot() {
   $("#retryServiceStatus").addEventListener("click", retryServiceStatus);
   $("#copyStartCommand").addEventListener("click", copyStartCommand);
   $("#reloadTemplates").addEventListener("click", loadTemplates);
+  $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);
   $("#generateCurrent").addEventListener("click", generateCurrent);
   $("#addBatchRow").addEventListener("click", () => createBatchRow());
   $("#generateBatch").addEventListener("click", generateBatch);

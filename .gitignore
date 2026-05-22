@@ -5,6 +5,7 @@ Logs/
 *.pfx
 *.license
 config.json
+Keys/license-private.pem
 bin/
 obj/
 node_modules/

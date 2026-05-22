@@ -9,6 +9,7 @@ namespace GeneratorService.Licensing;
 public sealed class LicenseService
 {
     private const int TrialLimit = 20;
+    private const string PublicKeyRelativePath = "Keys/license-public.pem";
     private readonly DirectoryInfo _rootPath;
     private readonly AppConfig _config;
 
@@ -44,7 +45,14 @@ public sealed class LicenseService
     {
         try
         {
-            var payloadJson = DecodeActivationPayload(activationCode);
+            var decoded = DecodeActivationCode(activationCode);
+            if (decoded.IsSigned &&
+                !VerifySignature(decoded.PayloadJson, decoded.SignatureBase64))
+            {
+                return new ActivationResult(false, "激活码签名验证失败", GetStatus());
+            }
+
+            var payloadJson = decoded.PayloadJson;
             var payload = JsonSerializer.Deserialize<LicensePayload>(payloadJson, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
@@ -80,20 +88,48 @@ public sealed class LicenseService
         catch (Exception ex)
         {
             Log.Warning(ex, "激活失败");
-            return new ActivationResult(false, "激活码无效。MVP版本支持Base64(JSON)格式，正式版可替换为RSA签名信封。", GetStatus());
+            return new ActivationResult(false, "激活码无效。当前支持 Base64(JSON) 和 RSA 签名激活码。", GetStatus());
         }
     }
 
-    private static string DecodeActivationPayload(string activationCode)
+    private ActivationCodeContent DecodeActivationCode(string activationCode)
     {
         var json = Encoding.UTF8.GetString(Convert.FromBase64String(activationCode));
         using var document = JsonDocument.Parse(json);
-        if (document.RootElement.TryGetProperty("payload", out var payloadElement))
+
+        if (document.RootElement.TryGetProperty("payload", out var payloadElement) &&
+            document.RootElement.TryGetProperty("signature", out var signatureElement))
         {
-            return payloadElement.GetString() ?? "";
+            return new ActivationCodeContent(
+                payloadElement.GetString() ?? "",
+                signatureElement.GetString(),
+                true);
         }
 
-        return json;
+        return new ActivationCodeContent(json, null, false);
+    }
+
+    private bool VerifySignature(string payloadJson, string? signatureBase64)
+    {
+        if (string.IsNullOrWhiteSpace(signatureBase64))
+        {
+            return false;
+        }
+
+        var publicKeyPath = Path.Combine(_rootPath.FullName, PublicKeyRelativePath);
+        if (!File.Exists(publicKeyPath))
+        {
+            Log.Warning("未找到授权公钥文件：{PublicKeyPath}", publicKeyPath);
+            return false;
+        }
+
+        var publicKeyPem = File.ReadAllText(publicKeyPath);
+        using var rsa = RSA.Create();
+        rsa.ImportFromPem(publicKeyPem);
+
+        var data = Encoding.UTF8.GetBytes(payloadJson);
+        var signature = Convert.FromBase64String(signatureBase64);
+        return rsa.VerifyData(data, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
     }
 
     private string GetMachineCodeHash()
@@ -150,4 +186,9 @@ public sealed class LicenseService
         public List<string> Modules { get; set; } = ["generate"];
         public int TrialUsed { get; set; }
     }
+
+    private sealed record ActivationCodeContent(
+        string PayloadJson,
+        string? SignatureBase64,
+        bool IsSigned);
 }

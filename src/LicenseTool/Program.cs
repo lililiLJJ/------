@@ -1,10 +1,19 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 var arguments = ArgumentMap.Parse(args);
 if (arguments.ShowHelp)
 {
     PrintHelp();
+    return;
+}
+
+var paths = KeyPaths.Create(arguments.PrivateKeyPath, arguments.PublicKeyPath);
+if (arguments.GenerateKeyPair)
+{
+    GenerateKeyPair(paths, arguments.Force);
     return;
 }
 
@@ -16,14 +25,43 @@ var payload = new LicensePayload(
     request.Modules,
     request.Version);
 
-var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
+var payloadJsonCompact = JsonSerializer.Serialize(payload);
+var payloadJsonPretty = JsonSerializer.Serialize(payload, new JsonSerializerOptions
 {
     WriteIndented = true
 });
-var activationCode = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
 
-Console.WriteLine("激活码 JSON：");
-Console.WriteLine(json);
+if (!File.Exists(paths.PrivateKeyPath))
+{
+    Console.WriteLine($"未找到私钥文件：{paths.PrivateKeyPath}");
+    Console.WriteLine("请先运行：dotnet run --project \"src/LicenseTool\" -- --generate-keypair");
+    Environment.ExitCode = 2;
+    return;
+}
+
+var privateKeyPem = File.ReadAllText(paths.PrivateKeyPath);
+using var rsa = RSA.Create();
+rsa.ImportFromPem(privateKeyPem);
+
+var signatureBytes = rsa.SignData(
+    Encoding.UTF8.GetBytes(payloadJsonCompact),
+    HashAlgorithmName.SHA256,
+    RSASignaturePadding.Pkcs1);
+var signatureBase64 = Convert.ToBase64String(signatureBytes);
+
+var envelope = new LicenseEnvelope(payloadJsonCompact, signatureBase64, "RSA-SHA256");
+var envelopeJsonCompact = JsonSerializer.Serialize(envelope);
+var envelopeJsonPretty = JsonSerializer.Serialize(envelope, new JsonSerializerOptions
+{
+    WriteIndented = true
+});
+var activationCode = Convert.ToBase64String(Encoding.UTF8.GetBytes(envelopeJsonCompact));
+
+Console.WriteLine("授权载荷 JSON：");
+Console.WriteLine(payloadJsonPretty);
+Console.WriteLine();
+Console.WriteLine("签名信封 JSON：");
+Console.WriteLine(envelopeJsonPretty);
 Console.WriteLine();
 Console.WriteLine("激活码 Base64：");
 Console.WriteLine(activationCode);
@@ -37,6 +75,29 @@ static LicenseRequest BuildRequest(ArgumentMap arguments)
     var version = ReadWithDefault(arguments.Version, "请输入版本号", "3.0").Trim();
 
     return new LicenseRequest(machineCodeHash.Trim(), licenseType, expireDate, modules, version);
+}
+
+static void GenerateKeyPair(KeyPaths paths, bool force)
+{
+    Directory.CreateDirectory(Path.GetDirectoryName(paths.PrivateKeyPath)!);
+
+    if (!force && (File.Exists(paths.PrivateKeyPath) || File.Exists(paths.PublicKeyPath)))
+    {
+        Console.WriteLine("密钥文件已存在。如需覆盖，请追加 --force。");
+        Console.WriteLine($"私钥：{paths.PrivateKeyPath}");
+        Console.WriteLine($"公钥：{paths.PublicKeyPath}");
+        Environment.ExitCode = 3;
+        return;
+    }
+
+    using var rsa = RSA.Create(2048);
+    File.WriteAllText(paths.PrivateKeyPath, rsa.ExportRSAPrivateKeyPem());
+    File.WriteAllText(paths.PublicKeyPath, rsa.ExportSubjectPublicKeyInfoPem());
+
+    Console.WriteLine("RSA 密钥对已生成。");
+    Console.WriteLine($"私钥：{paths.PrivateKeyPath}");
+    Console.WriteLine($"公钥：{paths.PublicKeyPath}");
+    Console.WriteLine("注意：私钥只保留在你自己的电脑，不要发给客户。");
 }
 
 static string ReadRequired(string? currentValue, string prompt)
@@ -143,17 +204,25 @@ static void PrintHelp()
     Console.WriteLine("""
 LicenseTool 用法：
 
-  dotnet run --project "src/LicenseTool" -- --machine-code-hash "机器码Hash" --license-type year --expire-date 2027-12-31 --modules generate,batch,ai --version 3.0
+  生成 RSA 密钥对：
+    dotnet run --project "src/LicenseTool" -- --generate-keypair
+
+  生成激活码：
+    dotnet run --project "src/LicenseTool" -- --machine-code-hash "机器码Hash" --license-type year --expire-date 2027-12-31 --modules generate,batch,ai --version 3.0
 
 参数说明：
-  --machine-code-hash   必填，对方发来的机器码 Hash
+  --machine-code-hash   对方发来的机器码 Hash
   --license-type        授权类型，如 trial / month / year / permanent
   --expire-date         到期日期，格式 yyyy-MM-dd；永久版可省略
   --modules             授权模块，多个模块用逗号分隔
   --version             版本号，默认 3.0
+  --generate-keypair    生成 RSA 私钥和公钥
+  --private-key-path    私钥文件路径，默认 Keys/license-private.pem
+  --public-key-path     公钥文件路径，默认 Keys/license-public.pem
+  --force               覆盖已存在的密钥文件
   --help                显示帮助
 
-如果不传参数，程序会进入交互式输入模式。
+如果不传生成激活码参数，程序会进入交互式输入模式。
 """);
 }
 
@@ -171,6 +240,54 @@ sealed record LicensePayload(
     IReadOnlyList<string> Modules,
     string Version);
 
+sealed record LicenseEnvelope(
+    [property: JsonPropertyName("payload")] string Payload,
+    [property: JsonPropertyName("signature")] string Signature,
+    [property: JsonPropertyName("algorithm")] string Algorithm);
+
+sealed record KeyPaths(
+    string PrivateKeyPath,
+    string PublicKeyPath)
+{
+    public static KeyPaths Create(string? privateKeyPath, string? publicKeyPath)
+    {
+        var root = FindRoot(AppContext.BaseDirectory, Directory.GetCurrentDirectory());
+        var privatePath = string.IsNullOrWhiteSpace(privateKeyPath)
+            ? Path.Combine(root, "Keys", "license-private.pem")
+            : NormalizePath(root, privateKeyPath);
+        var publicPath = string.IsNullOrWhiteSpace(publicKeyPath)
+            ? Path.Combine(root, "Keys", "license-public.pem")
+            : NormalizePath(root, publicKeyPath);
+
+        return new KeyPaths(privatePath, publicPath);
+    }
+
+    private static string NormalizePath(string root, string path)
+    {
+        return Path.IsPathRooted(path) ? path : Path.GetFullPath(Path.Combine(root, path));
+    }
+
+    private static string FindRoot(params string[] startPaths)
+    {
+        foreach (var startPath in startPaths)
+        {
+            var current = new DirectoryInfo(startPath);
+            while (current is not null)
+            {
+                if (Directory.Exists(Path.Combine(current.FullName, ".git")) ||
+                    File.Exists(Path.Combine(current.FullName, "README.md")))
+                {
+                    return current.FullName;
+                }
+
+                current = current.Parent;
+            }
+        }
+
+        return Directory.GetCurrentDirectory();
+    }
+}
+
 sealed class ArgumentMap
 {
     private readonly Dictionary<string, string?> _values;
@@ -185,6 +302,10 @@ sealed class ArgumentMap
     public string? ExpireDate => Get("--expire-date");
     public string? Modules => Get("--modules");
     public string? Version => Get("--version");
+    public string? PrivateKeyPath => Get("--private-key-path");
+    public string? PublicKeyPath => Get("--public-key-path");
+    public bool GenerateKeyPair => _values.ContainsKey("--generate-keypair");
+    public bool Force => _values.ContainsKey("--force");
     public bool ShowHelp => _values.ContainsKey("--help") || _values.ContainsKey("-h");
 
     public static ArgumentMap Parse(string[] args)
@@ -198,8 +319,7 @@ sealed class ArgumentMap
                 continue;
             }
 
-            if (string.Equals(current, "--help", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(current, "-h", StringComparison.OrdinalIgnoreCase))
+            if (IsFlag(current))
             {
                 values[current] = "true";
                 continue;
@@ -217,6 +337,14 @@ sealed class ArgumentMap
         }
 
         return new ArgumentMap(values);
+    }
+
+    private static bool IsFlag(string current)
+    {
+        return string.Equals(current, "--help", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(current, "-h", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(current, "--generate-keypair", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(current, "--force", StringComparison.OrdinalIgnoreCase);
     }
 
     private string? Get(string key)

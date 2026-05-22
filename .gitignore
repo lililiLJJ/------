@@ -15,3 +15,6 @@ node_modules/
 *.suo
 dist/
 publish/
+wps-addon-build/
+wps-addon-publish/
+.debugTemp/

@@ -167,12 +167,30 @@ async function loadLogs() {
 function bindTabs() {
   for (const button of $$(".tab")) {
     button.addEventListener("click", () => {
-      for (const tab of $$(".tab")) tab.classList.remove("active");
-      for (const panel of $$(".tabPanel")) panel.classList.remove("active");
-      button.classList.add("active");
-      $(`#${button.dataset.tab}`).classList.add("active");
+      activateTab(button.dataset.tab);
     });
   }
+}
+
+function activateTab(tabId) {
+  const targetPanel = $(`#${tabId}`);
+  const targetButton = $(`.tab[data-tab="${tabId}"]`);
+  if (!targetPanel || !targetButton) {
+    return;
+  }
+
+  for (const tab of $$(".tab")) tab.classList.remove("active");
+  for (const panel of $$(".tabPanel")) panel.classList.remove("active");
+  targetButton.classList.add("active");
+  targetPanel.classList.add("active");
+  if (window.location.hash !== `#${tabId}`) {
+    window.history.replaceState(null, "", `#${tabId}`);
+  }
+}
+
+function activateTabFromHash() {
+  const tabId = window.location.hash.replace("#", "") || "panel";
+  activateTab(tabId);
 }
 
 async function boot() {
@@ -191,6 +209,8 @@ async function boot() {
   await refreshStatus();
   await loadTemplates().catch((error) => showResult("#generateResult", error));
   await refreshLicense();
+  activateTabFromHash();
 }
 
+window.addEventListener("hashchange", activateTabFromHash);
 boot();

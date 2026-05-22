@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<JsPlugin>
+  <ApiVersion>1.0.0</ApiVersion>
+  <Name>工程资料</Name>
+  <Description>工程资料智能生成系统 WPS 表格加载项</Description>
+</JsPlugin>

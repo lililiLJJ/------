@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
+  <ribbon startFromScratch="false">
+    <tabs>
+      <tab id="engineeringDocsTab" label="工程资料">
+        <group id="engineeringDocsGenerateGroup" label="资料生成">
+          <button id="btnOpenPanel" label="控制面板" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+          <button id="btnGenerateCurrent" label="生成当前资料" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+          <button id="btnBatchGenerate" label="批量生成" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+        </group>
+        <group id="engineeringDocsManageGroup" label="系统">
+          <button id="btnActivation" label="软件激活" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+          <button id="btnViewLogs" label="查看日志" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>

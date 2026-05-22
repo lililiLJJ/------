@@ -1,0 +1,7 @@
+{
+  "name": "engineering-docs-wps-addin",
+  "addonType": "et",
+  "version": "0.1.0",
+  "description": "工程资料智能生成系统 WPS 表格加载项 MVP",
+  "customDomain": ""
+}

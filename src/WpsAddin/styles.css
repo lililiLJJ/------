@@ -1,0 +1,205 @@
+:root {
+  --bg: #f6f8fb;
+  --panel: #ffffff;
+  --line: #d7dee8;
+  --text: #172033;
+  --muted: #61708a;
+  --primary: #176b5d;
+  --primary-hover: #105348;
+  --danger: #b42318;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+  font-size: 14px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+h1 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  overflow-x: auto;
+}
+
+button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  padding: 7px 12px;
+  white-space: nowrap;
+}
+
+button:hover {
+  border-color: var(--primary);
+}
+
+.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.primary:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.iconButton {
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+  font-size: 18px;
+}
+
+.tab.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 700;
+}
+
+main {
+  padding: 14px;
+}
+
+.tabPanel {
+  display: none;
+}
+
+.tabPanel.active {
+  display: block;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+label,
+.wideLabel {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: var(--text);
+  background: #fff;
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.actions,
+.batchToolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 14px 0;
+}
+
+.resultBox {
+  min-height: 80px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: #1f2937;
+  white-space: pre-wrap;
+}
+
+.batchTable {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.batchTable th,
+.batchTable td {
+  border: 1px solid var(--line);
+  padding: 7px;
+  text-align: left;
+}
+
+.batchTable th {
+  color: var(--muted);
+  font-weight: 700;
+  background: #eef3f8;
+}
+
+.batchTable input,
+.batchTable select {
+  min-width: 120px;
+}
+
+.batchTable input[type="checkbox"] {
+  min-width: 20px;
+  width: 20px;
+}
+
+.licenseStatus {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.error {
+  color: var(--danger);
+}
+
+@media (max-width: 720px) {
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .actions,
+  .batchToolbar {
+    flex-wrap: wrap;
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "Service": {
+    "Port": 5188
+  },
+  "EnableAI": false,
+  "TemplatePath": "Templates",
+  "ExportPath": "Export",
+  "KnowledgeBasePath": "KnowledgeBase/quality.db",
+  "LogPath": "Logs",
+  "DeepSeek": {
+    "BaseUrl": "https://api.deepseek.com",
+    "Model": "deepseek-v4-flash",
+    "ApiKey": ""
+  }
+}

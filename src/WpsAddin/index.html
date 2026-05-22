@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>工程资料</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>工程资料</h1>
+      <p id="serviceStatus">正在检查本地服务...</p>
+    </div>
+    <button id="refreshStatus" class="iconButton" title="刷新服务状态">↻</button>
+  </header>
+
+  <nav class="tabs" aria-label="功能菜单">
+    <button class="tab active" data-tab="panel">控制面板</button>
+    <button class="tab" data-tab="batch">批量生成</button>
+    <button class="tab" data-tab="license">软件激活</button>
+    <button class="tab" data-tab="logs">查看日志</button>
+  </nav>
+
+  <main>
+    <section id="panel" class="tabPanel active">
+      <form id="generateForm" class="formGrid">
+        <label>工程名称<input name="projectName" value="XX项目" required></label>
+        <label>施工单位<input name="constructor" value="XX建设" required></label>
+        <label>监理单位<input name="supervisor" value="XX监理" required></label>
+        <label>分部工程<input name="division" value="主体结构" required></label>
+        <label>分项名称<input name="subItem" value="钢筋安装" required></label>
+        <label>施工部位<input name="location" value="3层梁板" required></label>
+        <label>检验批容量<input name="capacity" value="1批" required></label>
+        <label>施工日期<input name="constructionDate" type="date" value="2026-05-22" required></label>
+        <label>验收日期<input name="acceptanceDate" type="date" value="2026-05-23" required></label>
+        <label>模板类型<input name="templateType" value="检验批" required></label>
+        <label>模板文件<select name="templateName" id="templateSelect"></select></label>
+        <label>输出目录<input name="exportPath" placeholder="留空使用 Export 目录"></label>
+      </form>
+      <div class="actions">
+        <button id="generateCurrent" class="primary">生成当前资料</button>
+        <button id="reloadTemplates">刷新模板</button>
+      </div>
+      <pre id="generateResult" class="resultBox"></pre>
+    </section>
+
+    <section id="batch" class="tabPanel">
+      <div class="batchToolbar">
+        <button id="addBatchRow">新增一行</button>
+        <button id="generateBatch" class="primary">批量生成</button>
+      </div>
+      <table class="batchTable">
+        <thead>
+          <tr>
+            <th>生成</th>
+            <th>资料类型</th>
+            <th>分项名称</th>
+            <th>部位</th>
+            <th>日期</th>
+            <th>模板</th>
+          </tr>
+        </thead>
+        <tbody id="batchRows"></tbody>
+      </table>
+      <pre id="batchResult" class="resultBox"></pre>
+    </section>
+
+    <section id="license" class="tabPanel">
+      <div class="licenseStatus" id="licenseStatus">正在读取授权状态...</div>
+      <label class="wideLabel">激活码<textarea id="activationCode" rows="5" placeholder="输入 Base64(JSON) 激活码。正式版可替换为 RSA 签名激活码。"></textarea></label>
+      <div class="actions">
+        <button id="activateLicense" class="primary">激活</button>
+        <button id="refreshLicense">刷新授权状态</button>
+      </div>
+      <pre id="licenseResult" class="resultBox"></pre>
+    </section>
+
+    <section id="logs" class="tabPanel">
+      <div class="actions">
+        <button id="loadLogs" class="primary">加载最近日志</button>
+      </div>
+      <pre id="logsResult" class="resultBox"></pre>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

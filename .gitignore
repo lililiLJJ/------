@@ -1,0 +1,17 @@
+Export/
+Logs/
+*.log
+*.key
+*.pfx
+*.license
+config.json
+src/LicenseTool/
+bin/
+obj/
+node_modules/
+.vs/
+.vscode/.ropeproject/
+*.user
+*.suo
+dist/
+publish/

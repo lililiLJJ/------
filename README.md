@@ -51,3 +51,33 @@ docs                 开发与使用文档
 - 私钥、授权文件不提交 Git。
 - `Export/` 和 `Logs/` 不提交 Git。
 - 规范数据只来自 SQLite，AI 只生成自然语言。
+
+## LicenseTool 发布
+
+离线发码工具现在支持直接发布为 Windows 单文件程序。
+
+发布命令：
+
+```powershell
+$OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+dotnet publish "src/LicenseTool/LicenseTool.csproj" -c Release -o "publish/LicenseTool"
+```
+
+发布完成后，主要文件在：
+
+```text
+publish/LicenseTool/LicenseTool.exe
+```
+
+首次使用先生成密钥对：
+
+```powershell
+$OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+.\publish\LicenseTool\LicenseTool.exe --generate-keypair
+```
+
+说明：
+
+- `Keys/license-private.pem` 只保留在发码方电脑
+- `Keys/license-public.pem` 需要随客户端一起发布
+- 工具生成的 `激活码 Base64` 是发给客户的最终文本

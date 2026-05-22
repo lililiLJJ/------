@@ -21,6 +21,7 @@
     <button class="tab" data-tab="batch">批量生成</button>
     <button class="tab" data-tab="templates">模板管理</button>
     <button class="tab" data-tab="knowledge">知识库管理</button>
+    <button class="tab" data-tab="ai">AI文本</button>
     <button class="tab" data-tab="license">软件激活</button>
     <button class="tab" data-tab="logs">查看日志</button>
   </nav>
@@ -135,6 +136,30 @@
         </table>
       </div>
       <pre id="knowledgeResult" class="resultBox"></pre>
+    </section>
+
+    <section id="ai" class="tabPanel">
+      <div class="sectionHeader">
+        <div>
+          <h2>AI文本</h2>
+          <p id="aiSummary">AI只用于生成申请语、验收意见等自然语言。</p>
+        </div>
+        <button id="previewAiText" class="primary">生成预览</button>
+      </div>
+      <form id="aiForm" class="formGrid">
+        <label>文本类型
+          <select name="fieldName">
+            <option value="申请语">申请语</option>
+            <option value="验收意见">验收意见</option>
+            <option value="备注说明">备注说明</option>
+            <option value="试验过程">试验过程</option>
+          </select>
+        </label>
+      </form>
+      <div class="noticeBox">
+        AI文本不会用于主控项目、一般项目、允许偏差、检查方法、规范条文和实测值。
+      </div>
+      <pre id="aiResult" class="resultBox"></pre>
     </section>
 
     <section id="license" class="tabPanel">

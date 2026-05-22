@@ -335,6 +335,16 @@ textarea {
   background: #fff;
 }
 
+.noticeBox {
+  margin: 14px 0;
+  padding: 10px 12px;
+  border: 1px solid #f0d28a;
+  border-radius: 6px;
+  color: #6d4b00;
+  background: #fff8e5;
+  line-height: 1.6;
+}
+
 .error {
   color: var(--danger);
 }

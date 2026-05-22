@@ -23,6 +23,15 @@ function OnAction(control) {
     case "btnBatchGenerate":
       openEngineeringDocsPane("batch");
       break;
+    case "btnTemplates":
+      openEngineeringDocsPane("templates");
+      break;
+    case "btnKnowledge":
+      openEngineeringDocsPane("knowledge");
+      break;
+    case "btnAiText":
+      openEngineeringDocsPane("ai");
+      break;
     case "btnActivation":
       openEngineeringDocsPane("license");
       break;

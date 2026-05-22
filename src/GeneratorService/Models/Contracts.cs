@@ -27,6 +27,10 @@ public sealed record BatchGenerateItem(
 
 public sealed record ActivateLicenseRequest(string ActivationCode);
 
+public sealed record AiPreviewRequest(string FieldName, GenerateRequest Context);
+
+public sealed record AiPreviewResult(bool Success, string FieldName, string Text, string Message);
+
 public sealed record GenerationResult(
     bool Success,
     IReadOnlyList<string> Files,

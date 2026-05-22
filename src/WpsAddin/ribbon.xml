@@ -9,6 +9,9 @@
           <button id="btnBatchGenerate" label="批量生成" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
         </group>
         <group id="engineeringDocsManageGroup" label="系统">
+          <button id="btnTemplates" label="模板管理" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+          <button id="btnKnowledge" label="知识库管理" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+          <button id="btnAiText" label="AI文本" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnActivation" label="软件激活" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnViewLogs" label="查看日志" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
         </group>

@@ -115,6 +115,24 @@ app.MapPost("/api/generate/batch", async (
     return Results.Ok(result);
 });
 
+app.MapPost("/api/ai/preview", async (
+    AiPreviewRequest request,
+    AiTextService aiTextService) =>
+{
+    var allowedFields = new[] { "申请语", "验收意见", "备注说明", "试验过程" };
+    if (!allowedFields.Contains(request.FieldName))
+    {
+        return Results.BadRequest(new AiPreviewResult(
+            false,
+            request.FieldName,
+            "",
+            "AI只能生成申请语、验收意见、备注说明、试验过程等自由文本。"));
+    }
+
+    var text = await aiTextService.GenerateTextAsync(request.FieldName, request.Context);
+    return Results.Ok(new AiPreviewResult(true, request.FieldName, text, "AI文本生成成功"));
+});
+
 app.MapPost("/api/license/activate", (
     ActivateLicenseRequest request,
     LicenseService licenseService) =>

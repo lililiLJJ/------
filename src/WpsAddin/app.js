@@ -82,6 +82,8 @@ function setServiceOffline() {
   $("#knowledgeSummary").textContent = "本地服务未启动，暂时无法读取知识库。";
   renderKnowledgeItems([]);
   showResult("#knowledgeResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“查询知识库”。");
+  $("#aiSummary").textContent = "本地服务未启动，暂时无法生成 AI 文本预览。";
+  showResult("#aiResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“生成预览”。");
 }
 
 async function retryServiceStatus() {
@@ -101,6 +103,7 @@ function setGenerateDisabled(disabled) {
   $("#reloadTemplates").disabled = disabled;
   $("#refreshTemplateList").disabled = disabled;
   $("#refreshKnowledge").disabled = disabled;
+  $("#previewAiText").disabled = disabled;
 }
 
 async function copyStartCommand() {
@@ -243,6 +246,32 @@ async function loadKnowledgeItems() {
   }
 }
 
+function getAiFormData() {
+  const data = Object.fromEntries(new FormData($("#aiForm")).entries());
+  return {
+    fieldName: data.fieldName || "申请语"
+  };
+}
+
+async function previewAiText() {
+  const aiForm = getAiFormData();
+  showResult("#aiResult", "正在生成 AI 文本预览...");
+  try {
+    const result = await api("/api/ai/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        fieldName: aiForm.fieldName,
+        context: getFormData()
+      })
+    });
+    $("#aiSummary").textContent = `${result.fieldName}预览已生成。`;
+    showResult("#aiResult", result);
+  } catch (error) {
+    $("#aiSummary").textContent = "AI文本预览生成失败。";
+    showResult("#aiResult", error);
+  }
+}
+
 async function generateCurrent() {
   showResult("#generateResult", "正在生成...");
   try {
@@ -379,6 +408,7 @@ async function boot() {
   $("#reloadTemplates").addEventListener("click", loadTemplates);
   $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);
   $("#refreshKnowledge").addEventListener("click", loadKnowledgeItems);
+  $("#previewAiText").addEventListener("click", previewAiText);
   $("#generateCurrent").addEventListener("click", generateCurrent);
   $("#addBatchRow").addEventListener("click", () => createBatchRow());
   $("#generateBatch").addEventListener("click", generateBatch);

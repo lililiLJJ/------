@@ -54,6 +54,22 @@ public sealed class TemplateTreeRepository
               ON template_tree_nodes(template_code);
             CREATE INDEX IF NOT EXISTS idx_template_nodes_discipline
               ON template_tree_nodes(discipline);
+
+            CREATE TABLE IF NOT EXISTS ProjectDocument (
+              Id TEXT PRIMARY KEY,
+              ProjectId TEXT NOT NULL,
+              ModuleId TEXT NOT NULL,
+              TemplateItemId INTEGER NOT NULL,
+              DocumentName TEXT NOT NULL,
+              PartName TEXT NOT NULL,
+              FilePath TEXT NOT NULL,
+              CreatedAt TEXT NOT NULL,
+              UpdatedAt TEXT NOT NULL,
+              Status TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_project_document_project
+              ON ProjectDocument(ProjectId, ModuleId, TemplateItemId);
             """;
         command.ExecuteNonQuery();
 
@@ -145,12 +161,118 @@ public sealed class TemplateTreeRepository
         return GetNode(nodeId) ?? throw new InvalidOperationException("生成资料节点写入失败。");
     }
 
+    public TemplateTreeNodeDto InsertProjectDocument(
+        string projectId,
+        string moduleId,
+        long templateItemId,
+        string templateNodeId,
+        string documentName,
+        string partName,
+        string templateCode,
+        string generatedFilePath)
+    {
+        EnsureProject(projectId, DefaultProjectName);
+        using var connection = OpenConnection();
+        var now = DateTimeOffset.Now;
+        var documentId = $"document:{Guid.NewGuid():N}";
+        var storedPath = ToStoredPath(generatedFilePath);
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO ProjectDocument (
+                Id, ProjectId, ModuleId, TemplateItemId, DocumentName,
+                PartName, FilePath, CreatedAt, UpdatedAt, Status
+            )
+            VALUES (
+                $id, $projectId, $moduleId, $templateItemId, $documentName,
+                $partName, $filePath, $createdAt, $updatedAt, 'active'
+            );
+            """;
+        command.Parameters.AddWithValue("$id", documentId);
+        command.Parameters.AddWithValue("$projectId", projectId);
+        command.Parameters.AddWithValue("$moduleId", moduleId);
+        command.Parameters.AddWithValue("$templateItemId", templateItemId);
+        command.Parameters.AddWithValue("$documentName", documentName);
+        command.Parameters.AddWithValue("$partName", partName);
+        command.Parameters.AddWithValue("$filePath", storedPath);
+        command.Parameters.AddWithValue("$createdAt", now.ToString("O"));
+        command.Parameters.AddWithValue("$updatedAt", now.ToString("O"));
+        command.ExecuteNonQuery();
+
+        return new TemplateTreeNodeDto(
+            documentId,
+            templateNodeId,
+            projectId,
+            documentName,
+            "generated_form",
+            null,
+            templateCode,
+            null,
+            storedPath,
+            null,
+            moduleId,
+            null,
+            null,
+            null,
+            null,
+            templateItemId,
+            GetNextProjectDocumentSortOrder(connection, projectId, moduleId, templateItemId),
+            []);
+    }
+
+    public ProjectDocumentInfo? GetProjectDocument(string documentId)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, ProjectId, ModuleId, TemplateItemId, DocumentName,
+                   PartName, FilePath, Status, CreatedAt, UpdatedAt
+            FROM ProjectDocument
+            WHERE Id = $id;
+            """;
+        command.Parameters.AddWithValue("$id", documentId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadProjectDocument(reader) : null;
+    }
+
+    public IReadOnlyList<ProjectDocumentInfo> ListProjectDocuments(string projectId)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, ProjectId, ModuleId, TemplateItemId, DocumentName,
+                   PartName, FilePath, Status, CreatedAt, UpdatedAt
+            FROM ProjectDocument
+            WHERE ProjectId = $projectId
+            ORDER BY CreatedAt, DocumentName;
+            """;
+        command.Parameters.AddWithValue("$projectId", projectId);
+
+        using var reader = command.ExecuteReader();
+        var documents = new List<ProjectDocumentInfo>();
+        while (reader.Read())
+        {
+            documents.Add(ReadProjectDocument(reader));
+        }
+
+        return documents;
+    }
+
     public bool DeleteGeneratedForm(string nodeId)
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = "DELETE FROM template_tree_nodes WHERE id = $id AND node_type = 'generated_form';";
         command.Parameters.AddWithValue("$id", nodeId);
+        return command.ExecuteNonQuery() > 0;
+    }
+
+    public bool DeleteProjectDocument(string documentId)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM ProjectDocument WHERE Id = $id;";
+        command.Parameters.AddWithValue("$id", documentId);
         return command.ExecuteNonQuery() > 0;
     }
 
@@ -352,8 +474,29 @@ public sealed class TemplateTreeRepository
             reader.IsDBNull(7) ? null : reader.GetString(7),
             reader.IsDBNull(8) ? null : reader.GetString(8),
             reader.IsDBNull(9) ? null : reader.GetString(9),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
             reader.GetInt32(10),
             children);
+    }
+
+    private static ProjectDocumentInfo ReadProjectDocument(SqliteDataReader reader)
+    {
+        return new ProjectDocumentInfo(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetInt64(3),
+            reader.GetString(4),
+            reader.GetString(5),
+            reader.GetString(6),
+            reader.GetString(7),
+            DateTimeOffset.Parse(reader.GetString(8)),
+            DateTimeOffset.Parse(reader.GetString(9)));
     }
 
     private static int GetNextChildSortOrder(SqliteConnection connection, string parentId)
@@ -362,6 +505,26 @@ public sealed class TemplateTreeRepository
         command.CommandText = "SELECT COALESCE(MAX(sort_order), 0) + 10 FROM template_tree_nodes WHERE parent_id = $parentId;";
         command.Parameters.AddWithValue("$parentId", parentId);
         return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static int GetNextProjectDocumentSortOrder(
+        SqliteConnection connection,
+        string projectId,
+        string moduleId,
+        long templateItemId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM ProjectDocument
+            WHERE ProjectId = $projectId
+              AND ModuleId = $moduleId
+              AND TemplateItemId = $templateItemId;
+            """;
+        command.Parameters.AddWithValue("$projectId", projectId);
+        command.Parameters.AddWithValue("$moduleId", moduleId);
+        command.Parameters.AddWithValue("$templateItemId", templateItemId);
+        return Convert.ToInt32(command.ExecuteScalar()) * 10;
     }
 
     private string ToStoredPath(string path)

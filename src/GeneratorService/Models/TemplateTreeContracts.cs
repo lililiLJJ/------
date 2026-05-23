@@ -11,6 +11,12 @@ public sealed record TemplateTreeNodeDto(
     string? TemplateFilePath,
     string? GeneratedFilePath,
     string? Discipline,
+    string? ModuleId,
+    string? ModuleName,
+    string? Province,
+    string? Major,
+    string? Year,
+    long? TemplateItemId,
     int SortOrder,
     IReadOnlyList<TemplateTreeNodeDto> Children);
 
@@ -44,3 +50,15 @@ public sealed record DeleteGeneratedFormResult(
     bool Success,
     string Id,
     string Message);
+
+public sealed record ProjectDocumentInfo(
+    string Id,
+    string ProjectId,
+    string ModuleId,
+    long TemplateItemId,
+    string DocumentName,
+    string PartName,
+    string FilePath,
+    string Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);

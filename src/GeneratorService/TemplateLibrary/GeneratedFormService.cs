@@ -11,14 +11,34 @@ public sealed class GeneratedFormService
     private static readonly Regex PlaceholderRegex = new(@"\{\{(?<type>[^:}]+):(?<name>[^}]+)\}\}", RegexOptions.Compiled);
 
     private readonly TemplateTreeRepository _repository;
+    private readonly TemplateService _templateService;
 
-    public GeneratedFormService(TemplateTreeRepository repository)
+    public GeneratedFormService(TemplateTreeRepository repository, TemplateService templateService)
     {
         _repository = repository;
+        _templateService = templateService;
     }
 
     public GeneratedFormInfo GetGeneratedForm(string nodeId)
     {
+        var document = _repository.GetProjectDocument(nodeId);
+        if (document is not null)
+        {
+            var documentPath = _repository.ResolveStoredPath(document.FilePath);
+            if (!File.Exists(documentPath))
+            {
+                throw new FileNotFoundException($"资料表文件不存在：{documentPath}", documentPath);
+            }
+
+            return new GeneratedFormInfo(
+                true,
+                document.Id,
+                document.DocumentName,
+                document.TemplateItemId.ToString(),
+                documentPath,
+                true);
+        }
+
         var node = _repository.GetNode(nodeId) ?? throw new FileNotFoundException("资料表节点不存在。", nodeId);
         if (node.NodeType != "generated_form" || string.IsNullOrWhiteSpace(node.GeneratedFilePath))
         {
@@ -52,22 +72,8 @@ public sealed class GeneratedFormService
             throw new InvalidOperationException("部位名称不能为空。");
         }
 
-        var templateNode = _repository.GetNode(request.TemplateNodeId)
-            ?? throw new FileNotFoundException("模板节点不存在。", request.TemplateNodeId);
-        if (templateNode.NodeType != "template" || string.IsNullOrWhiteSpace(templateNode.TemplateFilePath))
-        {
-            throw new InvalidOperationException("请选择检验批模板节点后再新建资料。");
-        }
-
-        var templatePath = _repository.ResolveStoredPath(templateNode.TemplateFilePath);
-        if (!File.Exists(templatePath))
-        {
-            throw new FileNotFoundException($"模板文件不存在：{templatePath}", templatePath);
-        }
-
-        var templateCode = string.IsNullOrWhiteSpace(templateNode.TemplateCode)
-            ? "template"
-            : templateNode.TemplateCode;
+        var template = _templateService.ResolveTemplate(request.TemplateNodeId);
+        var templateCode = template.TemplateCode;
         var targetDirectory = Path.Combine(
             _repository.GetProjectsRootPath(),
             SanitizePathSegment(request.ProjectId),
@@ -76,15 +82,25 @@ public sealed class GeneratedFormService
         Directory.CreateDirectory(targetDirectory);
 
         var targetPath = ResolveUniquePath(targetDirectory, $"{SanitizePathSegment(request.FormName)}.xlsx");
-        File.Copy(templatePath, targetPath);
+        File.Copy(template.TemplatePath, targetPath);
         ApplyFields(targetPath, request.FormName, request.Fields ?? new Dictionary<string, string>());
 
-        var node = _repository.InsertGeneratedForm(
-            request.ProjectId.Trim(),
-            templateNode.Id,
-            request.FormName.Trim(),
-            templateCode,
-            targetPath);
+        var node = template.ModuleId == "legacy"
+            ? _repository.InsertGeneratedForm(
+                request.ProjectId.Trim(),
+                template.TemplateNodeId,
+                request.FormName.Trim(),
+                templateCode,
+                targetPath)
+            : _repository.InsertProjectDocument(
+                request.ProjectId.Trim(),
+                template.ModuleId,
+                template.TemplateItemId,
+                template.TemplateNodeId,
+                request.FormName.Trim(),
+                request.FormName.Trim(),
+                templateCode,
+                targetPath);
 
         return new GeneratedFormCreateResult(true, node, targetPath, "资料表已创建。");
     }
@@ -97,7 +113,7 @@ public sealed class GeneratedFormService
             File.Delete(info.GeneratedFilePath);
         }
 
-        var deleted = _repository.DeleteGeneratedForm(nodeId);
+        var deleted = _repository.DeleteProjectDocument(nodeId) || _repository.DeleteGeneratedForm(nodeId);
         return new DeleteGeneratedFormResult(deleted, nodeId, deleted ? "资料表已删除。" : "资料表节点不存在。");
     }
 

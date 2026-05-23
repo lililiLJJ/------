@@ -55,6 +55,8 @@ builder.Services.AddSingleton<ModuleInstallService>();
 builder.Services.AddSingleton<ModuleUpdateService>();
 builder.Services.AddSingleton<TemplateTreeRepository>();
 builder.Services.AddSingleton<TemplateTreeService>();
+builder.Services.AddSingleton<TemplateService>();
+builder.Services.AddSingleton<RuleService>();
 builder.Services.AddSingleton<GeneratedFormService>();
 builder.Services.AddSingleton<SpreadsheetOpenService>();
 builder.Services.AddSingleton<AiTextService>();
@@ -216,6 +218,22 @@ app.MapGet("/api/template-library/tree", (string? projectId, TemplateTreeService
     return Results.Ok(service.GetTree(projectId));
 });
 
+app.MapGet("/api/templates/{templateNodeId}/rules", (string templateNodeId, RuleService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetRules(templateNodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
 app.MapGet("/api/generated-forms/{nodeId}", (string nodeId, GeneratedFormService service) =>
 {
     try
@@ -331,6 +349,7 @@ app.MapGet("/api/environment/check", (
     AppConfig currentConfig,
     DirectoryInfo workspaceRoot,
     TemplateCatalog catalog,
+    ModuleManager moduleManager,
     LicenseService licenseService) =>
 {
     var templatePath = currentConfig.GetTemplatePath(workspaceRoot);
@@ -339,6 +358,8 @@ app.MapGet("/api/environment/check", (
     var logPath = currentConfig.GetLogPath(workspaceRoot);
     var license = licenseService.GetStatus();
     var templateCount = catalog.ListTemplates().Count;
+    var modules = moduleManager.GetModules();
+    var validModules = modules.Count(module => module.IsValid);
 
     var items = new List<EnvironmentCheckItem>
     {
@@ -347,6 +368,11 @@ app.MapGet("/api/environment/check", (
             Directory.Exists(templatePath)
                 ? $"目录存在，当前识别到 {templateCount} 个模板"
                 : $"目录不存在：{templatePath}"),
+        new("modules", "模块库",
+            validModules > 0 ? "ok" : (modules.Count > 0 ? "error" : "warning"),
+            modules.Count == 0
+                ? $"尚未安装 .module 模块，目录：{currentConfig.GetModulesPath(workspaceRoot)}"
+                : $"已发现 {modules.Count} 个模块，有效 {validModules} 个。"),
         new("knowledge", "知识库文件", File.Exists(knowledgeBasePath) ? "ok" : "error",
             File.Exists(knowledgeBasePath)
                 ? $"知识库已就绪：{knowledgeBasePath}"

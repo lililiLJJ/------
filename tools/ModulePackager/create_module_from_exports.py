@@ -15,11 +15,19 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 
 SUPPORTED_TEMPLATE_EXTENSIONS = {".xls", ".xlsx", ".et", ".ett"}
+
+
+@dataclass(frozen=True)
+class PackagedTemplate:
+    source_path: Path
+    stored_path: str
+    category_parts: tuple[str, ...]
 
 
 def sanitize_file_name(value: str) -> str:
@@ -67,7 +75,19 @@ def create_manifest(args: argparse.Namespace, template_count: int) -> dict[str, 
     }
 
 
-def create_database(db_path: Path, manifest: dict[str, object], templates: list[tuple[Path, str]]) -> None:
+def resolve_category_type(level: int, is_leaf: bool) -> str:
+    if is_leaf:
+        return "资料表"
+
+    return {
+        1: "分部",
+        2: "子分部",
+        3: "分项",
+        4: "检验批",
+    }.get(level, "资料表")
+
+
+def create_database(db_path: Path, manifest: dict[str, object], templates: list[PackagedTemplate]) -> None:
     connection = sqlite3.connect(db_path)
     try:
         connection.executescript(
@@ -150,25 +170,64 @@ def create_database(db_path: Path, manifest: dict[str, object], templates: list[
             ),
         )
 
-        connection.execute(
-            """
-            INSERT INTO TemplateCategory (Id, ParentId, Name, Level, SortOrder, CategoryType)
-            VALUES (1, NULL, ?, 1, 10, ?);
-            """,
-            (f"{manifest['province']}{manifest['major']}{manifest['year']}", "资料表"),
+        category_ids: dict[tuple[str, ...], int] = {}
+        next_category_id = 1
+        sorted_category_paths = sorted(
+            {
+                template.category_parts[:depth]
+                for template in templates
+                for depth in range(1, len(template.category_parts) + 1)
+            },
+            key=lambda parts: (len(parts), parts),
         )
+        if any(not template.category_parts for template in templates):
+            sorted_category_paths.insert(0, ("资料表",))
+            category_ids[()] = 1
 
-        for index, (source_path, stored_path) in enumerate(templates, start=1):
-            name = source_path.stem
+        for parts in sorted_category_paths:
+            if parts in category_ids.values():
+                continue
+
+            parent_parts = parts[:-1]
+            parent_id = category_ids.get(parent_parts)
+            category_id = next_category_id
+            next_category_id += 1
+            category_ids[parts] = category_id
+            if parts == ("资料表",) and () in category_ids:
+                category_ids[()] = category_id
+
+            level = len(parts)
+            has_child_category = any(
+                other != parts and len(other) > len(parts) and other[: len(parts)] == parts
+                for other in sorted_category_paths
+            )
+            connection.execute(
+                """
+                INSERT INTO TemplateCategory (Id, ParentId, Name, Level, SortOrder, CategoryType)
+                VALUES (?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    category_id,
+                    parent_id,
+                    parts[-1],
+                    level,
+                    category_id * 10,
+                    resolve_category_type(level, not has_child_category),
+                ),
+            )
+
+        for index, template in enumerate(templates, start=1):
+            name = template.source_path.stem
+            category_id = category_ids[template.category_parts or ("资料表",)]
             connection.execute(
                 """
                 INSERT INTO TemplateItem (
                   Id, CategoryId, TemplateName, TemplateCode, TemplateFile,
                   TemplateType, SortOrder, IsEnabled
                 )
-                VALUES (?, 1, ?, ?, ?, ?, ?, 1);
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1);
                 """,
-                (index, name, f"T-{index:04d}", stored_path, "资料表", index * 10),
+                (index, category_id, name, f"T-{index:04d}", template.stored_path, "资料表", index * 10),
             )
 
             connection.execute(
@@ -228,18 +287,25 @@ def build_package(args: argparse.Namespace) -> None:
         (temp_path / "config").mkdir(parents=True)
         template_root.mkdir(parents=True)
 
-        copied: list[tuple[Path, str]] = []
+        copied: list[PackagedTemplate] = []
         converter_script = args.converter_script.resolve()
         for index, source in enumerate(templates, start=1):
+            relative_parent = source.relative_to(input_dir).parent
+            category_parts = tuple(
+                part for part in relative_parent.parts
+                if part and part != "."
+            )
             source_extension = source.suffix.lower()
             target_extension = ".xlsx" if args.convert_xls_to_xlsx and source_extension == ".xls" else source_extension
             target_name = f"{index:04d}_{sanitize_file_name(source.stem)}{target_extension}"
-            target_path = template_root / target_name
+            stored_path = "/".join((*category_parts, target_name))
+            target_path = template_root / stored_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
             if args.convert_xls_to_xlsx and source_extension == ".xls":
                 convert_xls_to_xlsx(source.resolve(), target_path.resolve(), converter_script)
             else:
                 shutil.copy2(source, target_path)
-            copied.append((source, target_name))
+            copied.append(PackagedTemplate(source, stored_path, category_parts))
 
         (temp_path / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2),

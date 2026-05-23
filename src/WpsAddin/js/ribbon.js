@@ -23,6 +23,9 @@ function OnAction(control) {
     case "btnTemplates":
       openEngineeringDocsPane("templates");
       break;
+    case "btnModules":
+      openEngineeringDocsPane("modules");
+      break;
     case "btnKnowledge":
       openEngineeringDocsPane("knowledge");
       break;

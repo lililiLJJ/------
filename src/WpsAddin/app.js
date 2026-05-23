@@ -119,6 +119,9 @@ function setServiceOffline() {
   $("#settingsSummary").textContent = "本地服务未启动，暂时无法读取设置。";
   $("#settingsGrid").innerHTML = "";
   showResult("#settingsResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“刷新设置”。");
+  $("#moduleSummary").textContent = "本地服务未启动，暂时无法读取模块库。";
+  $("#moduleGrid").innerHTML = "";
+  showResult("#moduleResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“刷新模块”。");
   $("#environmentSummary").textContent = "本地服务未启动，暂时无法执行环境自检。";
   $("#environmentGrid").innerHTML = "";
   showResult("#environmentResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“开始自检”。");
@@ -148,6 +151,7 @@ function setGenerateDisabled(disabled) {
   $("#refreshKnowledge").disabled = disabled;
   $("#previewAiText").disabled = disabled;
   $("#loadSettings").disabled = disabled;
+  $("#rescanModules").disabled = disabled;
   $("#runEnvironmentCheck").disabled = disabled;
   updateTemplateToolbarState(disabled);
 }
@@ -240,13 +244,85 @@ async function refreshTemplateManagement() {
 async function loadModules() {
   const result = await api("/api/modules");
   modules = result.modules || [];
+  renderModules(modules);
+  showResult("#moduleResult", result);
   return modules;
 }
 
 async function rescanModules() {
+  $("#moduleSummary").textContent = "正在重新扫描 Modules 目录...";
   const result = await api("/api/modules/rescan", { method: "POST" });
   modules = result.modules || [];
+  renderModules(modules);
+  showResult("#moduleResult", result);
   return result;
+}
+
+function renderModules(items) {
+  const grid = $("#moduleGrid");
+  const summary = $("#moduleSummary");
+  if (!grid || !summary) {
+    return;
+  }
+
+  grid.innerHTML = "";
+  if (!serviceAvailable) {
+    summary.textContent = "本地服务未启动，暂时无法读取模块库。";
+    return;
+  }
+
+  if (!items || items.length === 0) {
+    summary.textContent = "当前没有发现 .module 模块包。";
+    grid.innerHTML = '<p class="emptyText">请把 .module 文件放入 Modules 目录后点击“刷新模块”。</p>';
+    return;
+  }
+
+  const validCount = items.filter((item) => item.isValid).length;
+  summary.textContent = `已发现 ${items.length} 个模块，有效 ${validCount} 个。`;
+  for (const item of items) {
+    const card = document.createElement("article");
+    card.className = `moduleCard ${item.isValid ? "ok" : "error"}`;
+
+    const header = document.createElement("div");
+    header.className = "moduleCardHeader";
+    const title = document.createElement("h3");
+    title.textContent = item.name || item.moduleId || "未识别模块";
+    const badge = document.createElement("span");
+    badge.className = `diagnosticBadge ${item.isValid ? "ok" : "error"}`;
+    badge.textContent = item.isValid ? "有效" : "无效";
+    header.append(title, badge);
+
+    const meta = document.createElement("dl");
+    meta.className = "moduleMeta";
+    appendModuleMeta(meta, "模块ID", item.moduleId || "未读取");
+    appendModuleMeta(meta, "版本", item.version || "未读取");
+    appendModuleMeta(meta, "地区", item.province || "未读取");
+    appendModuleMeta(meta, "专业", item.major || "未读取");
+    appendModuleMeta(meta, "年份", item.year || "未读取");
+    appendModuleMeta(meta, "文件", item.packagePath || "");
+    card.append(header, meta);
+
+    if (item.errors && item.errors.length > 0) {
+      const errors = document.createElement("ul");
+      errors.className = "moduleErrors";
+      for (const error of item.errors) {
+        const li = document.createElement("li");
+        li.textContent = error;
+        errors.appendChild(li);
+      }
+      card.appendChild(errors);
+    }
+
+    grid.appendChild(card);
+  }
+}
+
+function appendModuleMeta(container, label, value) {
+  const dt = document.createElement("dt");
+  dt.textContent = label;
+  const dd = document.createElement("dd");
+  dd.textContent = value;
+  container.append(dt, dd);
 }
 
 async function loadTemplateLibraryTree() {
@@ -1147,6 +1223,15 @@ async function boot() {
   $("#refreshKnowledge").addEventListener("click", loadKnowledgeItems);
   $("#previewAiText").addEventListener("click", previewAiText);
   $("#loadSettings").addEventListener("click", loadSettings);
+  $("#rescanModules").addEventListener("click", async () => {
+    try {
+      await rescanModules();
+      await loadTemplateLibraryTree();
+    } catch (error) {
+      $("#moduleSummary").textContent = "模块刷新失败。";
+      showResult("#moduleResult", error);
+    }
+  });
   $("#runEnvironmentCheck").addEventListener("click", runEnvironmentCheck);
   $("#generateCurrent").addEventListener("click", generateCurrent);
   $("#addBatchRow").addEventListener("click", () => createBatchRow());

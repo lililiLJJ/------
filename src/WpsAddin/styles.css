@@ -749,6 +749,69 @@ textarea {
   margin-bottom: 14px;
 }
 
+.moduleGrid {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.moduleCard {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.moduleCard.ok {
+  border-color: #b8d8cf;
+  background: #f3fbf8;
+}
+
+.moduleCard.error {
+  border-color: #f1aaa5;
+  background: #fff1f0;
+}
+
+.moduleCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.moduleCardHeader h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.moduleMeta {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 0;
+}
+
+.moduleMeta dt {
+  color: var(--muted);
+}
+
+.moduleMeta dd {
+  margin: 0;
+  color: var(--text);
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.moduleErrors {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #b42318;
+  line-height: 1.6;
+}
+
 .diagnosticCard {
   padding: 12px;
   border: 1px solid var(--line);

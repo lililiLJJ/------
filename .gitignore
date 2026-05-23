@@ -6,6 +6,8 @@ Logs/
 *.license
 config.json
 Keys/license-private.pem
+KnowledgeBase/*.db
+Templates/ModuleCache/
 bin/
 obj/
 node_modules/

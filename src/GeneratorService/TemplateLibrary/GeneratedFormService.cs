@@ -81,7 +81,13 @@ public sealed class GeneratedFormService
             SanitizePathSegment(templateCode));
         Directory.CreateDirectory(targetDirectory);
 
-        var targetPath = ResolveUniquePath(targetDirectory, $"{SanitizePathSegment(request.FormName)}.xlsx");
+        var templateExtension = Path.GetExtension(template.TemplatePath);
+        if (string.IsNullOrWhiteSpace(templateExtension))
+        {
+            templateExtension = ".xlsx";
+        }
+
+        var targetPath = ResolveUniquePath(targetDirectory, $"{SanitizePathSegment(request.FormName)}{templateExtension}");
         File.Copy(template.TemplatePath, targetPath);
         ApplyFields(targetPath, request.FormName, request.Fields ?? new Dictionary<string, string>());
 
@@ -119,6 +125,11 @@ public sealed class GeneratedFormService
 
     private static void ApplyFields(string filePath, string formName, IReadOnlyDictionary<string, string> fields)
     {
+        if (!string.Equals(Path.GetExtension(filePath), ".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         var replacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["部位名称"] = formName,

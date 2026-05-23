@@ -1,0 +1,14 @@
+{
+  "moduleId": "gd_building_2024",
+  "name": "广东省房屋建筑工程竣工验收技术资料统一用表",
+  "version": "1.0.0",
+  "province": "广东",
+  "major": "房建",
+  "year": "2024",
+  "description": "广东房建2024模板库",
+  "author": "自定义",
+  "templateCount": 1,
+  "database": "rules.db",
+  "templateRoot": "templates",
+  "createdAt": "2026-05-24"
+}

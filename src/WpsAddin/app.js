@@ -57,6 +57,38 @@ function getFormData() {
   };
 }
 
+function buildGeneratedFormFields(data) {
+  const formData = getFormData();
+  const fields = {
+    projectName: formData.projectName || "",
+    developerUnitName: formData.developerUnit.name || "",
+    constructorUnitName: formData.constructorUnit.name || "",
+    designUnitName: formData.designUnit.name || "",
+    supervisorUnitName: formData.supervisorUnit.name || "",
+    professionalSubcontractorUnitName: formData.professionalSubcontractorUnit.name || "",
+    thirdPartyInspectionUnitName: formData.thirdPartyInspectionUnit.name || "",
+    partName: data.formName || "",
+    capacity: data.capacity || formData.capacity || "",
+    constructionDate: data.constructionDate || formData.constructionDate || "",
+    acceptanceDate: data.acceptanceDate || formData.acceptanceDate || ""
+  };
+
+  fields["\u5de5\u7a0b\u540d\u79f0"] = fields.projectName;
+  fields["\u5efa\u8bbe\u5355\u4f4d"] = fields.developerUnitName;
+  fields["\u65bd\u5de5\u5355\u4f4d"] = fields.constructorUnitName;
+  fields["\u8bbe\u8ba1\u5355\u4f4d"] = fields.designUnitName;
+  fields["\u76d1\u7406\u5355\u4f4d"] = fields.supervisorUnitName;
+  fields["\u4e13\u4e1a\u5206\u5305\u5355\u4f4d"] = fields.professionalSubcontractorUnitName;
+  fields["\u7b2c\u4e09\u65b9\u68c0\u6d4b\u5355\u4f4d"] = fields.thirdPartyInspectionUnitName;
+  fields["\u90e8\u4f4d\u540d\u79f0"] = fields.partName;
+  fields["\u68c0\u9a8c\u6279\u90e8\u4f4d"] = fields.partName;
+  fields["\u65bd\u5de5\u90e8\u4f4d"] = fields.partName;
+  fields["\u68c0\u9a8c\u6279\u5bb9\u91cf"] = fields.capacity;
+  fields["\u65bd\u5de5\u65e5\u671f"] = fields.constructionDate;
+  fields["\u9a8c\u6536\u65e5\u671f"] = fields.acceptanceDate;
+  return fields;
+}
+
 async function api(path, options = {}) {
   const response = await fetch(`${serviceBaseUrl}${path}`, {
     ...options,
@@ -610,11 +642,7 @@ async function createGeneratedForm(event) {
         projectId: activeProjectId,
         templateNodeId: selectedTemplateNode.id,
         formName: data.formName,
-        fields: {
-          capacity: data.capacity || "",
-          constructionDate: data.constructionDate || "",
-          acceptanceDate: data.acceptanceDate || ""
-        }
+        fields: buildGeneratedFormFields(data)
       })
     });
     closeGeneratedFormModal();

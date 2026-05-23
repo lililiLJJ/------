@@ -9,6 +9,20 @@ namespace GeneratorService.TemplateLibrary;
 public sealed class GeneratedFormService
 {
     private static readonly Regex PlaceholderRegex = new(@"\{\{(?<type>[^:}]+):(?<name>[^}]+)\}\}", RegexOptions.Compiled);
+    private static readonly IReadOnlyDictionary<string, string[]> FieldAliases = new Dictionary<string, string[]>
+    {
+        ["projectName"] = ["\u5de5\u7a0b\u540d\u79f0", "\u9879\u76ee\u540d\u79f0"],
+        ["developerUnitName"] = ["\u5efa\u8bbe\u5355\u4f4d"],
+        ["constructorUnitName"] = ["\u65bd\u5de5\u5355\u4f4d", "\u627f\u5305\u5355\u4f4d"],
+        ["designUnitName"] = ["\u8bbe\u8ba1\u5355\u4f4d"],
+        ["supervisorUnitName"] = ["\u76d1\u7406\u5355\u4f4d"],
+        ["professionalSubcontractorUnitName"] = ["\u4e13\u4e1a\u5206\u5305\u5355\u4f4d"],
+        ["thirdPartyInspectionUnitName"] = ["\u7b2c\u4e09\u65b9\u68c0\u6d4b\u5355\u4f4d", "\u68c0\u6d4b\u5355\u4f4d"],
+        ["partName"] = ["\u90e8\u4f4d\u540d\u79f0", "\u68c0\u9a8c\u6279\u90e8\u4f4d", "\u65bd\u5de5\u90e8\u4f4d"],
+        ["capacity"] = ["\u68c0\u9a8c\u6279\u5bb9\u91cf"],
+        ["constructionDate"] = ["\u65bd\u5de5\u65e5\u671f"],
+        ["acceptanceDate"] = ["\u9a8c\u6536\u65e5\u671f"]
+    };
 
     private readonly TemplateTreeRepository _repository;
     private readonly TemplateService _templateService;
@@ -145,6 +159,25 @@ public sealed class GeneratedFormService
             replacements[item.Key] = item.Value;
         }
 
+        foreach (var alias in FieldAliases["partName"])
+        {
+            replacements[alias] = formName;
+        }
+
+        foreach (var item in FieldAliases)
+        {
+            var value = GetField(fields, item.Key, item.Value);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            foreach (var alias in item.Value)
+            {
+                replacements[alias] = value;
+            }
+        }
+
         using var document = SpreadsheetDocument.Open(filePath, true);
         var workbookPart = document.WorkbookPart ?? throw new InvalidOperationException("模板缺少WorkbookPart。");
 
@@ -184,6 +217,7 @@ public sealed class GeneratedFormService
                 }
             }
 
+            ApplyAdjacentLabelFields(worksheetPart, workbookPart.SharedStringTablePart?.SharedStringTable, replacements);
             worksheetPart.Worksheet.Save();
         }
     }
@@ -215,6 +249,166 @@ public sealed class GeneratedFormService
         });
     }
 
+    private static void ApplyAdjacentLabelFields(
+        WorksheetPart worksheetPart,
+        SharedStringTable? sharedStringTable,
+        IReadOnlyDictionary<string, string> replacements)
+    {
+        foreach (var labelCell in worksheetPart.Worksheet.Descendants<Cell>().ToArray())
+        {
+            var labelText = ReadCellText(labelCell, sharedStringTable);
+            if (!TryGetAdjacentFieldValue(labelText, replacements, out var value))
+            {
+                continue;
+            }
+
+            var targetReference = GetNextColumnReference(labelCell.CellReference?.Value);
+            if (targetReference is null)
+            {
+                continue;
+            }
+
+            var targetCell = GetOrCreateCell(worksheetPart.Worksheet, targetReference);
+            var targetText = ReadCellText(targetCell, sharedStringTable);
+            if (!string.IsNullOrWhiteSpace(targetText) && !targetText.Contains("{{", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            WriteCellText(targetCell, value);
+        }
+    }
+
+    private static bool TryGetAdjacentFieldValue(
+        string labelText,
+        IReadOnlyDictionary<string, string> replacements,
+        out string value)
+    {
+        var normalizedLabel = NormalizeLabel(labelText);
+        foreach (var item in replacements)
+        {
+            if (string.IsNullOrWhiteSpace(item.Value))
+            {
+                continue;
+            }
+
+            var normalizedKey = NormalizeLabel(item.Key);
+            if (normalizedLabel == normalizedKey || normalizedLabel.Contains(normalizedKey, StringComparison.Ordinal))
+            {
+                value = item.Value;
+                return true;
+            }
+        }
+
+        value = "";
+        return false;
+    }
+
+    private static string ReadCellText(Cell cell, SharedStringTable? sharedStringTable)
+    {
+        if (cell.DataType?.Value == CellValues.SharedString &&
+            int.TryParse(cell.CellValue?.Text, out var sharedStringIndex) &&
+            sharedStringTable is not null)
+        {
+            return sharedStringTable.Elements<SharedStringItem>().ElementAtOrDefault(sharedStringIndex)?.InnerText ?? "";
+        }
+
+        if (cell.InlineString is not null)
+        {
+            return cell.InlineString.InnerText ?? "";
+        }
+
+        return cell.CellValue?.Text ?? "";
+    }
+
+    private static void WriteCellText(Cell cell, string value)
+    {
+        cell.DataType = CellValues.String;
+        cell.CellValue = new CellValue(value);
+        cell.InlineString = null;
+    }
+
+    private static Cell GetOrCreateCell(Worksheet worksheet, string cellReference)
+    {
+        var rowIndex = GetRowIndex(cellReference);
+        var sheetData = worksheet.GetFirstChild<SheetData>() ?? worksheet.AppendChild(new SheetData());
+        var row = sheetData.Elements<Row>().FirstOrDefault(item => item.RowIndex?.Value == rowIndex);
+        if (row is null)
+        {
+            row = new Row { RowIndex = rowIndex };
+            sheetData.Append(row);
+        }
+
+        var cell = row.Elements<Cell>().FirstOrDefault(item => item.CellReference?.Value == cellReference);
+        if (cell is not null)
+        {
+            return cell;
+        }
+
+        cell = new Cell { CellReference = cellReference };
+        var nextCell = row.Elements<Cell>()
+            .FirstOrDefault(item => string.Compare(item.CellReference?.Value, cellReference, StringComparison.OrdinalIgnoreCase) > 0);
+        if (nextCell is null)
+        {
+            row.Append(cell);
+        }
+        else
+        {
+            row.InsertBefore(cell, nextCell);
+        }
+
+        return cell;
+    }
+
+    private static string? GetNextColumnReference(string? cellReference)
+    {
+        if (string.IsNullOrWhiteSpace(cellReference))
+        {
+            return null;
+        }
+
+        var columnName = new string(cellReference.TakeWhile(char.IsLetter).ToArray());
+        var rowName = new string(cellReference.SkipWhile(char.IsLetter).ToArray());
+        if (string.IsNullOrWhiteSpace(columnName) || string.IsNullOrWhiteSpace(rowName))
+        {
+            return null;
+        }
+
+        return $"{IncrementColumn(columnName)}{rowName}";
+    }
+
+    private static uint GetRowIndex(string cellReference)
+    {
+        var rowName = new string(cellReference.SkipWhile(char.IsLetter).ToArray());
+        return uint.TryParse(rowName, out var rowIndex) ? rowIndex : 1;
+    }
+
+    private static string IncrementColumn(string columnName)
+    {
+        var chars = columnName.ToUpperInvariant().ToCharArray();
+        for (var index = chars.Length - 1; index >= 0; index--)
+        {
+            if (chars[index] < 'Z')
+            {
+                chars[index]++;
+                return new string(chars);
+            }
+
+            chars[index] = 'A';
+        }
+
+        return "A" + new string(chars);
+    }
+
+    private static string NormalizeLabel(string value)
+    {
+        return value
+            .Replace(":", "", StringComparison.Ordinal)
+            .Replace("\uff1a", "", StringComparison.Ordinal)
+            .Replace(" ", "", StringComparison.Ordinal)
+            .Trim();
+    }
+
     private static string GetField(IReadOnlyDictionary<string, string> fields, string englishKey, string chineseKey)
     {
         if (fields.TryGetValue(englishKey, out var englishValue))
@@ -223,6 +417,24 @@ public sealed class GeneratedFormService
         }
 
         return fields.TryGetValue(chineseKey, out var chineseValue) ? chineseValue : "";
+    }
+
+    private static string GetField(IReadOnlyDictionary<string, string> fields, string englishKey, IEnumerable<string> chineseKeys)
+    {
+        if (fields.TryGetValue(englishKey, out var englishValue))
+        {
+            return englishValue;
+        }
+
+        foreach (var chineseKey in chineseKeys)
+        {
+            if (fields.TryGetValue(chineseKey, out var chineseValue))
+            {
+                return chineseValue;
+            }
+        }
+
+        return "";
     }
 
     private static string ResolveUniquePath(string directory, string fileName)

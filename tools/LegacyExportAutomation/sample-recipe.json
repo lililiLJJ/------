@@ -1,0 +1,52 @@
+{
+  "before_all": [
+    {
+      "type": "print",
+      "message": "请先把旧软件切到第一个要导出的模板节点，并确保导出菜单可用。"
+    },
+    {
+      "type": "wait",
+      "seconds": 3
+    }
+  ],
+  "per_item": [
+    {
+      "type": "print",
+      "message": "准备导出：{display_name}"
+    },
+    {
+      "type": "click",
+      "x": 100,
+      "y": 100
+    },
+    {
+      "type": "wait",
+      "seconds": 0.5
+    },
+    {
+      "type": "clipboard",
+      "text": "{output_path}"
+    },
+    {
+      "type": "paste"
+    },
+    {
+      "type": "key",
+      "key": "ENTER"
+    },
+    {
+      "type": "wait",
+      "seconds": 1.5
+    },
+    {
+      "type": "key",
+      "key": "DOWN"
+    }
+  ],
+  "after_all": [
+    {
+      "type": "print",
+      "message": "导出循环已结束，请检查输出目录。"
+    }
+  ]
+}

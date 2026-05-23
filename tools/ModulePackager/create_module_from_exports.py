@@ -11,6 +11,7 @@ import argparse
 import json
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -186,6 +187,25 @@ def create_database(db_path: Path, manifest: dict[str, object], templates: list[
         connection.close()
 
 
+def convert_xls_to_xlsx(source: Path, target: Path, converter_script: Path) -> None:
+    command = [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(converter_script),
+        "-InputPath",
+        str(source),
+        "-OutputPath",
+        str(target),
+    ]
+    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"转换 .xls 失败：{source}。{details}")
+
+
 def build_package(args: argparse.Namespace) -> None:
     input_dir = args.input_dir.resolve()
     output_path = args.output.resolve()
@@ -209,9 +229,16 @@ def build_package(args: argparse.Namespace) -> None:
         template_root.mkdir(parents=True)
 
         copied: list[tuple[Path, str]] = []
+        converter_script = args.converter_script.resolve()
         for index, source in enumerate(templates, start=1):
-            target_name = f"{index:04d}_{sanitize_file_name(source.stem)}{source.suffix.lower()}"
-            shutil.copy2(source, template_root / target_name)
+            source_extension = source.suffix.lower()
+            target_extension = ".xlsx" if args.convert_xls_to_xlsx and source_extension == ".xls" else source_extension
+            target_name = f"{index:04d}_{sanitize_file_name(source.stem)}{target_extension}"
+            target_path = template_root / target_name
+            if args.convert_xls_to_xlsx and source_extension == ".xls":
+                convert_xls_to_xlsx(source.resolve(), target_path.resolve(), converter_script)
+            else:
+                shutil.copy2(source, target_path)
             copied.append((source, target_name))
 
         (temp_path / "manifest.json").write_text(
@@ -249,6 +276,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--description", default="")
     parser.add_argument("--author", default="自定义")
     parser.add_argument("--created-at", default="")
+    parser.add_argument(
+        "--convert-xls-to-xlsx",
+        action="store_true",
+        help="使用本机 Excel COM 将 .xls 批量转换为 .xlsx 后再打包",
+    )
+    parser.add_argument(
+        "--converter-script",
+        type=Path,
+        default=Path(__file__).with_name("Convert-XlsToXlsx.ps1"),
+        help="Excel COM 转换脚本路径",
+    )
     args = parser.parse_args(argv)
     args.module_id = normalize_module_id(args.module_id)
     return args

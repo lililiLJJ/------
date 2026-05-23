@@ -15,6 +15,22 @@ python tools/ModulePackager/create_module_from_exports.py `
   --year "2024"
 ```
 
+如果导出目录里主要是旧版 `.xls`，建议直接转换成 `.xlsx` 后打包：
+
+```powershell
+python tools/ModulePackager/create_module_from_exports.py `
+  --input-dir "D:/桌面/广东土建2024导出" `
+  --output "D:/YY/编程/工程资料制作/Modules/广东土建2024.module" `
+  --module-id "gd_building_2024" `
+  --name "广东省房屋建筑工程竣工验收技术资料统一用表" `
+  --province "广东" `
+  --major "房建" `
+  --year "2024" `
+  --convert-xls-to-xlsx
+```
+
+`--convert-xls-to-xlsx` 会调用本机 `Excel.Application` COM，把 `.xls` 另存为 `.xlsx`。
+
 生成内容：
 
 - `manifest.json`
@@ -27,4 +43,4 @@ python tools/ModulePackager/create_module_from_exports.py `
 
 ## 注意
 
-旧软件导出的 `.xls` 可以打包进模块并打开；但自动占位符填充只支持 `.xlsx`。如果需要自动填工程名称、部位等字段，建议后续批量转换成 `.xlsx`。
+旧软件导出的 `.xls` 可以直接打包进模块并打开；但自动占位符填充只支持 `.xlsx`。如果需要自动填工程名称、部位等字段，请使用 `--convert-xls-to-xlsx`。

@@ -47,6 +47,8 @@ public sealed record AiPreviewResult(bool Success, string FieldName, string Text
 public sealed record SettingsInfo(
     int ServicePort,
     bool EnableAI,
+    string ModulesPath,
+    string ModuleCachePath,
     string TemplatePath,
     string ExportPath,
     string KnowledgeBasePath,
@@ -116,3 +118,5 @@ public sealed record KnowledgeItem(
     string StandardCode,
     string StandardVersion,
     string SourceNote);
+
+public sealed record ModuleFileRequest(string SourcePath);

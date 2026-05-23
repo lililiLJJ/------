@@ -4,6 +4,7 @@ using GeneratorService.Generation;
 using GeneratorService.Knowledge;
 using GeneratorService.Licensing;
 using GeneratorService.Models;
+using GeneratorService.Modules;
 using GeneratorService.Templates;
 using GeneratorService.TemplateLibrary;
 using Serilog;
@@ -47,6 +48,11 @@ builder.Services.AddSingleton(rootPath);
 builder.Services.AddSingleton(config);
 builder.Services.AddSingleton<KnowledgeRepository>();
 builder.Services.AddSingleton<TemplateCatalog>();
+builder.Services.AddSingleton<ModulePackageReader>();
+builder.Services.AddSingleton<ModuleValidator>();
+builder.Services.AddSingleton<ModuleManager>();
+builder.Services.AddSingleton<ModuleInstallService>();
+builder.Services.AddSingleton<ModuleUpdateService>();
 builder.Services.AddSingleton<TemplateTreeRepository>();
 builder.Services.AddSingleton<TemplateTreeService>();
 builder.Services.AddSingleton<GeneratedFormService>();
@@ -63,9 +69,11 @@ app.UseSwaggerUI();
 
 var knowledgeRepository = app.Services.GetRequiredService<KnowledgeRepository>();
 var templateCatalog = app.Services.GetRequiredService<TemplateCatalog>();
+var moduleManager = app.Services.GetRequiredService<ModuleManager>();
 var templateTreeRepository = app.Services.GetRequiredService<TemplateTreeRepository>();
 knowledgeRepository.EnsureCreated();
 templateCatalog.EnsureSampleTemplates();
+moduleManager.Scan();
 templateTreeRepository.EnsureCreated();
 
 Log.Information("工程资料生成服务已启动。Root={RootPath}, Port={Port}", rootPath.FullName, config.Service.Port);
@@ -120,6 +128,87 @@ app.MapPost("/api/templates/open-folder", (TemplateCatalog catalog) =>
         path = templatePath,
         message = "已打开模板库文件夹。"
     });
+});
+
+app.MapGet("/api/modules", (ModuleManager manager) =>
+{
+    return Results.Ok(new
+    {
+        success = true,
+        modules = manager.GetSummaries()
+    });
+});
+
+app.MapPost("/api/modules/rescan", (ModuleManager manager) =>
+{
+    var modules = manager.Scan();
+    return Results.Ok(new
+    {
+        success = true,
+        modules = manager.GetSummaries(),
+        total = modules.Count,
+        valid = modules.Count(module => module.IsValid)
+    });
+});
+
+app.MapPost("/api/modules/install", (ModuleFileRequest request, ModuleInstallService service) =>
+{
+    try
+    {
+        return Results.Ok(new
+        {
+            success = true,
+            module = service.Install(request.SourcePath)
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/modules/update", (ModuleFileRequest request, ModuleUpdateService service) =>
+{
+    try
+    {
+        return Results.Ok(new
+        {
+            success = true,
+            module = service.Update(request.SourcePath)
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapDelete("/api/modules/{moduleId}", (string moduleId, ModuleUpdateService service) =>
+{
+    try
+    {
+        return Results.Ok(new
+        {
+            success = true,
+            modules = service.Uninstall(moduleId)
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
 });
 
 app.MapGet("/api/template-library/tree", (string? projectId, TemplateTreeService service) =>
@@ -221,6 +310,8 @@ app.MapGet("/api/settings", (AppConfig currentConfig, DirectoryInfo workspaceRoo
     var settings = new SettingsInfo(
         currentConfig.Service.Port,
         currentConfig.EnableAI,
+        currentConfig.GetModulesPath(workspaceRoot),
+        currentConfig.GetModuleCachePath(workspaceRoot),
         currentConfig.GetTemplatePath(workspaceRoot),
         currentConfig.GetExportPath(workspaceRoot),
         currentConfig.GetKnowledgeBasePath(workspaceRoot),

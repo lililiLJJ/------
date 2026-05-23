@@ -3,6 +3,8 @@
     "Port": 5188
   },
   "EnableAI": false,
+  "ModulesPath": "Modules",
+  "ModuleCachePath": "Templates/ModuleCache",
   "TemplatePath": "Templates",
   "ExportPath": "Export",
   "KnowledgeBasePath": "KnowledgeBase/quality.db",

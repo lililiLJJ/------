@@ -6,6 +6,8 @@ public sealed class AppConfig
 {
     public ServiceConfig Service { get; set; } = new();
     public bool EnableAI { get; set; }
+    public string ModulesPath { get; set; } = "Modules";
+    public string ModuleCachePath { get; set; } = "Templates/ModuleCache";
     public string TemplatePath { get; set; } = "Templates";
     public string ExportPath { get; set; } = "Export";
     public string KnowledgeBasePath { get; set; } = "KnowledgeBase/quality.db";
@@ -33,6 +35,10 @@ public sealed class AppConfig
     }
 
     public string GetTemplatePath(DirectoryInfo rootPath) => GetFullPath(rootPath, TemplatePath);
+
+    public string GetModulesPath(DirectoryInfo rootPath) => GetFullPath(rootPath, ModulesPath);
+
+    public string GetModuleCachePath(DirectoryInfo rootPath) => GetFullPath(rootPath, ModuleCachePath);
 
     public string GetExportPath(DirectoryInfo rootPath) => GetFullPath(rootPath, ExportPath);
 

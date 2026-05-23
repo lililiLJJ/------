@@ -21,21 +21,22 @@ public sealed class ModulePackageReader
         return manifest ?? throw new InvalidOperationException("manifest.json 内容无效。");
     }
 
-    public string EnsureExtracted(string packagePath, string cacheRoot, ModuleManifest manifest)
+    public string EnsureExtracted(string packagePath, string cacheRoot, ModuleManifest manifest, bool forceRefresh = false)
     {
         Directory.CreateDirectory(cacheRoot);
         var cachePath = Path.Combine(cacheRoot, BuildCacheFolderName(manifest, packagePath));
         var markerPath = Path.Combine(cachePath, ".module-source");
         var sourceStamp = $"{Path.GetFullPath(packagePath)}|{File.GetLastWriteTimeUtc(packagePath):O}|{new FileInfo(packagePath).Length}";
-
-        if (Directory.Exists(cachePath) &&
+        var hasCurrentMarker = Directory.Exists(cachePath) &&
             File.Exists(markerPath) &&
-            File.ReadAllText(markerPath) == sourceStamp)
+            File.ReadAllText(markerPath) == sourceStamp;
+
+        if (hasCurrentMarker && HasRequiredContent(cachePath, manifest) && !forceRefresh)
         {
             return cachePath;
         }
 
-        if (Directory.Exists(cachePath))
+        if (!hasCurrentMarker && Directory.Exists(cachePath))
         {
             Directory.Delete(cachePath, recursive: true);
         }
@@ -56,11 +57,22 @@ public sealed class ModulePackageReader
             }
 
             Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            if (hasCurrentMarker && File.Exists(destinationPath))
+            {
+                continue;
+            }
+
             entry.ExtractToFile(destinationPath, overwrite: true);
         }
 
         File.WriteAllText(markerPath, sourceStamp);
         return cachePath;
+    }
+
+    private static bool HasRequiredContent(string cachePath, ModuleManifest manifest)
+    {
+        return File.Exists(Path.Combine(cachePath, manifest.Database)) &&
+            Directory.Exists(Path.Combine(cachePath, manifest.TemplateRoot));
     }
 
     private static string BuildCacheFolderName(ModuleManifest manifest, string packagePath)

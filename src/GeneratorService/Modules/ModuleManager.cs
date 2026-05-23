@@ -134,6 +134,14 @@ public sealed class ModuleManager
 
         var templateFile = reader.IsDBNull(3) ? "" : reader.GetString(3);
         var templatePath = Path.GetFullPath(Path.Combine(module.TemplateRootPath, templateFile));
+        if (!File.Exists(templatePath) && module.Manifest is not null)
+        {
+            var cacheRoot = _config.GetModuleCachePath(_rootPath);
+            var cachePath = _reader.EnsureExtracted(module.PackagePath, cacheRoot, module.Manifest, forceRefresh: true);
+            var templateRootPath = Path.Combine(cachePath, module.Manifest.TemplateRoot);
+            templatePath = Path.GetFullPath(Path.Combine(templateRootPath, templateFile));
+        }
+
         return new ModuleTemplateRef(
             moduleId,
             reader.GetInt64(0),

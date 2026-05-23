@@ -388,7 +388,8 @@ textarea {
 }
 
 .spreadsheetEmpty,
-.spreadsheetFileCard {
+.spreadsheetFileCard,
+.templateInfoPanel {
   max-width: 680px;
   padding: 14px;
   border: 1px solid var(--line);
@@ -405,6 +406,63 @@ textarea {
 
 .spreadsheetFileCard p {
   word-break: break-all;
+}
+
+.templateInfoGrid {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 8px 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.templateInfoGrid span {
+  color: var(--muted);
+}
+
+.templateInfoGrid strong {
+  color: var(--text);
+  word-break: break-all;
+}
+
+.templateRulesPanel {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.ruleGroup {
+  display: grid;
+  gap: 8px;
+}
+
+.ruleGroup h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.ruleItem {
+  padding: 10px 12px;
+  border: 1px solid #e4ece9;
+  border-radius: 6px;
+  background: #fbfdfc;
+}
+
+.ruleItem strong {
+  display: block;
+  color: var(--text);
+}
+
+.ruleItem p {
+  margin: 5px 0;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.ruleItem small {
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .compactModal {

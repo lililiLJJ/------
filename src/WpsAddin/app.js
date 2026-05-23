@@ -1,6 +1,7 @@
 const serviceBaseUrl = "http://127.0.0.1:5188";
 const serviceStartCommand = '正式安装包：重新运行 Client\\1-Install-Client.cmd；开发调试：cd "D:\\YY\\编程\\工程资料制作"; dotnet run --project "src/GeneratorService"';
 let templates = [];
+let modules = [];
 let templateTreeNodes = [];
 let selectedTemplateNode = null;
 let currentGeneratedForm = null;
@@ -130,6 +131,7 @@ async function retryServiceStatus() {
   }
 
   await loadTemplates().catch((error) => showResult("#generateResult", error));
+  await loadModules().catch((error) => showResult("#templateResult", error));
   await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
   await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
   await loadSettings().catch((error) => showResult("#settingsResult", error));
@@ -226,12 +228,25 @@ function renderTemplateList() {
 async function refreshTemplateManagement() {
   showResult("#templateResult", "正在刷新工程资料规范层级树...");
   try {
+    await rescanModules();
     await loadTemplates();
     await loadTemplateLibraryTree();
   } catch (error) {
     $("#templateSummary").textContent = "模板读取失败。";
     showResult("#templateResult", error);
   }
+}
+
+async function loadModules() {
+  const result = await api("/api/modules");
+  modules = result.modules || [];
+  return modules;
+}
+
+async function rescanModules() {
+  const result = await api("/api/modules/rescan", { method: "POST" });
+  modules = result.modules || [];
+  return result;
 }
 
 async function loadTemplateLibraryTree() {
@@ -298,7 +313,7 @@ function createSpecTreeNode(node) {
     const label = document.createElement("span");
     label.textContent = node.name;
     const meta = document.createElement("small");
-    meta.textContent = resolveFolderLevelLabel(node.folderLevel);
+    meta.textContent = resolveFolderMeta(node);
     summary.append(label, meta);
     details.appendChild(summary);
 
@@ -319,7 +334,9 @@ function createSpecTreeNode(node) {
   const title = document.createElement("span");
   title.textContent = node.name;
   const meta = document.createElement("small");
-  meta.textContent = node.nodeType === "template" ? (node.templateCode || "检验批模板") : "已创建资料表";
+  meta.textContent = node.nodeType === "template"
+    ? [node.templateCode || "检验批模板", node.moduleName || ""].filter(Boolean).join("｜")
+    : "已创建资料表";
   button.append(title, meta);
   button.addEventListener("click", () => selectTemplateTreeNode(node));
   return button;
@@ -334,6 +351,14 @@ function resolveFolderLevelLabel(folderLevel) {
   }[folderLevel] || "分类";
 }
 
+function resolveFolderMeta(node) {
+  if (node.folderLevel === "module") {
+    return [node.province, node.major, node.year].filter(Boolean).join("｜") || "模块";
+  }
+
+  return resolveFolderLevelLabel(node.folderLevel);
+}
+
 async function selectTemplateTreeNode(node) {
   selectedTemplateNode = node;
   currentGeneratedForm = null;
@@ -343,18 +368,87 @@ async function selectTemplateTreeNode(node) {
 
   if (node.nodeType === "template") {
     $("#spreadsheetTitle").textContent = node.name;
-    $("#spreadsheetSummary").textContent = `模板编码：${node.templateCode || "未配置"}。点击“新建资料”可复制模板生成独立资料表。`;
+    $("#spreadsheetSummary").textContent = `模板编码：${node.templateCode || "未配置"}｜模块：${node.moduleName || "兼容模板库"}`;
     $("#spreadsheetPreview").innerHTML = `
-      <div class="spreadsheetEmpty">
-        <strong>检验批模板</strong>
-        <p>${escapeHtml(node.templateFilePath || "未配置模板文件路径")}</p>
+      <div class="templateInfoPanel">
+        <div class="templateInfoGrid">
+          <span>模块</span><strong>${escapeHtml(node.moduleName || "兼容模板库")}</strong>
+          <span>地区</span><strong>${escapeHtml(node.province || "未配置")}</strong>
+          <span>专业</span><strong>${escapeHtml(node.major || node.discipline || "未配置")}</strong>
+          <span>年份</span><strong>${escapeHtml(node.year || "未配置")}</strong>
+          <span>模板文件</span><strong>${escapeHtml(node.templateFilePath || "未配置")}</strong>
+        </div>
+        <div id="templateRulesPanel" class="templateRulesPanel">
+          <p class="emptyText">正在读取模板规则...</p>
+        </div>
       </div>`;
+    await loadTemplateRules(node);
     updateTemplateToolbarState(false);
     return;
   }
 
   if (node.nodeType === "generated_form") {
     await openGeneratedForm(node);
+  }
+}
+
+async function loadTemplateRules(node) {
+  const panel = $("#templateRulesPanel");
+  if (!panel) {
+    return;
+  }
+
+  if (!node.moduleId) {
+    panel.innerHTML = '<p class="emptyText">兼容模板暂无模块规则。</p>';
+    return;
+  }
+
+  try {
+    const result = await api(`/api/templates/${encodeURIComponent(node.id)}/rules`);
+    renderTemplateRules(result.rules || []);
+    showResult("#templateResult", result);
+  } catch (error) {
+    panel.innerHTML = `<p class="emptyText">${escapeHtml(error.message || "规则读取失败。")}</p>`;
+  }
+}
+
+function renderTemplateRules(rules) {
+  const panel = $("#templateRulesPanel");
+  if (!panel) {
+    return;
+  }
+
+  if (rules.length === 0) {
+    panel.innerHTML = '<p class="emptyText">该模板暂未配置 InspectionRule。</p>';
+    return;
+  }
+
+  const groups = rules.reduce((acc, rule) => {
+    const key = rule.ruleType || "未分类";
+    acc[key] = acc[key] || [];
+    acc[key].push(rule);
+    return acc;
+  }, {});
+
+  panel.innerHTML = "";
+  for (const [ruleType, items] of Object.entries(groups)) {
+    const section = document.createElement("section");
+    section.className = "ruleGroup";
+    const title = document.createElement("h3");
+    title.textContent = ruleType;
+    section.appendChild(title);
+
+    for (const rule of items) {
+      const article = document.createElement("article");
+      article.className = "ruleItem";
+      article.innerHTML = `
+        <strong>${escapeHtml(rule.itemName || "未命名规则")}</strong>
+        <p>${escapeHtml(rule.requirement || "未配置要求")}</p>
+        <small>${escapeHtml([rule.checkMethod, rule.allowedDeviation, rule.source].filter(Boolean).join("｜"))}</small>`;
+      section.appendChild(article);
+    }
+
+    panel.appendChild(section);
   }
 }
 
@@ -711,6 +805,8 @@ function renderSettings(settings) {
   const rows = [
     ["服务端口", settings.servicePort],
     ["AI启用", settings.enableAI ? "已启用" : "未启用"],
+    ["模块目录", settings.modulesPath],
+    ["模块缓存", settings.moduleCachePath],
     ["模板目录", settings.templatePath],
     ["输出目录", settings.exportPath],
     ["知识库路径", settings.knowledgeBasePath],
@@ -1065,6 +1161,7 @@ async function boot() {
   const online = await refreshStatus();
   if (online || serviceAvailable) {
     await loadTemplates().catch((error) => showResult("#generateResult", error));
+    await loadModules().catch((error) => showResult("#templateResult", error));
     await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
     await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
     await loadSettings().catch((error) => showResult("#settingsResult", error));

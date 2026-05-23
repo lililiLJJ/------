@@ -330,6 +330,11 @@ textarea {
   gap: 5px;
 }
 
+.specTreeBranch {
+  display: grid;
+  gap: 5px;
+}
+
 .specTreeFolder summary {
   display: flex;
   align-items: center;

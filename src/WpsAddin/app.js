@@ -447,7 +447,22 @@ function createSpecTreeNode(node) {
     : "已创建资料表";
   button.append(title, meta);
   button.addEventListener("click", () => selectTemplateTreeNode(node));
-  return button;
+
+  if (!node.children || node.children.length === 0) {
+    return button;
+  }
+
+  const branch = document.createElement("div");
+  branch.className = `specTreeBranch ${node.nodeType}`;
+  branch.appendChild(button);
+
+  const children = document.createElement("div");
+  children.className = "specTreeChildren";
+  for (const child of node.children) {
+    children.appendChild(createSpecTreeNode(child));
+  }
+  branch.appendChild(children);
+  return branch;
 }
 
 function resolveFolderLevelLabel(folderLevel) {

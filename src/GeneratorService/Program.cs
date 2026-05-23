@@ -5,7 +5,9 @@ using GeneratorService.Knowledge;
 using GeneratorService.Licensing;
 using GeneratorService.Models;
 using GeneratorService.Templates;
+using GeneratorService.TemplateLibrary;
 using Serilog;
+using System.Diagnostics;
 using System.Net.Sockets;
 
 var rootPath = WorkspacePaths.FindRoot(AppContext.BaseDirectory);
@@ -45,6 +47,10 @@ builder.Services.AddSingleton(rootPath);
 builder.Services.AddSingleton(config);
 builder.Services.AddSingleton<KnowledgeRepository>();
 builder.Services.AddSingleton<TemplateCatalog>();
+builder.Services.AddSingleton<TemplateTreeRepository>();
+builder.Services.AddSingleton<TemplateTreeService>();
+builder.Services.AddSingleton<GeneratedFormService>();
+builder.Services.AddSingleton<SpreadsheetOpenService>();
 builder.Services.AddSingleton<AiTextService>();
 builder.Services.AddSingleton<LicenseService>();
 builder.Services.AddSingleton<ExcelGenerationService>();
@@ -57,8 +63,10 @@ app.UseSwaggerUI();
 
 var knowledgeRepository = app.Services.GetRequiredService<KnowledgeRepository>();
 var templateCatalog = app.Services.GetRequiredService<TemplateCatalog>();
+var templateTreeRepository = app.Services.GetRequiredService<TemplateTreeRepository>();
 knowledgeRepository.EnsureCreated();
 templateCatalog.EnsureSampleTemplates();
+templateTreeRepository.EnsureCreated();
 
 Log.Information("工程资料生成服务已启动。Root={RootPath}, Port={Port}", rootPath.FullName, config.Service.Port);
 
@@ -82,6 +90,115 @@ app.MapGet("/api/templates", (TemplateCatalog catalog) =>
         success = true,
         templates = catalog.ListTemplates()
     });
+});
+
+app.MapGet("/api/templates/tree", (TemplateCatalog catalog) =>
+{
+    var tree = catalog.GetTemplateLibraryTree();
+    return Results.Ok(new
+    {
+        success = true,
+        rootPath = catalog.GetTemplateRootPath(),
+        tree,
+        totalTemplates = CountTemplateNodes(tree)
+    });
+});
+
+app.MapPost("/api/templates/open-folder", (TemplateCatalog catalog) =>
+{
+    var templatePath = catalog.GetTemplateRootPath();
+    Process.Start(new ProcessStartInfo
+    {
+        FileName = "explorer.exe",
+        Arguments = $"\"{templatePath}\"",
+        UseShellExecute = true
+    });
+
+    return Results.Ok(new
+    {
+        success = true,
+        path = templatePath,
+        message = "已打开模板库文件夹。"
+    });
+});
+
+app.MapGet("/api/template-library/tree", (string? projectId, TemplateTreeService service) =>
+{
+    return Results.Ok(service.GetTree(projectId));
+});
+
+app.MapGet("/api/generated-forms/{nodeId}", (string nodeId, GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetGeneratedForm(nodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/generated-forms", (CreateGeneratedFormRequest request, GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.CreateGeneratedForm(request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/generated-forms/{nodeId}/open", (
+    string nodeId,
+    GeneratedFormService formService,
+    SpreadsheetOpenService openService) =>
+{
+    try
+    {
+        var form = formService.GetGeneratedForm(nodeId);
+        openService.OpenSpreadsheet(form.GeneratedFilePath);
+        return Results.Ok(new
+        {
+            success = true,
+            path = form.GeneratedFilePath,
+            message = "已打开资料表。"
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapDelete("/api/generated-forms/{nodeId}", (string nodeId, GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.DeleteGeneratedForm(nodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
 });
 
 app.MapGet("/api/knowledge/items", (
@@ -289,4 +406,10 @@ static string[] ReadLastLines(string path, int count)
     }
 
     return lines.ToArray();
+}
+
+static int CountTemplateNodes(TemplateLibraryNode node)
+{
+    var self = node.Type == "template" ? 1 : 0;
+    return self + node.Children.Sum(CountTemplateNodes);
 }

@@ -4,9 +4,8 @@
 
 ## 当前功能
 
-- 控制面板
-- 单份生成
-- 批量生成
+- 工程信息
+- 资料生成
 - 授权状态与激活
 - 最近日志查看
 
@@ -26,6 +25,8 @@ src/WpsAddin/index.html
 ```
 
 ## WPS 调试
+
+正式安装包不需要执行下面的调试命令。客户首次使用时运行发布包 `Client/1-Install-Client.cmd`，之后直接打开 WPS 表格即可使用。
 
 ```powershell
 $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)

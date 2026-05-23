@@ -40,6 +40,11 @@ public sealed class ExcelGenerationService
 
     public async Task<GenerationResult> GenerateCurrentAsync(GenerateRequest request)
     {
+        return await GenerateAsync(request, avoidOverwrite: false);
+    }
+
+    private async Task<GenerationResult> GenerateAsync(GenerateRequest request, bool avoidOverwrite)
+    {
         var license = _licenseService.GetStatus();
         if (!license.CanGenerate)
         {
@@ -53,8 +58,10 @@ public sealed class ExcelGenerationService
             Directory.CreateDirectory(exportDirectory);
 
             var fileName = BuildOutputFileName(request);
-            var outputPath = Path.Combine(exportDirectory, fileName);
-            File.Copy(templatePath, outputPath, overwrite: true);
+            var outputPath = avoidOverwrite
+                ? ResolveUniqueOutputPath(exportDirectory, fileName)
+                : Path.Combine(exportDirectory, fileName);
+            File.Copy(templatePath, outputPath, overwrite: !avoidOverwrite);
 
             await ReplaceWorkbookTextAsync(outputPath, request);
             _licenseService.RecordGeneration();
@@ -63,7 +70,7 @@ public sealed class ExcelGenerationService
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "生成失败。Project={ProjectName}, SubItem={SubItem}, Location={Location}", request.ProjectName, request.SubItem, request.Location);
+            Log.Error(ex, "生成失败。Project={ProjectName}, TemplateType={TemplateType}", request.ProjectName, request.TemplateType);
             return new GenerationResult(false, [], ex.Message);
         }
     }
@@ -79,15 +86,13 @@ public sealed class ExcelGenerationService
             var item = enabledItems[index];
             var current = item.BaseRequest with
             {
-                SubItem = string.IsNullOrWhiteSpace(item.SubItem) ? item.BaseRequest.SubItem : item.SubItem,
-                Location = string.IsNullOrWhiteSpace(item.Location) ? item.BaseRequest.Location : item.Location,
                 ConstructionDate = item.Date,
                 AcceptanceDate = item.Date,
                 TemplateName = string.IsNullOrWhiteSpace(item.TemplateName) ? item.BaseRequest.TemplateName : item.TemplateName,
                 TemplateType = string.IsNullOrWhiteSpace(item.MaterialType) ? item.BaseRequest.TemplateType : item.MaterialType
             };
 
-            var result = await GenerateCurrentAsync(current);
+            var result = await GenerateAsync(current, avoidOverwrite: true);
             if (result.Success)
             {
                 files.AddRange(result.Files);
@@ -177,11 +182,32 @@ public sealed class ExcelGenerationService
         return name switch
         {
             "工程名称" => request.ProjectName,
-            "施工单位" => request.Constructor,
-            "监理单位" => request.Supervisor,
-            "施工部位" => request.Location,
-            "分部工程" => request.Division,
-            "分项名称" => request.SubItem,
+            "建设单位" or "建设单位名称" => request.DeveloperUnit.Name,
+            "施工单位" or "施工单位名称" => request.ConstructorUnit.Name,
+            "设计单位" or "设计单位名称" => request.DesignUnit.Name,
+            "监理单位" or "监理单位名称" => request.SupervisorUnit.Name,
+            "专业分包单位" or "专业分包单位名称" => request.ProfessionalSubcontractorUnit.Name,
+            "第三方检测单位" or "第三方检测单位名称" => request.ThirdPartyInspectionUnit.Name,
+            "建设单位项目负责人" => request.DeveloperUnit.ProjectManager,
+            "建设单位技术负责人" => request.DeveloperUnit.TechnicalManager,
+            "建设单位单位技术负责人" => request.DeveloperUnit.UnitTechnicalManager,
+            "施工单位项目负责人" => request.ConstructorUnit.ProjectManager,
+            "施工单位技术负责人" => request.ConstructorUnit.TechnicalManager,
+            "施工单位单位技术负责人" => request.ConstructorUnit.UnitTechnicalManager,
+            "设计单位项目负责人" => request.DesignUnit.ProjectManager,
+            "设计单位技术负责人" => request.DesignUnit.TechnicalManager,
+            "设计单位单位技术负责人" => request.DesignUnit.UnitTechnicalManager,
+            "监理单位项目负责人" => request.SupervisorUnit.ProjectManager,
+            "监理单位技术负责人" => request.SupervisorUnit.TechnicalManager,
+            "监理单位单位技术负责人" => request.SupervisorUnit.UnitTechnicalManager,
+            "监理单位专业监理工程师" => request.SupervisorUnit.ProfessionalSupervisorEngineer,
+            "监理单位总监理工程师" => request.SupervisorUnit.ChiefSupervisorEngineer,
+            "专业分包单位项目负责人" => request.ProfessionalSubcontractorUnit.ProjectManager,
+            "专业分包单位技术负责人" => request.ProfessionalSubcontractorUnit.TechnicalManager,
+            "专业分包单位单位技术负责人" => request.ProfessionalSubcontractorUnit.UnitTechnicalManager,
+            "第三方检测单位项目负责人" => request.ThirdPartyInspectionUnit.ProjectManager,
+            "第三方检测单位技术负责人" => request.ThirdPartyInspectionUnit.TechnicalManager,
+            "第三方检测单位单位技术负责人" => request.ThirdPartyInspectionUnit.UnitTechnicalManager,
             "检验批容量" => request.Capacity,
             "施工日期" => request.ConstructionDate.ToString("yyyy-MM-dd"),
             "验收日期" => request.AcceptanceDate.ToString("yyyy-MM-dd"),
@@ -203,7 +229,7 @@ public sealed class ExcelGenerationService
 
     private string ResolveKnowledgeValue(string name, GenerateRequest request)
     {
-        var itemType = name switch
+        _ = name switch
         {
             "主控项目表" => "主控项目",
             "一般项目表" => "一般项目",
@@ -211,17 +237,7 @@ public sealed class ExcelGenerationService
             _ => throw new InvalidOperationException($"未知规范字段：{name}")
         };
 
-        var items = _knowledgeRepository.QueryItems(request.Division, request.SubItem, itemType);
-        if (items.Count == 0)
-        {
-            throw new InvalidOperationException($"知识库缺少：{request.SubItem}-{name}");
-        }
-
-        return string.Join(Environment.NewLine, items.Select((item, index) =>
-        {
-            var deviation = string.IsNullOrWhiteSpace(item.AllowableDeviation) ? "" : $"；允许偏差：{item.AllowableDeviation}";
-            return $"{index + 1}. {item.ItemName}：{item.QualifiedStandard}{deviation}；检查方法：{item.CheckMethod}；依据：{item.StandardCode}（{item.StandardVersion}）";
-        }));
+        throw new InvalidOperationException($"资料生成已取消分部工程和分项名称，无法解析规范字段：{name}");
     }
 
     private string ResolveExportPath(string? requestedPath)
@@ -236,12 +252,32 @@ public sealed class ExcelGenerationService
 
     private static string BuildOutputFileName(GenerateRequest request)
     {
-        var rawName = $"{request.ProjectName}-{request.SubItem}-{request.Location}-{request.TemplateType}.xlsx";
+        var rawName = $"{request.ProjectName}-{request.TemplateType}-{request.ConstructionDate:yyyyMMdd}.xlsx";
         foreach (var invalid in Path.GetInvalidFileNameChars())
         {
             rawName = rawName.Replace(invalid, '_');
         }
 
         return rawName;
+    }
+
+    private static string ResolveUniqueOutputPath(string directory, string fileName)
+    {
+        var outputPath = Path.Combine(directory, fileName);
+        if (!File.Exists(outputPath))
+        {
+            return outputPath;
+        }
+
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        for (var index = 2; ; index++)
+        {
+            outputPath = Path.Combine(directory, $"{name}-{index}{extension}");
+            if (!File.Exists(outputPath))
+            {
+                return outputPath;
+            }
+        }
     }
 }

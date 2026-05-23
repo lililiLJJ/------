@@ -4,14 +4,12 @@
     <tabs>
       <tab id="engineeringDocsTab" label="工程资料">
         <group id="engineeringDocsGenerateGroup" label="资料生成">
-          <button id="btnOpenPanel" label="控制面板" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
-          <button id="btnGenerateCurrent" label="生成当前资料" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
-          <button id="btnBatchGenerate" label="批量生成" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+          <button id="btnOpenPanel" label="工程信息" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+          <button id="btnGenerateCurrent" label="资料生成" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
         </group>
         <group id="engineeringDocsManageGroup" label="系统">
           <button id="btnTemplates" label="模板管理" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnKnowledge" label="知识库管理" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
-          <button id="btnAiText" label="AI文本" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnActivation" label="软件激活" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnSettings" label="设置" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnEnvironmentCheck" label="环境自检" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>

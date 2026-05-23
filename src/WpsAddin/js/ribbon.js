@@ -18,19 +18,13 @@ function OnAction(control) {
       openEngineeringDocsPane("panel");
       break;
     case "btnGenerateCurrent":
-      openEngineeringDocsPane("panel");
-      break;
-    case "btnBatchGenerate":
-      openEngineeringDocsPane("batch");
+      openEngineeringDocsPane("generation");
       break;
     case "btnTemplates":
       openEngineeringDocsPane("templates");
       break;
     case "btnKnowledge":
       openEngineeringDocsPane("knowledge");
-      break;
-    case "btnAiText":
-      openEngineeringDocsPane("ai");
       break;
     case "btnActivation":
       openEngineeringDocsPane("license");
@@ -55,19 +49,74 @@ function OnGetEnabled() {
   return true;
 }
 
+const engineeringDocsTabKeys = {
+  paneId: "engineering_docs_taskpane_id",
+  targetTab: "engineering_docs_target_tab",
+  targetTabVersion: "engineering_docs_target_tab_version",
+  tabSignal: "engineering_docs_tab_signal"
+};
+
 function openEngineeringDocsPane(tabName) {
   const paneUrl = `${GetUrlPath()}/index.html#${tabName}`;
-  const storageKey = "engineering_docs_taskpane_id";
-  let paneId = window.Application.PluginStorage.getItem(storageKey);
+  signalEngineeringDocsTab(tabName);
+  let paneId = window.Application.PluginStorage.getItem(engineeringDocsTabKeys.paneId);
 
   if (!paneId) {
-    const taskPane = window.Application.CreateTaskPane(paneUrl);
-    paneId = taskPane.ID;
-    window.Application.PluginStorage.setItem(storageKey, paneId);
+    const taskPane = createEngineeringDocsTaskPane(paneUrl);
     taskPane.Visible = true;
     return;
   }
 
-  const taskPane = window.Application.GetTaskPane(paneId);
+  let taskPane = null;
+  try {
+    taskPane = window.Application.GetTaskPane(paneId);
+  } catch {
+    taskPane = createEngineeringDocsTaskPane(paneUrl);
+  }
+
+  if (!taskPane) {
+    taskPane = createEngineeringDocsTaskPane(paneUrl);
+  }
+
+  signalEngineeringDocsTab(tabName);
   taskPane.Visible = true;
+}
+
+function createEngineeringDocsTaskPane(paneUrl) {
+  const taskPane = window.Application.CreateTaskPane(paneUrl);
+  window.Application.PluginStorage.setItem(engineeringDocsTabKeys.paneId, taskPane.ID);
+  return taskPane;
+}
+
+function signalEngineeringDocsTab(tabName) {
+  const message = {
+    type: "engineering-docs-switch-tab",
+    tabName,
+    version: `${Date.now()}:${Math.random()}`
+  };
+
+  try {
+    window.Application.PluginStorage.setItem(engineeringDocsTabKeys.targetTab, tabName);
+    window.Application.PluginStorage.setItem(engineeringDocsTabKeys.targetTabVersion, message.version);
+  } catch {
+    // WPS PluginStorage can be unavailable in plain browser previews.
+  }
+
+  try {
+    if (typeof BroadcastChannel === "function") {
+      const channel = new BroadcastChannel(engineeringDocsTabKeys.tabSignal);
+      channel.postMessage(message);
+      channel.close();
+    }
+  } catch {
+    // Some embedded WebViews disable BroadcastChannel.
+  }
+
+  try {
+    if (window.localStorage) {
+      window.localStorage.setItem(engineeringDocsTabKeys.tabSignal, JSON.stringify(message));
+    }
+  } catch {
+    // localStorage may be blocked by the host.
+  }
 }

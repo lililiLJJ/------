@@ -1,12 +1,27 @@
 namespace GeneratorService.Models;
 
+public sealed record UnitInfo(
+    string Name,
+    string ProjectManager,
+    string TechnicalManager,
+    string UnitTechnicalManager);
+
+public sealed record SupervisorUnitInfo(
+    string Name,
+    string ProjectManager,
+    string TechnicalManager,
+    string UnitTechnicalManager,
+    string ProfessionalSupervisorEngineer,
+    string ChiefSupervisorEngineer);
+
 public sealed record GenerateRequest(
     string ProjectName,
-    string Constructor,
-    string Supervisor,
-    string Division,
-    string SubItem,
-    string Location,
+    UnitInfo DeveloperUnit,
+    UnitInfo ConstructorUnit,
+    UnitInfo DesignUnit,
+    SupervisorUnitInfo SupervisorUnit,
+    UnitInfo ProfessionalSubcontractorUnit,
+    UnitInfo ThirdPartyInspectionUnit,
     string Capacity,
     DateOnly ConstructionDate,
     DateOnly AcceptanceDate,
@@ -19,8 +34,6 @@ public sealed record BatchGenerateRequest(IReadOnlyList<BatchGenerateItem> Items
 public sealed record BatchGenerateItem(
     bool Enabled,
     string MaterialType,
-    string SubItem,
-    string Location,
     DateOnly Date,
     string TemplateName,
     GenerateRequest BaseRequest);
@@ -70,6 +83,13 @@ public sealed record BatchGenerationResult(
 public sealed record BatchFailure(int Row, string Reason);
 
 public sealed record TemplateInfo(string Name, string FullPath);
+
+public sealed record TemplateLibraryNode(
+    string Name,
+    string RelativePath,
+    string FullPath,
+    string Type,
+    IReadOnlyList<TemplateLibraryNode> Children);
 
 public sealed record LicenseStatus(
     bool Activated,

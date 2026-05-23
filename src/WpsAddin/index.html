@@ -16,41 +16,86 @@
     <button id="refreshStatus" class="iconButton" title="刷新服务状态">↻</button>
   </header>
 
-  <nav class="tabs" aria-label="功能菜单">
-    <button class="tab active" data-tab="panel">控制面板</button>
-    <button class="tab" data-tab="batch">批量生成</button>
-    <button class="tab" data-tab="templates">模板管理</button>
-    <button class="tab" data-tab="knowledge">知识库管理</button>
-    <button class="tab" data-tab="ai">AI文本</button>
-    <button class="tab" data-tab="license">软件激活</button>
-    <button class="tab" data-tab="settings">设置</button>
-    <button class="tab" data-tab="environment">环境自检</button>
-    <button class="tab" data-tab="logs">查看日志</button>
-  </nav>
-
   <main>
     <section id="serviceGuide" class="serviceGuide hidden" aria-live="polite">
       <div>
         <h2>本地生成服务未启动</h2>
-        <p>请先启动 GeneratorService，插件才能读取模板、查询知识库并生成资料。</p>
+        <p>正式安装包请重新运行 Client 目录中的安装脚本；开发调试请启动 GeneratorService。</p>
       </div>
       <div class="commandBox">
         <code id="serviceStartCommand">cd "D:\YY\编程\工程资料制作"; dotnet run --project "src/GeneratorService"</code>
       </div>
       <div class="actions compactActions">
-        <button id="copyStartCommand">复制启动命令</button>
+        <button id="copyStartCommand">复制处理方式</button>
         <button id="retryServiceStatus" class="primary">重新检测服务</button>
       </div>
     </section>
 
     <section id="panel" class="tabPanel active">
-      <form id="generateForm" class="formGrid">
-        <label>工程名称<input name="projectName" value="XX项目" required></label>
-        <label>施工单位<input name="constructor" value="XX建设" required></label>
-        <label>监理单位<input name="supervisor" value="XX监理" required></label>
-        <label>分部工程<input name="division" value="主体结构" required></label>
-        <label>分项名称<input name="subItem" value="钢筋安装" required></label>
-        <label>施工部位<input name="location" value="3层梁板" required></label>
+      <form id="projectInfoForm" class="projectInfoForm">
+        <label class="projectNameField">工程名称<input name="projectName" value="XX项目" required></label>
+
+        <div class="unitGrid">
+          <fieldset class="unitCard">
+            <legend>建设单位</legend>
+            <label>单位名称<input name="developerName" value="XX建设单位" required></label>
+            <label>项目负责人<input name="developerProjectManager"></label>
+            <label>技术负责人<input name="developerTechnicalManager"></label>
+            <label>单位技术负责人<input name="developerUnitTechnicalManager"></label>
+          </fieldset>
+
+          <fieldset class="unitCard">
+            <legend>施工单位</legend>
+            <label>单位名称<input name="constructorName" value="XX建设" required></label>
+            <label>项目负责人<input name="constructorProjectManager"></label>
+            <label>技术负责人<input name="constructorTechnicalManager"></label>
+            <label>单位技术负责人<input name="constructorUnitTechnicalManager"></label>
+          </fieldset>
+
+          <fieldset class="unitCard">
+            <legend>设计单位</legend>
+            <label>单位名称<input name="designName" value="XX设计" required></label>
+            <label>项目负责人<input name="designProjectManager"></label>
+            <label>技术负责人<input name="designTechnicalManager"></label>
+            <label>单位技术负责人<input name="designUnitTechnicalManager"></label>
+          </fieldset>
+
+          <fieldset class="unitCard">
+            <legend>监理单位</legend>
+            <label>单位名称<input name="supervisorName" value="XX监理" required></label>
+            <label>项目负责人<input name="supervisorProjectManager"></label>
+            <label>技术负责人<input name="supervisorTechnicalManager"></label>
+            <label>单位技术负责人<input name="supervisorUnitTechnicalManager"></label>
+            <label>专业监理工程师<input name="supervisorProfessionalSupervisorEngineer"></label>
+            <label>总监理工程师<input name="supervisorChiefSupervisorEngineer"></label>
+          </fieldset>
+
+          <fieldset class="unitCard">
+            <legend>专业分包单位</legend>
+            <label>单位名称<input name="professionalSubcontractorName" value="XX专业分包" required></label>
+            <label>项目负责人<input name="professionalSubcontractorProjectManager"></label>
+            <label>技术负责人<input name="professionalSubcontractorTechnicalManager"></label>
+            <label>单位技术负责人<input name="professionalSubcontractorUnitTechnicalManager"></label>
+          </fieldset>
+
+          <fieldset class="unitCard">
+            <legend>第三方检测单位</legend>
+            <label>单位名称<input name="thirdPartyInspectionName" value="XX检测" required></label>
+            <label>项目负责人<input name="thirdPartyInspectionProjectManager"></label>
+            <label>技术负责人<input name="thirdPartyInspectionTechnicalManager"></label>
+            <label>单位技术负责人<input name="thirdPartyInspectionUnitTechnicalManager"></label>
+          </fieldset>
+        </div>
+      </form>
+    </section>
+
+    <section id="generation" class="tabPanel">
+      <div class="sectionHeader">
+        <div>
+          <h2>当前生成</h2>
+        </div>
+      </div>
+      <form id="generationForm" class="formGrid">
         <label>检验批容量<input name="capacity" value="1批" required></label>
         <label>施工日期<input name="constructionDate" type="date" value="2026-05-22" required></label>
         <label>验收日期<input name="acceptanceDate" type="date" value="2026-05-23" required></label>
@@ -63,9 +108,12 @@
         <button id="reloadTemplates">刷新模板</button>
       </div>
       <pre id="generateResult" class="resultBox"></pre>
-    </section>
 
-    <section id="batch" class="tabPanel">
+      <div class="sectionHeader generationBlock">
+        <div>
+          <h2>批量生成</h2>
+        </div>
+      </div>
       <div class="batchToolbar">
         <button id="addBatchRow">新增一行</button>
         <button id="generateBatch" class="primary">批量生成</button>
@@ -75,8 +123,6 @@
           <tr>
             <th>生成</th>
             <th>资料类型</th>
-            <th>分项名称</th>
-            <th>部位</th>
             <th>日期</th>
             <th>模板</th>
           </tr>
@@ -84,17 +130,65 @@
         <tbody id="batchRows"></tbody>
       </table>
       <pre id="batchResult" class="resultBox"></pre>
+
+      <div class="sectionHeader generationBlock">
+        <div>
+          <h2>AI 预览</h2>
+          <p id="aiSummary">AI只用于生成申请语、验收意见等自然语言。</p>
+        </div>
+        <button id="previewAiText" class="primary">生成预览</button>
+      </div>
+      <form id="aiForm" class="formGrid">
+        <label>文本类型
+          <select name="fieldName">
+            <option value="申请语">申请语</option>
+            <option value="验收意见">验收意见</option>
+            <option value="备注说明">备注说明</option>
+            <option value="试验过程">试验过程</option>
+          </select>
+        </label>
+      </form>
+      <div class="noticeBox">
+        AI文本不会用于主控项目、一般项目、允许偏差、检查方法、规范条文和实测值。
+      </div>
+      <pre id="aiResult" class="resultBox"></pre>
     </section>
 
     <section id="templates" class="tabPanel">
-      <div class="sectionHeader">
-        <div>
-          <h2>模板管理</h2>
-          <p id="templateSummary">正在读取模板库...</p>
-        </div>
-        <button id="refreshTemplateList" class="primary">刷新模板</button>
+      <div class="templateWorkbenchToolbar">
+        <button id="newGeneratedForm" class="primary" disabled>新建资料</button>
+        <button id="saveSpreadsheet" disabled>保存</button>
+        <button id="exportSpreadsheet" disabled>导出</button>
+        <button id="deleteGeneratedForm" disabled>删除</button>
+        <button id="openTemplateFolder">打开模板库</button>
+        <button id="refreshTemplateList">刷新</button>
+        <input id="templateSearch" class="templateSearch" placeholder="搜索模板/部位">
       </div>
-      <div class="templateList" id="templateList"></div>
+
+      <div class="templateWorkbench">
+        <aside class="templateTreePane">
+          <div class="templateTreeHeader">
+            <h2>工程资料规范层级树</h2>
+            <p id="templateSummary">正在读取模板库...</p>
+          </div>
+          <div id="templateTreeView" class="templateTreeView"></div>
+        </aside>
+
+        <section class="spreadsheetPane">
+          <div class="spreadsheetHeader">
+            <div>
+              <h2 id="spreadsheetTitle">请选择资料表</h2>
+              <p id="spreadsheetSummary">选择左侧检验批模板可新建资料；选择已创建的具体部位表后，会用 WPS 原生表格打开对应 .xlsx。</p>
+            </div>
+          </div>
+          <div id="spreadsheetPreview" class="spreadsheetPreview">
+            <div class="spreadsheetEmpty">
+              <strong>WPS 表格编辑区</strong>
+              <p>这里不重绘 Excel。点击已创建资料表后，系统会打开真实 .xlsx 文件，以保留合并单元格、边框、字体、行高和列宽。</p>
+            </div>
+          </div>
+        </section>
+      </div>
       <pre id="templateResult" class="resultBox"></pre>
     </section>
 
@@ -138,30 +232,6 @@
         </table>
       </div>
       <pre id="knowledgeResult" class="resultBox"></pre>
-    </section>
-
-    <section id="ai" class="tabPanel">
-      <div class="sectionHeader">
-        <div>
-          <h2>AI文本</h2>
-          <p id="aiSummary">AI只用于生成申请语、验收意见等自然语言。</p>
-        </div>
-        <button id="previewAiText" class="primary">生成预览</button>
-      </div>
-      <form id="aiForm" class="formGrid">
-        <label>文本类型
-          <select name="fieldName">
-            <option value="申请语">申请语</option>
-            <option value="验收意见">验收意见</option>
-            <option value="备注说明">备注说明</option>
-            <option value="试验过程">试验过程</option>
-          </select>
-        </label>
-      </form>
-      <div class="noticeBox">
-        AI文本不会用于主控项目、一般项目、允许偏差、检查方法、规范条文和实测值。
-      </div>
-      <pre id="aiResult" class="resultBox"></pre>
     </section>
 
     <section id="license" class="tabPanel">
@@ -226,6 +296,41 @@
       <pre id="logsResult" class="resultBox"></pre>
     </section>
   </main>
+
+  <div id="templatePreviewModal" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="templatePreviewTitle">
+    <section class="modalPanel">
+      <div class="modalHeader">
+        <div>
+          <h2 id="templatePreviewTitle">模板库预览</h2>
+          <p id="templatePreviewSummary">正在读取模板库...</p>
+        </div>
+        <button id="closeTemplatePreview" class="iconButton" title="关闭">×</button>
+      </div>
+      <div id="templateTree" class="templateTree"></div>
+    </section>
+  </div>
+
+  <div id="generatedFormModal" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="generatedFormTitle">
+    <section class="modalPanel compactModal">
+      <div class="modalHeader">
+        <div>
+          <h2 id="generatedFormTitle">新建检验批资料</h2>
+          <p id="generatedFormTemplateName">请选择模板。</p>
+        </div>
+        <button id="closeGeneratedFormModal" class="iconButton" title="关闭">×</button>
+      </div>
+      <form id="generatedFormForm" class="generatedFormForm">
+        <label>部位名称<input name="formName" value="一层应急照明配电箱" required></label>
+        <label>检验批容量<input name="capacity" value="3台"></label>
+        <label>施工日期<input name="constructionDate" type="date" value="2026-05-23"></label>
+        <label>验收日期<input name="acceptanceDate" type="date" value="2026-05-23"></label>
+        <div class="actions compactActions">
+          <button type="button" id="cancelGeneratedForm">取消</button>
+          <button type="submit" class="primary">创建并打开</button>
+        </div>
+      </form>
+    </section>
+  </div>
 
   <script src="./app.js"></script>
 </body>

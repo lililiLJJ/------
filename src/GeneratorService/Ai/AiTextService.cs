@@ -38,7 +38,7 @@ public sealed class AiTextService
                     new
                     {
                         role = "user",
-                        content = $"字段：{fieldName}\n工程：{request.ProjectName}\n分项：{request.SubItem}\n部位：{request.Location}\n施工日期：{request.ConstructionDate:yyyy-MM-dd}\n验收日期：{request.AcceptanceDate:yyyy-MM-dd}"
+                        content = $"字段：{fieldName}\n工程：{request.ProjectName}\n施工单位：{request.ConstructorUnit.Name}\n监理单位：{request.SupervisorUnit.Name}\n施工日期：{request.ConstructionDate:yyyy-MM-dd}\n验收日期：{request.AcceptanceDate:yyyy-MM-dd}"
                     }
                 },
                 temperature = 0.2
@@ -72,7 +72,7 @@ public sealed class AiTextService
     {
         return fieldName switch
         {
-            "申请语" => $"我单位已完成{request.Location}{request.SubItem}相关施工内容，资料自检合格，现申请验收。",
+            "申请语" => $"{request.ConstructorUnit.Name}已完成本次资料相关内容，资料自检合格，现申请验收。",
             "验收意见" => "经检查，资料齐全，现场质量满足验收要求，同意进入下一道工序。",
             "试验过程" => "按现场取样及试验要求完成相关试验过程记录。",
             _ => "见现场记录。"

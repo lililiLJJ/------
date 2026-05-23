@@ -16,9 +16,34 @@ app.js         页面业务逻辑
 styles.css     页面样式
 ```
 
-## 启动调试
+## 正式安装
 
-先启动本地生成服务：
+发布包中的客户目录 `Client/` 已经提供正式安装脚本：
+
+```text
+1-Install-Client.cmd
+```
+
+客户机器上首次使用时双击该脚本即可。安装完成后会自动完成两件事：
+
+- WPS 加载项安装到 `%APPDATA%/kingsoft/wps/jsaddons`
+- `GeneratorService.exe` 注册为当前用户登录时静默启动
+
+后续不需要再从终端执行 `wpsjs debug` 或手动启动服务，直接打开 WPS 表格即可使用顶部“工程资料”加载项。
+
+如果安装时 WPS 已经打开，请完全退出 WPS 后重新打开。
+
+## 开发调试
+
+推荐直接双击：
+
+```text
+tools/1-启动开发模式.cmd
+```
+
+该脚本会自动停止旧的 `GeneratorService`，从源码启动 `src/GeneratorService`，再从 `src/WpsAddin` 启动 `wpsjs debug`。以后查看前端新功能一般只需要刷新或重开 WPS 任务窗格；后端接口变更只需要重新运行开发模式脚本，不需要重新安装发布包。
+
+开发时先启动本地生成服务：
 
 ```powershell
 $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
@@ -107,7 +132,7 @@ index.html#batch
 const serviceBaseUrl = "http://127.0.0.1:5188";
 ```
 
-所以调试 WPS 加载项前，必须先启动 `GeneratorService`。
+所以开发调试 WPS 加载项前，必须先启动 `GeneratorService`。正式安装包会通过计划任务自动启动该服务。
 
 ## 模板管理
 
@@ -267,10 +292,10 @@ AI文本能预览申请语或验收意见
 重新检测服务
 ```
 
-其中“复制启动命令”会复制：
+其中“复制启动命令”会复制开发调试命令：
 
 ```powershell
 cd "D:\YY\编程\工程资料制作"; dotnet run --project "src/GeneratorService"
 ```
 
-复制后打开 PowerShell 粘贴执行。看到服务监听 `http://127.0.0.1:5188` 后，再回到 WPS 任务窗格点击“重新检测服务”。
+正式安装包场景下，如果服务未启动，优先重新运行 `Client/1-Install-Client.cmd`；开发调试场景下，复制后打开 PowerShell 粘贴执行。看到服务监听 `http://127.0.0.1:5188` 后，再回到 WPS 任务窗格点击“重新检测服务”。

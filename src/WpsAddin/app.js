@@ -1,7 +1,18 @@
 const serviceBaseUrl = "http://127.0.0.1:5188";
-const serviceStartCommand = 'cd "D:\\YY\\编程\\工程资料制作"; dotnet run --project "src/GeneratorService"';
+const serviceStartCommand = '正式安装包：重新运行 Client\\1-Install-Client.cmd；开发调试：cd "D:\\YY\\编程\\工程资料制作"; dotnet run --project "src/GeneratorService"';
 let templates = [];
+let templateTreeNodes = [];
+let selectedTemplateNode = null;
+let currentGeneratedForm = null;
 let serviceAvailable = false;
+let lastExternalTabVersion = "";
+const activeProjectId = "project-default";
+
+const tabSyncKeys = {
+  targetTab: "engineering_docs_target_tab",
+  targetTabVersion: "engineering_docs_target_tab_version",
+  tabSignal: "engineering_docs_tab_signal"
+};
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -10,21 +21,38 @@ function showResult(selector, data) {
   $(selector).textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
 }
 
-function getFormData() {
-  const data = Object.fromEntries(new FormData($("#generateForm")).entries());
+function getUnitInfo(data, prefix) {
   return {
-    projectName: data.projectName,
-    constructor: data.constructor,
-    supervisor: data.supervisor,
-    division: data.division,
-    subItem: data.subItem,
-    location: data.location,
-    capacity: data.capacity,
-    constructionDate: data.constructionDate,
-    acceptanceDate: data.acceptanceDate,
-    templateType: data.templateType,
-    templateName: data.templateName,
-    exportPath: data.exportPath || null
+    name: data[`${prefix}Name`] || "",
+    projectManager: data[`${prefix}ProjectManager`] || "",
+    technicalManager: data[`${prefix}TechnicalManager`] || "",
+    unitTechnicalManager: data[`${prefix}UnitTechnicalManager`] || ""
+  };
+}
+
+function getFormData() {
+  const projectData = Object.fromEntries(new FormData($("#projectInfoForm")).entries());
+  const generationData = Object.fromEntries(new FormData($("#generationForm")).entries());
+  const supervisorUnit = {
+    ...getUnitInfo(projectData, "supervisor"),
+    professionalSupervisorEngineer: projectData.supervisorProfessionalSupervisorEngineer || "",
+    chiefSupervisorEngineer: projectData.supervisorChiefSupervisorEngineer || ""
+  };
+
+  return {
+    projectName: projectData.projectName,
+    developerUnit: getUnitInfo(projectData, "developer"),
+    constructorUnit: getUnitInfo(projectData, "constructor"),
+    designUnit: getUnitInfo(projectData, "design"),
+    supervisorUnit,
+    professionalSubcontractorUnit: getUnitInfo(projectData, "professionalSubcontractor"),
+    thirdPartyInspectionUnit: getUnitInfo(projectData, "thirdPartyInspection"),
+    capacity: generationData.capacity,
+    constructionDate: generationData.constructionDate,
+    acceptanceDate: generationData.acceptanceDate,
+    templateType: generationData.templateType,
+    templateName: generationData.templateName,
+    exportPath: generationData.exportPath || null
   };
 }
 
@@ -79,6 +107,9 @@ function setServiceOffline() {
   $("#serviceStartCommand").textContent = serviceStartCommand;
   setGenerateDisabled(true);
   renderTemplateList();
+  $("#templateSummary").textContent = "本地服务未启动，暂时无法读取工程资料规范层级树。";
+  $("#templateTreeView").innerHTML = '<p class="emptyText">请先启动 GeneratorService。</p>';
+  renderSpreadsheetPlaceholder();
   $("#knowledgeSummary").textContent = "本地服务未启动，暂时无法读取知识库。";
   renderKnowledgeItems([]);
   showResult("#knowledgeResult", "请先启动 GeneratorService，然后点击“重新检测服务”或“查询知识库”。");
@@ -99,6 +130,7 @@ async function retryServiceStatus() {
   }
 
   await loadTemplates().catch((error) => showResult("#generateResult", error));
+  await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
   await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
   await loadSettings().catch((error) => showResult("#settingsResult", error));
   await runEnvironmentCheck().catch((error) => showResult("#environmentResult", error));
@@ -110,17 +142,19 @@ function setGenerateDisabled(disabled) {
   $("#generateBatch").disabled = disabled;
   $("#reloadTemplates").disabled = disabled;
   $("#refreshTemplateList").disabled = disabled;
+  $("#openTemplateFolder").disabled = disabled;
   $("#refreshKnowledge").disabled = disabled;
   $("#previewAiText").disabled = disabled;
   $("#loadSettings").disabled = disabled;
   $("#runEnvironmentCheck").disabled = disabled;
+  updateTemplateToolbarState(disabled);
 }
 
 async function copyStartCommand() {
   const command = $("#serviceStartCommand").textContent;
   try {
     await navigator.clipboard.writeText(command);
-    showResult("#generateResult", "启动命令已复制。请打开 PowerShell，粘贴并执行，然后点击“重新检测服务”。");
+    showResult("#generateResult", "处理方式已复制。正式安装包请重新运行 Client\\1-Install-Client.cmd；开发调试请执行复制的调试命令，然后点击“重新检测服务”。");
   } catch {
     showResult("#generateResult", `无法自动复制，请手动复制：\n${command}`);
   }
@@ -145,6 +179,14 @@ async function loadTemplates() {
 function renderTemplateList() {
   const list = $("#templateList");
   const summary = $("#templateSummary");
+  if (!list) {
+    if (serviceAvailable && summary) {
+      summary.textContent = templates.length === 0
+        ? "当前模板库为空。"
+        : `当前工程资料规范树已加载，基础模板 ${templates.length} 个。`;
+    }
+    return;
+  }
   list.innerHTML = "";
 
   if (!serviceAvailable) {
@@ -182,13 +224,393 @@ function renderTemplateList() {
 }
 
 async function refreshTemplateManagement() {
-  showResult("#templateResult", "正在刷新模板列表...");
+  showResult("#templateResult", "正在刷新工程资料规范层级树...");
   try {
     await loadTemplates();
+    await loadTemplateLibraryTree();
   } catch (error) {
     $("#templateSummary").textContent = "模板读取失败。";
     showResult("#templateResult", error);
   }
+}
+
+async function loadTemplateLibraryTree() {
+  const result = await api(`/api/template-library/tree?projectId=${encodeURIComponent(activeProjectId)}`);
+  templateTreeNodes = result.nodes || [];
+  selectedTemplateNode = null;
+  currentGeneratedForm = null;
+  $("#templateSummary").textContent = `${result.projectName}｜已加载工程资料规范层级树。`;
+  renderTemplateTreeView();
+  renderSpreadsheetPlaceholder();
+  updateTemplateToolbarState(false);
+  showResult("#templateResult", result);
+  return result;
+}
+
+function renderTemplateTreeView() {
+  const tree = $("#templateTreeView");
+  if (!tree) {
+    return;
+  }
+
+  tree.innerHTML = "";
+  const filterText = ($("#templateSearch")?.value || "").trim();
+  const nodes = filterTreeNodes(templateTreeNodes, filterText);
+  if (nodes.length === 0) {
+    tree.innerHTML = '<p class="emptyText">没有匹配的模板或资料表。</p>';
+    return;
+  }
+
+  const root = document.createElement("div");
+  root.className = "specTreeRoot";
+  for (const node of nodes) {
+    root.appendChild(createSpecTreeNode(node));
+  }
+  tree.appendChild(root);
+}
+
+function filterTreeNodes(nodes, filterText) {
+  if (!filterText) {
+    return nodes;
+  }
+
+  const normalized = filterText.toLowerCase();
+  return nodes
+    .map((node) => {
+      const children = filterTreeNodes(node.children || [], filterText);
+      const selfMatches = [
+        node.name,
+        node.templateCode,
+        node.discipline
+      ].some((value) => String(value || "").toLowerCase().includes(normalized));
+      return selfMatches || children.length > 0 ? { ...node, children } : null;
+    })
+    .filter(Boolean);
+}
+
+function createSpecTreeNode(node) {
+  if (node.nodeType === "folder") {
+    const details = document.createElement("details");
+    details.className = "specTreeFolder";
+    details.open = true;
+
+    const summary = document.createElement("summary");
+    const label = document.createElement("span");
+    label.textContent = node.name;
+    const meta = document.createElement("small");
+    meta.textContent = resolveFolderLevelLabel(node.folderLevel);
+    summary.append(label, meta);
+    details.appendChild(summary);
+
+    const children = document.createElement("div");
+    children.className = "specTreeChildren";
+    for (const child of node.children || []) {
+      children.appendChild(createSpecTreeNode(child));
+    }
+    details.appendChild(children);
+    return details;
+  }
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `specTreeNode ${node.nodeType}`;
+  button.dataset.nodeId = node.id;
+
+  const title = document.createElement("span");
+  title.textContent = node.name;
+  const meta = document.createElement("small");
+  meta.textContent = node.nodeType === "template" ? (node.templateCode || "检验批模板") : "已创建资料表";
+  button.append(title, meta);
+  button.addEventListener("click", () => selectTemplateTreeNode(node));
+  return button;
+}
+
+function resolveFolderLevelLabel(folderLevel) {
+  return {
+    discipline: "专业",
+    division: "分部工程",
+    sub_division: "子分部工程",
+    sub_item: "分项工程"
+  }[folderLevel] || "分类";
+}
+
+async function selectTemplateTreeNode(node) {
+  selectedTemplateNode = node;
+  currentGeneratedForm = null;
+  for (const item of $$(".specTreeNode")) {
+    item.classList.toggle("selected", item.dataset.nodeId === node.id);
+  }
+
+  if (node.nodeType === "template") {
+    $("#spreadsheetTitle").textContent = node.name;
+    $("#spreadsheetSummary").textContent = `模板编码：${node.templateCode || "未配置"}。点击“新建资料”可复制模板生成独立资料表。`;
+    $("#spreadsheetPreview").innerHTML = `
+      <div class="spreadsheetEmpty">
+        <strong>检验批模板</strong>
+        <p>${escapeHtml(node.templateFilePath || "未配置模板文件路径")}</p>
+      </div>`;
+    updateTemplateToolbarState(false);
+    return;
+  }
+
+  if (node.nodeType === "generated_form") {
+    await openGeneratedForm(node);
+  }
+}
+
+async function openGeneratedForm(node) {
+  $("#spreadsheetTitle").textContent = node.name;
+  $("#spreadsheetSummary").textContent = "正在打开资料表...";
+  try {
+    const form = await api(`/api/generated-forms/${encodeURIComponent(node.id)}`);
+    currentGeneratedForm = form;
+    $("#spreadsheetSummary").textContent = `模板编码：${form.templateCode || "未配置"}｜可编辑：${form.canEdit ? "是" : "否"}`;
+    $("#spreadsheetPreview").innerHTML = `
+      <div class="spreadsheetFileCard">
+        <strong>${escapeHtml(form.name)}</strong>
+        <p>${escapeHtml(form.generatedFilePath)}</p>
+      </div>`;
+    await openSpreadsheetPath(form);
+    updateTemplateToolbarState(false);
+    showResult("#templateResult", form);
+  } catch (error) {
+    $("#spreadsheetSummary").textContent = "资料表打开失败。";
+    showResult("#templateResult", error);
+  }
+}
+
+async function openSpreadsheetPath(form) {
+  try {
+    if (window.Application && window.Application.Workbooks && typeof window.Application.Workbooks.Open === "function") {
+      window.Application.Workbooks.Open(form.generatedFilePath);
+      return;
+    }
+  } catch {
+    // Fallback to local service if WPS object model is unavailable or rejects the path.
+  }
+
+  await api(`/api/generated-forms/${encodeURIComponent(form.id)}/open`, { method: "POST" });
+}
+
+function renderSpreadsheetPlaceholder() {
+  $("#spreadsheetTitle").textContent = "请选择资料表";
+  $("#spreadsheetSummary").textContent = "选择左侧检验批模板可新建资料；选择已创建的具体部位表后，会用 WPS 原生表格打开对应 .xlsx。";
+  $("#spreadsheetPreview").innerHTML = `
+    <div class="spreadsheetEmpty">
+      <strong>WPS 表格编辑区</strong>
+      <p>这里不重绘 Excel。点击已创建资料表后，系统会打开真实 .xlsx 文件，以保留合并单元格、边框、字体、行高和列宽。</p>
+    </div>`;
+}
+
+function updateTemplateToolbarState(forceDisabled = false) {
+  const canCreate = !forceDisabled && selectedTemplateNode?.nodeType === "template";
+  const canOperateForm = !forceDisabled && !!currentGeneratedForm;
+  $("#newGeneratedForm").disabled = !canCreate;
+  $("#saveSpreadsheet").disabled = !canOperateForm;
+  $("#exportSpreadsheet").disabled = !canOperateForm;
+  $("#deleteGeneratedForm").disabled = !canOperateForm;
+}
+
+function openGeneratedFormModal() {
+  if (!selectedTemplateNode || selectedTemplateNode.nodeType !== "template") {
+    showResult("#templateResult", "请先在左侧选择一个检验批模板。");
+    return;
+  }
+
+  $("#generatedFormTemplateName").textContent = selectedTemplateNode.name;
+  $("#generatedFormModal").classList.remove("hidden");
+}
+
+function closeGeneratedFormModal() {
+  $("#generatedFormModal").classList.add("hidden");
+}
+
+async function createGeneratedForm(event) {
+  event.preventDefault();
+  if (!selectedTemplateNode || selectedTemplateNode.nodeType !== "template") {
+    showResult("#templateResult", "请先选择检验批模板。");
+    return;
+  }
+
+  const data = Object.fromEntries(new FormData($("#generatedFormForm")).entries());
+  try {
+    const result = await api("/api/generated-forms", {
+      method: "POST",
+      body: JSON.stringify({
+        projectId: activeProjectId,
+        templateNodeId: selectedTemplateNode.id,
+        formName: data.formName,
+        fields: {
+          capacity: data.capacity || "",
+          constructionDate: data.constructionDate || "",
+          acceptanceDate: data.acceptanceDate || ""
+        }
+      })
+    });
+    closeGeneratedFormModal();
+    await loadTemplateLibraryTree();
+    await openGeneratedForm(result.node);
+  } catch (error) {
+    showResult("#templateResult", error);
+  }
+}
+
+function saveSpreadsheet() {
+  try {
+    if (window.Application?.ActiveWorkbook?.Save) {
+      window.Application.ActiveWorkbook.Save();
+      showResult("#templateResult", "当前 WPS 工作簿已保存。");
+      return;
+    }
+  } catch (error) {
+    showResult("#templateResult", error);
+    return;
+  }
+
+  showResult("#templateResult", "当前环境无法调用 WPS 保存接口，请在 WPS 表格中使用 Ctrl+S 保存。");
+}
+
+function exportSpreadsheet() {
+  showResult("#templateResult", "导出功能将基于当前 WPS 工作簿扩展。当前请先使用 WPS 的“另存为/输出为PDF”完成导出。");
+}
+
+async function deleteGeneratedForm() {
+  if (!currentGeneratedForm) {
+    return;
+  }
+
+  if (!window.confirm(`确认删除资料表“${currentGeneratedForm.name}”？此操作会删除生成的 .xlsx 文件。`)) {
+    return;
+  }
+
+  try {
+    const result = await api(`/api/generated-forms/${encodeURIComponent(currentGeneratedForm.id)}`, { method: "DELETE" });
+    showResult("#templateResult", result);
+    await loadTemplateLibraryTree();
+  } catch (error) {
+    showResult("#templateResult", error);
+  }
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+async function openTemplateFolder() {
+  showResult("#templateResult", "正在打开模板库文件夹...");
+  try {
+    const result = await api("/api/templates/open-folder", { method: "POST" });
+    showResult("#templateResult", result);
+  } catch (error) {
+    showResult("#templateResult", error);
+  }
+}
+
+function openTemplatePreviewModal() {
+  $("#templatePreviewModal").classList.remove("hidden");
+}
+
+function closeTemplatePreviewModal() {
+  $("#templatePreviewModal").classList.add("hidden");
+}
+
+async function previewTemplateLibrary() {
+  openTemplatePreviewModal();
+  $("#templatePreviewSummary").textContent = "正在读取模板库...";
+  $("#templateTree").innerHTML = "";
+
+  try {
+    const result = await api("/api/templates/tree");
+    $("#templatePreviewSummary").textContent = `模板库：${result.rootPath}｜共 ${result.totalTemplates} 个模板`;
+    renderTemplateTree(result.tree);
+    showResult("#templateResult", result);
+  } catch (error) {
+    $("#templatePreviewSummary").textContent = "模板库预览读取失败。";
+    $("#templateTree").innerHTML = '<p class="emptyText">无法读取模板库，请确认本地服务已启动。</p>';
+    showResult("#templateResult", error);
+  }
+}
+
+function renderTemplateTree(root) {
+  const tree = $("#templateTree");
+  tree.innerHTML = "";
+
+  if (!root || !root.children || root.children.length === 0) {
+    tree.innerHTML = '<p class="emptyText">模板库为空，请把 .xlsx 模板文件放入 Templates 目录。</p>';
+    return;
+  }
+
+  const container = document.createElement("div");
+  container.className = "templateTreeRoot";
+  for (const child of root.children) {
+    container.appendChild(createTemplateTreeNode(child));
+  }
+  tree.appendChild(container);
+}
+
+function createTemplateTreeNode(node) {
+  if (node.type === "folder") {
+    const details = document.createElement("details");
+    details.className = "templateFolder";
+    details.open = true;
+
+    const summary = document.createElement("summary");
+    const name = document.createElement("strong");
+    name.textContent = node.name;
+    const meta = document.createElement("span");
+    meta.textContent = `${countTemplatesInNode(node)} 个模板`;
+    summary.append(name, meta);
+    details.appendChild(summary);
+
+    const children = document.createElement("div");
+    children.className = "templateFolderChildren";
+    if (!node.children || node.children.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "emptyText";
+      empty.textContent = "此文件夹内没有模板。";
+      children.appendChild(empty);
+    } else {
+      for (const child of node.children) {
+        children.appendChild(createTemplateTreeNode(child));
+      }
+    }
+    details.appendChild(children);
+    return details;
+  }
+
+  const item = document.createElement("article");
+  item.className = "templateTreeFile";
+
+  const content = document.createElement("div");
+  const name = document.createElement("strong");
+  name.textContent = node.name;
+  const path = document.createElement("p");
+  path.textContent = node.relativePath || node.fullPath;
+  content.append(name, path);
+
+  const badge = document.createElement("span");
+  badge.className = "templateBadge";
+  badge.textContent = "xlsx";
+
+  item.append(content, badge);
+  return item;
+}
+
+function countTemplatesInNode(node) {
+  if (!node) {
+    return 0;
+  }
+
+  if (node.type === "template") {
+    return 1;
+  }
+
+  return (node.children || []).reduce((total, child) => total + countTemplatesInNode(child), 0);
 }
 
 function getKnowledgeFilters() {
@@ -387,8 +809,6 @@ function createBatchRow(values = {}) {
   tr.innerHTML = `
     <td><input type="checkbox" class="batch-enabled" ${values.enabled === false ? "" : "checked"}></td>
     <td><input class="batch-type" value="${values.materialType || "检验批"}"></td>
-    <td><input class="batch-subitem" value="${values.subItem || "钢筋安装"}"></td>
-    <td><input class="batch-location" value="${values.location || "3层梁板"}"></td>
     <td><input class="batch-date" type="date" value="${values.date || "2026-05-22"}"></td>
     <td><select class="batch-template"></select></td>
   `;
@@ -418,8 +838,6 @@ async function generateBatch() {
   const items = $$("#batchRows tr").map((row) => ({
     enabled: row.querySelector(".batch-enabled").checked,
     materialType: row.querySelector(".batch-type").value,
-    subItem: row.querySelector(".batch-subitem").value,
-    location: row.querySelector(".batch-location").value,
     date: row.querySelector(".batch-date").value,
     templateName: row.querySelector(".batch-template").value || baseRequest.templateName,
     baseRequest
@@ -501,32 +919,135 @@ function bindTabs() {
 
 function activateTab(tabId) {
   const targetPanel = $(`#${tabId}`);
-  const targetButton = $(`.tab[data-tab="${tabId}"]`);
-  if (!targetPanel || !targetButton) {
-    return;
+  if (!targetPanel) {
+    return false;
   }
 
-  for (const tab of $$(".tab")) tab.classList.remove("active");
   for (const panel of $$(".tabPanel")) panel.classList.remove("active");
-  targetButton.classList.add("active");
   targetPanel.classList.add("active");
   if (window.location.hash !== `#${tabId}`) {
     window.history.replaceState(null, "", `#${tabId}`);
   }
+  return true;
+}
+
+function normalizeTabId(tabId) {
+  const legacyTabs = {
+    batch: "generation",
+    ai: "generation"
+  };
+  return legacyTabs[tabId] || tabId;
 }
 
 function activateTabFromHash() {
-  const tabId = window.location.hash.replace("#", "") || "panel";
-  activateTab(tabId);
+  const requestedTab = window.location.hash.replace("#", "") || "panel";
+  activateTab(normalizeTabId(requestedTab));
+}
+
+function applyExternalTabSignal(message) {
+  if (!message || message.type !== "engineering-docs-switch-tab" || !message.tabName) {
+    return;
+  }
+
+  const version = String(message.version || "");
+  if (version && version === lastExternalTabVersion) {
+    return;
+  }
+
+  if (activateTab(normalizeTabId(message.tabName)) && version) {
+    lastExternalTabVersion = version;
+  }
+}
+
+function readPluginStorageTabSignal() {
+  try {
+    if (!window.Application || !window.Application.PluginStorage) {
+      return;
+    }
+
+    const tabName = window.Application.PluginStorage.getItem(tabSyncKeys.targetTab);
+    const version = window.Application.PluginStorage.getItem(tabSyncKeys.targetTabVersion);
+    if (!tabName || !version || version === lastExternalTabVersion) {
+      return;
+    }
+
+    applyExternalTabSignal({
+      type: "engineering-docs-switch-tab",
+      tabName,
+      version
+    });
+  } catch {
+    // Plain browser previews do not expose WPS PluginStorage.
+  }
+}
+
+function bindExternalTabSwitching() {
+  try {
+    if (typeof BroadcastChannel === "function") {
+      const channel = new BroadcastChannel(tabSyncKeys.tabSignal);
+      channel.onmessage = (event) => applyExternalTabSignal(event.data);
+    }
+  } catch {
+    // Some WPS WebViews disable BroadcastChannel.
+  }
+
+  window.addEventListener("storage", (event) => {
+    if (event.key !== tabSyncKeys.tabSignal || !event.newValue) {
+      return;
+    }
+
+    try {
+      applyExternalTabSignal(JSON.parse(event.newValue));
+    } catch {
+      // Ignore malformed messages from storage.
+    }
+  });
+
+  window.addEventListener("focus", readPluginStorageTabSignal);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      readPluginStorageTabSignal();
+    }
+  });
+  window.setInterval(readPluginStorageTabSignal, 500);
+  readPluginStorageTabSignal();
 }
 
 async function boot() {
   bindTabs();
+  bindExternalTabSwitching();
+  activateTabFromHash();
   $("#refreshStatus").addEventListener("click", refreshStatus);
   $("#retryServiceStatus").addEventListener("click", retryServiceStatus);
   $("#copyStartCommand").addEventListener("click", copyStartCommand);
   $("#reloadTemplates").addEventListener("click", loadTemplates);
   $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);
+  $("#openTemplateFolder").addEventListener("click", openTemplateFolder);
+  $("#newGeneratedForm").addEventListener("click", openGeneratedFormModal);
+  $("#saveSpreadsheet").addEventListener("click", saveSpreadsheet);
+  $("#exportSpreadsheet").addEventListener("click", exportSpreadsheet);
+  $("#deleteGeneratedForm").addEventListener("click", deleteGeneratedForm);
+  $("#templateSearch").addEventListener("input", renderTemplateTreeView);
+  $("#generatedFormForm").addEventListener("submit", createGeneratedForm);
+  $("#closeGeneratedFormModal").addEventListener("click", closeGeneratedFormModal);
+  $("#cancelGeneratedForm").addEventListener("click", closeGeneratedFormModal);
+  $("#generatedFormModal").addEventListener("click", (event) => {
+    if (event.target.id === "generatedFormModal") {
+      closeGeneratedFormModal();
+    }
+  });
+  $("#closeTemplatePreview").addEventListener("click", closeTemplatePreviewModal);
+  $("#templatePreviewModal").addEventListener("click", (event) => {
+    if (event.target.id === "templatePreviewModal") {
+      closeTemplatePreviewModal();
+    }
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeTemplatePreviewModal();
+      closeGeneratedFormModal();
+    }
+  });
   $("#refreshKnowledge").addEventListener("click", loadKnowledgeItems);
   $("#previewAiText").addEventListener("click", previewAiText);
   $("#loadSettings").addEventListener("click", loadSettings);
@@ -540,16 +1061,16 @@ async function boot() {
   $("#loadLogs").addEventListener("click", loadLogs);
 
   createBatchRow();
-  createBatchRow({ location: "4层梁板", date: "2026-05-23" });
+  createBatchRow({ date: "2026-05-23" });
   const online = await refreshStatus();
   if (online || serviceAvailable) {
     await loadTemplates().catch((error) => showResult("#generateResult", error));
+    await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
     await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
     await loadSettings().catch((error) => showResult("#settingsResult", error));
     await runEnvironmentCheck().catch((error) => showResult("#environmentResult", error));
     await refreshLicense();
   }
-  activateTabFromHash();
 }
 
 window.addEventListener("hashchange", activateTabFromHash);

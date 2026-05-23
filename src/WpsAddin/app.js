@@ -7,6 +7,7 @@ let selectedTemplateNode = null;
 let currentGeneratedForm = null;
 let serviceAvailable = false;
 let lastExternalTabVersion = "";
+const collapsedTemplateNodeIds = new Set();
 const activeProjectId = "project-default";
 
 const tabSyncKeys = {
@@ -438,6 +439,7 @@ function createSpecTreeNode(node) {
   button.type = "button";
   button.className = `specTreeNode ${node.nodeType}`;
   button.dataset.nodeId = node.id;
+  button.classList.toggle("selected", selectedTemplateNode?.id === node.id);
 
   const title = document.createElement("span");
   title.textContent = node.name;
@@ -446,15 +448,32 @@ function createSpecTreeNode(node) {
     ? [node.templateCode || "检验批模板", node.moduleName || ""].filter(Boolean).join("｜")
     : "已创建资料表";
   button.append(title, meta);
-  button.addEventListener("click", () => selectTemplateTreeNode(node));
+  button.addEventListener("click", async () => {
+    if (node.nodeType === "template" && node.children?.length > 0) {
+      toggleTemplateNode(node.id);
+      await selectTemplateTreeNode(node);
+      renderTemplateTreeView();
+      return;
+    }
+
+    await selectTemplateTreeNode(node);
+  });
 
   if (!node.children || node.children.length === 0) {
     return button;
   }
 
+  const isCollapsed = collapsedTemplateNodeIds.has(node.id);
+  button.classList.add("hasChildren");
+  button.setAttribute("aria-expanded", String(!isCollapsed));
+
   const branch = document.createElement("div");
-  branch.className = `specTreeBranch ${node.nodeType}`;
+  branch.className = `specTreeBranch ${node.nodeType}${isCollapsed ? " collapsed" : ""}`;
   branch.appendChild(button);
+
+  if (isCollapsed) {
+    return branch;
+  }
 
   const children = document.createElement("div");
   children.className = "specTreeChildren";
@@ -463,6 +482,15 @@ function createSpecTreeNode(node) {
   }
   branch.appendChild(children);
   return branch;
+}
+
+function toggleTemplateNode(nodeId) {
+  if (collapsedTemplateNodeIds.has(nodeId)) {
+    collapsedTemplateNodeIds.delete(nodeId);
+    return;
+  }
+
+  collapsedTemplateNodeIds.add(nodeId);
 }
 
 function resolveFolderLevelLabel(folderLevel) {

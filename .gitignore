@@ -13,6 +13,8 @@ node_modules/
 .vscode/.ropeproject/
 *.user
 *.suo
+~$*.xls
+~$*.xlsx
 dist/
 publish/
 wps-addon-build/

@@ -94,3 +94,29 @@ tools/LicenseTool/2-交互式生成激活码.cmd
 ```text
 docs/客户机器码收集模板.md
 ```
+
+## 最终发布包
+
+现在仓库已经提供一键组包脚本：
+
+```powershell
+$OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+powershell -ExecutionPolicy Bypass -File ".\tools\BuildReleasePackage.ps1"
+```
+
+脚本会生成：
+
+```text
+publish/ReleasePackage/工程资料智能生成系统-WPS版-版本号/
+├── Client/
+└── Issuer/
+```
+
+- `Client/` 发给客户
+- `Issuer/` 授权方自己保留
+
+详细说明见：
+
+```text
+docs/发布包说明.md
+```

@@ -118,8 +118,9 @@ public sealed class GeneratedFormService
 
         var targetPath = ResolveUniquePath(targetDirectory, $"{SanitizePathSegment(request.FormName)}{templateExtension}");
         File.Copy(template.TemplatePath, targetPath);
+        var rowHeightBaseline = _rowHeightBalanceService.CaptureBaseline(targetPath);
         ApplyFields(targetPath, request.FormName, request.Fields ?? new Dictionary<string, string>());
-        _rowHeightBalanceService.ApplyLight(targetPath, request.FormName, request.Fields ?? new Dictionary<string, string>());
+        _rowHeightBalanceService.ApplyLight(targetPath, request.FormName, request.Fields ?? new Dictionary<string, string>(), rowHeightBaseline);
 
         var node = template.ModuleId == "legacy"
             ? _repository.InsertGeneratedForm(

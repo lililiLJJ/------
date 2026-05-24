@@ -884,8 +884,11 @@ const rowHeightBalanceOptions = {
   minRowHeight: 12,
   maxRoundShrink: 1,
   maxTotalShrink: 4,
-  lineHeight: 15,
-  cellPadding: 4
+  defaultColumnWidth: 8.43,
+  defaultFontSize: 11,
+  lineHeightRatio: 1.25,
+  cellPadding: 4,
+  cellHorizontalPadding: 6
 };
 
 const rowHeightFitModes = {
@@ -895,7 +898,8 @@ const rowHeightFitModes = {
     maxRoundShrink: 1,
     maxTotalIncrease: 18,
     maxTotalShrink: 4,
-    balancedGrowthLimit: 0.7
+    balancedGrowthLimit: 0.7,
+    maxNetIncrease: 12
   },
   "strict-print": {
     maxRounds: 2,
@@ -903,7 +907,8 @@ const rowHeightFitModes = {
     maxRoundShrink: 0.8,
     maxTotalIncrease: 10,
     maxTotalShrink: 3,
-    balancedGrowthLimit: 0.35
+    balancedGrowthLimit: 0.35,
+    maxNetIncrease: 6
   }
 };
 
@@ -1010,7 +1015,7 @@ async function fitRowHeights() {
     }
 
     const mode = $("#rowHeightFitMode")?.value || "normal";
-    const confirmed = window.confirm("系统将尝试通过增高内容不足行、压缩富裕行的方式平衡表格版式。调整前会自动备份，是否继续？");
+    const confirmed = window.confirm("系统将执行一键版式平衡：通过增高内容不足行、压缩富裕行的方式平衡表格版式。调整前会自动备份，是否继续？");
     if (!confirmed) {
       return;
     }
@@ -1070,7 +1075,7 @@ async function fitRowHeights() {
       : "请检查版式后点击“保存”。";
     showResult("#templateResult", {
       success: true,
-      message: `已智能平衡 ${adjustment.rows.length} 行，${pageWarning}`,
+      message: `已完成一键版式平衡，调整 ${adjustment.rows.length} 行，${pageWarning}`,
       backupPath: backup.backupPath,
       pageCountBefore: adjustment.pageCountBefore,
       pageCountAfter: adjustment.pageCountAfter,
@@ -1266,6 +1271,7 @@ function getRowText(sheet, row, rangeInfo) {
 
 function applyBalancedRowHeight(sheet, rangeInfo, eligibleRows, modeName = "normal") {
   const mode = rowHeightFitModes[modeName] || rowHeightFitModes.normal;
+  const baselineHeights = captureBaselineRowHeights(sheet, eligibleRows);
   const originalHeights = new Map();
   const targetHeights = new Map();
   const eligibleSet = new Set(eligibleRows);
@@ -1277,7 +1283,7 @@ function applyBalancedRowHeight(sheet, rangeInfo, eligibleRows, modeName = "norm
     unresolvedRows = [];
 
     for (const block of blocks) {
-      const balance = estimateBlockBalance(sheet, rangeInfo, block, eligibleSet);
+      const balance = estimateBlockBalance(sheet, rangeInfo, block, eligibleSet, baselineHeights);
       if (balance.totalDeficit <= 0) {
         continue;
       }
@@ -1285,8 +1291,12 @@ function applyBalancedRowHeight(sheet, rangeInfo, eligibleRows, modeName = "norm
       unresolvedRows.push(...balance.deficitRows.map(item => item.row));
       const recovered = shrinkSurplusRows(sheet, balance.surplusRows, balance.totalDeficit, originalHeights, targetHeights, mode);
       const remainingDeficit = Math.max(0, balance.totalDeficit - recovered);
-      const directGrowthBudget = recovered + remainingDeficit * 0.65;
-      const sharedGrowthBudget = remainingDeficit * 0.35;
+      const netBudget = Math.max(0, mode.maxNetIncrease - getNetHeightIncreaseFromBaseline(sheet, eligibleRows, baselineHeights));
+      const directGrowthBudget = Math.min(netBudget, recovered + remainingDeficit * 0.65);
+      const sharedGrowthBudget = Math.min(
+        Math.max(0, mode.maxNetIncrease - getNetHeightIncreaseFromBaseline(sheet, eligibleRows, baselineHeights)),
+        remainingDeficit * 0.35
+      );
       changed = recovered > 0 || changed;
       changed = growDeficitRows(sheet, balance.deficitRows, directGrowthBudget, originalHeights, targetHeights, mode) || changed;
 
@@ -1310,7 +1320,20 @@ function applyBalancedRowHeight(sheet, rangeInfo, eligibleRows, modeName = "norm
   };
 }
 
-function estimateBlockBalance(sheet, rangeInfo, block, eligibleSet) {
+function captureBaselineRowHeights(sheet, rows) {
+  const result = new Map();
+  for (const row of rows) {
+    result.set(row, getRowHeight(sheet, row));
+  }
+
+  return result;
+}
+
+function getNetHeightIncreaseFromBaseline(sheet, rows, baselineHeights) {
+  return rows.reduce((total, row) => total + getRowHeight(sheet, row) - (baselineHeights.get(row) || getRowHeight(sheet, row)), 0);
+}
+
+function estimateBlockBalance(sheet, rangeInfo, block, eligibleSet, baselineHeights) {
   const deficitRows = [];
   const surplusRows = [];
   for (const row of block) {
@@ -1320,7 +1343,7 @@ function estimateBlockBalance(sheet, rangeInfo, block, eligibleSet) {
       continue;
     }
 
-    const surplus = estimateRowSurplus(sheet, rangeInfo, row);
+    const surplus = estimateRowSurplus(sheet, rangeInfo, row, baselineHeights);
     if (surplus > 0) {
       surplusRows.push({ row, surplus });
     }
@@ -1480,7 +1503,12 @@ function estimateRowDeficit(sheet, rangeInfo, row, blockSet, eligibleSet) {
   const currentHeight = getRowHeight(sheet, row);
   let neededHeight = currentHeight;
   for (let column = rangeInfo.startColumn; column <= rangeInfo.endColumn; column++) {
-    const text = getCellText(sheet, row, column);
+    const cell = tryGetWorksheetCell(sheet, row, column);
+    if (!cell) {
+      continue;
+    }
+
+    const text = getCellTextFromCell(cell);
     if (!text || text.length < 10) {
       continue;
     }
@@ -1494,9 +1522,9 @@ function estimateRowDeficit(sheet, rangeInfo, row, blockSet, eligibleSet) {
       continue;
     }
 
-    const characterCapacity = Math.max(8, 12 * span.columns);
-    const estimatedLines = estimateTextLines(text, characterCapacity);
-    const requiredHeight = estimatedLines * rowHeightBalanceOptions.lineHeight + rowHeightBalanceOptions.cellPadding;
+    const widthPoints = Math.max(12, getCellDisplayWidthPoints(sheet, span) - rowHeightBalanceOptions.cellHorizontalPadding);
+    const fontSize = getCellFontSize(cell);
+    const requiredHeight = estimateRequiredTextHeight(text, widthPoints, fontSize);
     neededHeight = Math.max(neededHeight, requiredHeight / Math.max(1, span.rows));
   }
 
@@ -1507,16 +1535,40 @@ function estimateRowDeficit(sheet, rangeInfo, row, blockSet, eligibleSet) {
   return Math.max(0, neededHeight - currentHeight);
 }
 
-function estimateRowSurplus(sheet, rangeInfo, row) {
+function estimateRowSurplus(sheet, rangeInfo, row, baselineHeights) {
   const currentHeight = getRowHeight(sheet, row);
-  const textWeight = getTextWeight(getRowText(sheet, row, rangeInfo));
-  if (textWeight > 16 || currentHeight <= rowHeightBalanceOptions.minRowHeight + 1) {
+  const baselineMinimum = Math.max(rowHeightBalanceOptions.minRowHeight, Math.min(...baselineHeights.values()));
+  if (currentHeight <= baselineMinimum + 0.5) {
     return 0;
   }
 
-  const estimatedLines = Math.max(1, Math.ceil(textWeight / 42));
-  const neededHeight = estimatedLines * rowHeightBalanceOptions.lineHeight + rowHeightBalanceOptions.cellPadding;
-  const safeMinimum = Math.max(rowHeightBalanceOptions.minRowHeight, neededHeight);
+  let neededHeight = rowHeightBalanceOptions.minRowHeight;
+  for (let column = rangeInfo.startColumn; column <= rangeInfo.endColumn; column++) {
+    const cell = tryGetWorksheetCell(sheet, row, column);
+    if (!cell) {
+      continue;
+    }
+
+    const text = getCellTextFromCell(cell);
+    if (!text) {
+      continue;
+    }
+
+    if (getTextWeight(text) > 16) {
+      return 0;
+    }
+
+    const span = getCellRowColumnSpan(sheet, row, column);
+    if (span.startRow !== row || span.startColumn !== column) {
+      continue;
+    }
+
+    const widthPoints = Math.max(12, getCellDisplayWidthPoints(sheet, span) - rowHeightBalanceOptions.cellHorizontalPadding);
+    const fontSize = getCellFontSize(cell);
+    neededHeight = Math.max(neededHeight, estimateRequiredTextHeight(text, widthPoints, fontSize) / Math.max(1, span.rows));
+  }
+
+  const safeMinimum = Math.max(rowHeightBalanceOptions.minRowHeight, baselineMinimum, neededHeight);
   return Math.max(0, Math.min(rowHeightBalanceOptions.maxTotalShrink, currentHeight - safeMinimum));
 }
 
@@ -1530,14 +1582,43 @@ function isSpanInsideEligibleRows(span, eligibleSet) {
   return true;
 }
 
-function estimateTextLines(text, characterCapacity) {
+function estimateRequiredTextHeight(text, widthPoints, fontSize) {
+  const estimatedLines = estimateTextLines(text, widthPoints, fontSize);
+  const lineHeight = fontSize * rowHeightBalanceOptions.lineHeightRatio + 1.5;
+  return estimatedLines * lineHeight + rowHeightBalanceOptions.cellPadding;
+}
+
+function estimateTextLines(text, widthPoints, fontSize) {
   return String(text)
     .split(/\r?\n/)
-    .reduce((total, line) => total + Math.max(1, Math.ceil(getTextWeight(line) / characterCapacity)), 0);
+    .reduce((total, line) => total + Math.max(1, Math.ceil(measureTextWidthPoints(line, fontSize) / Math.max(12, widthPoints))), 0);
 }
 
 function getTextWeight(text) {
   return [...String(text)].reduce((total, char) => total + (char.charCodeAt(0) > 255 ? 2 : 1), 0);
+}
+
+function measureTextWidthPoints(text, fontSize) {
+  return [...String(text)].reduce((total, char) => {
+    const code = char.charCodeAt(0);
+    if ((code >= 0x4e00 && code <= 0x9fff) || (code >= 0xff00 && code <= 0xffef)) {
+      return total + fontSize;
+    }
+
+    if (/[A-Z]/.test(char)) {
+      return total + fontSize * 0.62;
+    }
+
+    if (/[a-z0-9]/.test(char)) {
+      return total + fontSize * 0.55;
+    }
+
+    if (char === " ") {
+      return total + fontSize * 0.35;
+    }
+
+    return total + fontSize * 0.5;
+  }, 0);
 }
 
 function getCellRowColumnSpan(sheet, row, column) {
@@ -1562,14 +1643,51 @@ function getCellRowColumnSpan(sheet, row, column) {
   }
 }
 
+function getCellDisplayWidthPoints(sheet, span) {
+  let total = 0;
+  for (let column = span.startColumn; column <= span.endColumn; column++) {
+    total += columnWidthToPoints(getColumnWidth(sheet, column));
+  }
+
+  return total;
+}
+
+function getColumnWidth(sheet, column) {
+  try {
+    const columnObject = getWorksheetColumn(sheet, column);
+    const width = Number(columnObject?.ColumnWidth);
+    return Number.isFinite(width) && width > 0 ? width : rowHeightBalanceOptions.defaultColumnWidth;
+  } catch {
+    return rowHeightBalanceOptions.defaultColumnWidth;
+  }
+}
+
+function columnWidthToPoints(width) {
+  const pixels = width < 1 ? width * 12 : width * 7 + 5;
+  return pixels * 0.75;
+}
+
+function getCellFontSize(cell) {
+  try {
+    const size = Number(cell?.Font?.Size);
+    return Number.isFinite(size) && size > 0 ? size : rowHeightBalanceOptions.defaultFontSize;
+  } catch {
+    return rowHeightBalanceOptions.defaultFontSize;
+  }
+}
+
 function getCellText(sheet, row, column) {
   try {
     const cell = getWorksheetCell(sheet, row, column);
-    const value = cell?.Text ?? cell?.Value2 ?? cell?.Value ?? "";
-    return String(value ?? "").trim();
+    return getCellTextFromCell(cell);
   } catch {
     return "";
   }
+}
+
+function getCellTextFromCell(cell) {
+  const value = cell?.Text ?? cell?.Value2 ?? cell?.Value ?? "";
+  return String(value ?? "").trim();
 }
 
 function getRowHeight(sheet, row) {
@@ -1598,6 +1716,14 @@ function getWorksheetCell(sheet, row, column) {
   throw new Error("当前 WPS 环境无法访问单元格对象。");
 }
 
+function tryGetWorksheetCell(sheet, row, column) {
+  try {
+    return getWorksheetCell(sheet, row, column);
+  } catch {
+    return null;
+  }
+}
+
 function getWorksheetRow(sheet, row) {
   const rows = sheet.Rows;
   if (typeof rows === "function") {
@@ -1613,6 +1739,24 @@ function getWorksheetRow(sheet, row) {
   }
 
   throw new Error("当前 WPS 环境无法访问行对象。");
+}
+
+function getWorksheetColumn(sheet, column) {
+  const columns = sheet.Columns;
+  if (typeof columns === "function") {
+    return columns.call(sheet, column);
+  }
+
+  if (typeof columns?.Item === "function") {
+    return columns.Item(column);
+  }
+
+  if (typeof sheet.Range === "function") {
+    const columnName = toColumnName(column);
+    return sheet.Range(`${columnName}:${columnName}`);
+  }
+
+  throw new Error("当前 WPS 环境无法访问列对象。");
 }
 
 function toColumnName(column) {

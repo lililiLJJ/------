@@ -153,21 +153,6 @@ async function loadCurrentProject() {
   }
 }
 
-async function selectProjectFolder() {
-  try {
-    showResult("#projectManagerResult", "正在打开目录选择窗口...");
-    const result = await requestProjectFolder("选择工程目录");
-    if (result.projectRootPath) {
-      $("#projectManagerForm").elements.projectRootPath.value = result.projectRootPath;
-    }
-    showResult("#projectManagerResult", result);
-    return result.projectRootPath || "";
-  } catch (error) {
-    showResult("#projectManagerResult", error);
-    return "";
-  }
-}
-
 async function requestProjectFolder(description) {
   const form = $("#projectManagerForm");
   const currentPath = form?.elements.projectRootPath.value || "";
@@ -238,8 +223,11 @@ async function createProject() {
 
 async function openProject() {
   try {
-    const projectRootPath = await getProjectPathForAction("选择要打开的工程目录");
+    showResult("#projectManagerResult", "正在打开目录选择窗口...");
+    const folderResult = await requestProjectFolder("选择要打开的工程目录");
+    const projectRootPath = folderResult.projectRootPath || "";
     if (!projectRootPath) {
+      showResult("#projectManagerResult", folderResult);
       return;
     }
 
@@ -254,6 +242,16 @@ async function openProject() {
     showResult("#projectManagerResult", result);
     await loadTemplateLibraryTree();
   } catch (error) {
+    const message = error?.message || "";
+    if (message.includes("ProjectInfo.json")) {
+      showResult("#projectManagerResult", {
+        success: false,
+        message: "该目录不是有效工程目录",
+        detail: message
+      });
+      return;
+    }
+
     showResult("#projectManagerResult", error);
   }
 }
@@ -1453,7 +1451,6 @@ async function boot() {
   $("#retryServiceStatus").addEventListener("click", retryServiceStatus);
   $("#copyStartCommand").addEventListener("click", copyStartCommand);
   $("#refreshCurrentProject").addEventListener("click", loadCurrentProject);
-  $("#selectProjectFolder").addEventListener("click", selectProjectFolder);
   $("#createProject").addEventListener("click", createProject);
   $("#openProject").addEventListener("click", openProject);
   $("#reloadTemplates").addEventListener("click", loadTemplates);

@@ -674,6 +674,104 @@ textarea {
 .batchTable th,
 .batchTable td,
 .knowledgeTable th,
+.materialTable {
+  min-width: 1120px;
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.materialTable th,
+.materialTable td {
+  border: 1px solid var(--line);
+  padding: 7px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.materialTable th {
+  color: var(--muted);
+  font-weight: 700;
+  background: #eef3f8;
+}
+
+.materialTable tbody tr {
+  cursor: pointer;
+}
+
+.materialTable tbody tr:hover,
+.materialTable tbody tr.selectedRow {
+  background: #eef8f5;
+}
+
+.statusCell {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.materialFilterForm {
+  margin-bottom: 12px;
+}
+
+.materialDetailGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.materialPanel {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.materialPanel .wideLabel {
+  grid-column: 1 / -1;
+}
+
+.compactSectionHeader {
+  margin-bottom: 10px;
+}
+
+.checkboxLine {
+  display: flex;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+
+.checkboxLine input {
+  width: 18px;
+  min-height: 18px;
+}
+
+.materialAttachmentList {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.attachmentItem {
+  padding: 9px 10px;
+  border: 1px solid #e4ece9;
+  border-radius: 6px;
+  background: #fbfdfc;
+}
+
+.attachmentItem strong {
+  color: var(--text);
+}
+
+.attachmentItem p {
+  word-break: break-all;
+}
+
 .knowledgeTable td {
   border: 1px solid var(--line);
   padding: 7px;
@@ -933,6 +1031,10 @@ textarea {
   }
 
   .templateWorkbench {
+    grid-template-columns: 1fr;
+  }
+
+  .materialDetailGrid {
     grid-template-columns: 1fr;
   }
 

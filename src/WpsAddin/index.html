@@ -220,6 +220,184 @@
       <pre id="templateResult" class="resultBox"></pre>
     </section>
 
+    <section id="materials" class="tabPanel">
+      <div class="sectionHeader">
+        <div>
+          <h2>材料管理</h2>
+          <p id="materialSummary">正在读取材料进场记录...</p>
+        </div>
+        <div class="actions compactActions">
+          <button id="refreshMaterials" type="button">刷新材料</button>
+          <button id="resetMaterialForm" type="button">新增材料</button>
+          <button id="exportMaterialLedger" type="button" class="primary">导出材料台账</button>
+        </div>
+      </div>
+
+      <form id="materialFilterForm" class="formGrid materialFilterForm">
+        <label>材料名称<input name="materialName" placeholder="钢筋、水泥、线管"></label>
+        <label>进场日期起<input name="entryDateFrom" type="date"></label>
+        <label>进场日期止<input name="entryDateTo" type="date"></label>
+        <label>使用部位<input name="usePart"></label>
+        <label>供应商<input name="supplier"></label>
+        <label>送检状态
+          <select name="testStatus">
+            <option value="">全部</option>
+            <option value="无需送检">无需送检</option>
+            <option value="待送检">待送检</option>
+            <option value="已送检">已送检</option>
+            <option value="已出报告">已出报告</option>
+            <option value="合格">合格</option>
+            <option value="不合格">不合格</option>
+          </select>
+        </label>
+        <label>报审状态
+          <select name="approvalStatus">
+            <option value="">全部</option>
+            <option value="未报审">未报审</option>
+            <option value="已报审">已报审</option>
+            <option value="已归档">已归档</option>
+          </select>
+        </label>
+        <label>综合状态
+          <select name="status">
+            <option value="">全部</option>
+            <option value="未收集合格证">未收集合格证</option>
+            <option value="待送检">待送检</option>
+            <option value="已送检">已送检</option>
+            <option value="已出报告">已出报告</option>
+            <option value="合格">合格</option>
+            <option value="不合格">不合格</option>
+            <option value="已报审">已报审</option>
+            <option value="已归档">已归档</option>
+          </select>
+        </label>
+      </form>
+
+      <div class="tableScroller">
+        <table class="materialTable">
+          <thead>
+            <tr>
+              <th>材料名称</th>
+              <th>规格型号</th>
+              <th>数量</th>
+              <th>进场日期</th>
+              <th>使用部位</th>
+              <th>供应商</th>
+              <th>送检</th>
+              <th>报审</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody id="materialRows"></tbody>
+        </table>
+      </div>
+
+      <section class="materialDetailGrid">
+        <form id="materialEntryForm" class="materialPanel">
+          <div class="sectionHeader compactSectionHeader">
+            <div>
+              <h2 id="materialFormTitle">新增材料进场</h2>
+              <p id="selectedMaterialSummary">尚未选择材料。</p>
+            </div>
+            <button id="saveMaterialEntry" type="submit" class="primary">保存材料</button>
+          </div>
+          <div class="formGrid">
+            <label>材料名称<input name="materialName" required></label>
+            <label>规格型号<input name="specificationModel"></label>
+            <label>单位<input name="unit"></label>
+            <label>数量<input name="quantity" type="number" step="0.001" value="0" required></label>
+            <label>进场日期<input name="entryDate" type="date" required></label>
+            <label>供应商<input name="supplier"></label>
+            <label>生产厂家<input name="manufacturer"></label>
+            <label>使用部位<input name="usePart"></label>
+            <label>批号<input name="batchNo"></label>
+            <label>人工状态
+              <select name="statusOverride">
+                <option value="">自动判断</option>
+                <option value="未收集合格证">未收集合格证</option>
+                <option value="待送检">待送检</option>
+                <option value="已送检">已送检</option>
+                <option value="已出报告">已出报告</option>
+                <option value="合格">合格</option>
+                <option value="不合格">不合格</option>
+                <option value="已报审">已报审</option>
+                <option value="已归档">已归档</option>
+              </select>
+            </label>
+            <label class="wideLabel">备注<textarea name="remark" rows="3"></textarea></label>
+          </div>
+        </form>
+
+        <section class="materialPanel">
+          <div class="sectionHeader compactSectionHeader">
+            <div>
+              <h2>附件上传</h2>
+              <p>合格证、质保书、厂家检测报告、说明书、检测报告等。</p>
+            </div>
+          </div>
+          <form id="materialAttachmentForm" class="formGrid">
+            <label>文件类型
+              <select name="fileType">
+                <option value="合格证">合格证</option>
+                <option value="质保书">质保书</option>
+                <option value="厂家检测报告">厂家检测报告</option>
+                <option value="说明书">说明书</option>
+                <option value="检测报告">检测报告</option>
+                <option value="其他">其他</option>
+              </select>
+            </label>
+            <label>编号<input name="certificateNo"></label>
+            <label class="wideLabel">文件<input name="file" type="file" required></label>
+            <div class="actions compactActions">
+              <button id="uploadMaterialAttachment" type="submit" class="primary">上传附件</button>
+            </div>
+          </form>
+          <div id="materialAttachmentList" class="materialAttachmentList"></div>
+        </section>
+
+        <form id="materialTestForm" class="materialPanel">
+          <div class="sectionHeader compactSectionHeader">
+            <div>
+              <h2>送检记录</h2>
+              <p>维护取样、见证、送检和检测报告信息。</p>
+            </div>
+            <button id="saveMaterialTest" type="submit" class="primary">保存送检</button>
+          </div>
+          <label class="checkboxLine"><input name="isRequired" type="checkbox"> 需要送检</label>
+          <div class="formGrid">
+            <label>取样时间<input name="samplingTime" type="datetime-local"></label>
+            <label>见证人<input name="witness"></label>
+            <label>送检时间<input name="sentTime" type="datetime-local"></label>
+            <label>第三方检测机构<input name="inspectionAgency"></label>
+            <label>检测报告编号<input name="reportNo"></label>
+            <label>检测结果
+              <select name="result">
+                <option value="">未出结果</option>
+                <option value="合格">合格</option>
+                <option value="不合格">不合格</option>
+              </select>
+            </label>
+            <label>检测报告附件
+              <select name="reportAttachmentId" id="materialReportAttachmentSelect">
+                <option value="">未关联</option>
+              </select>
+            </label>
+          </div>
+        </form>
+
+        <section class="materialPanel">
+          <div class="sectionHeader compactSectionHeader">
+            <div>
+              <h2>报审资料</h2>
+              <p id="materialApprovalSummary">按模板复制并填充占位符。</p>
+            </div>
+            <button id="generateMaterialApproval" type="button" class="primary">生成报审资料</button>
+          </div>
+        </section>
+      </section>
+      <pre id="materialResult" class="resultBox compactResult"></pre>
+    </section>
+
     <section id="modules" class="tabPanel">
       <div class="sectionHeader">
         <div>

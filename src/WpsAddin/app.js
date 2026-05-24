@@ -6,6 +6,8 @@ let templateTreeNodes = [];
 let selectedTemplateNode = null;
 let currentGeneratedForm = null;
 let lastRowHeightFitAdjustment = null;
+let materialItems = [];
+let selectedMaterial = null;
 let serviceAvailable = false;
 let lastExternalTabVersion = "";
 const collapsedTemplateNodeIds = new Set();
@@ -217,6 +219,7 @@ async function createProject() {
     renderCurrentProject(result.project);
     showResult("#projectManagerResult", result);
     await loadTemplateLibraryTree();
+    await loadMaterials();
   } catch (error) {
     showResult("#projectManagerResult", error);
   }
@@ -238,6 +241,7 @@ async function saveProject() {
     renderCurrentProject(result.project);
     showResult("#projectManagerResult", result);
     await loadTemplateLibraryTree();
+    await loadMaterials();
   } catch (error) {
     showResult("#projectManagerResult", error);
   }
@@ -263,6 +267,7 @@ async function openProject() {
     renderCurrentProject(result.project);
     showResult("#projectManagerResult", result);
     await loadTemplateLibraryTree();
+    await loadMaterials();
   } catch (error) {
     const message = error?.message || "";
     if (message.includes("ProjectInfo.json")) {
@@ -281,12 +286,15 @@ async function openProject() {
 async function api(path, options = {}) {
   let response;
   try {
+    const headers = options.body instanceof FormData
+      ? (options.headers || {})
+      : {
+          "Content-Type": "application/json",
+          ...(options.headers || {})
+        };
     response = await fetch(`${serviceBaseUrl}${path}`, {
       ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {})
-      }
+      headers
     });
   } catch (error) {
     throw {
@@ -351,6 +359,10 @@ function setServiceOffline() {
   renderTemplateList();
   $("#templateSummary").textContent = "本地服务未启动，暂时无法读取工程资料规范层级树。";
   $("#templateTreeView").innerHTML = '<p class="emptyText">请先启动 GeneratorService。</p>';
+  if ($("#materialRows")) {
+    $("#materialRows").innerHTML = '<tr><td colspan="9">请先启动 GeneratorService。</td></tr>';
+    $("#materialSummary").textContent = "本地服务未启动，暂时无法读取材料管理数据。";
+  }
   renderSpreadsheetPlaceholder();
   $("#knowledgeSummary").textContent = "本地服务未启动，暂时无法读取知识库。";
   renderKnowledgeItems([]);
@@ -378,6 +390,7 @@ async function retryServiceStatus() {
   await loadModules().catch((error) => showResult("#templateResult", error));
   await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
   await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+  await loadMaterials().catch((error) => showResult("#materialResult", error));
   await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
   await loadSettings().catch((error) => showResult("#settingsResult", error));
   await runEnvironmentCheck().catch((error) => showResult("#environmentResult", error));
@@ -395,6 +408,10 @@ function setGenerateDisabled(disabled) {
   $("#loadSettings").disabled = disabled;
   $("#rescanModules").disabled = disabled;
   $("#runEnvironmentCheck").disabled = disabled;
+  if ($("#refreshMaterials")) $("#refreshMaterials").disabled = disabled;
+  if ($("#resetMaterialForm")) $("#resetMaterialForm").disabled = disabled;
+  if ($("#exportMaterialLedger")) $("#exportMaterialLedger").disabled = disabled;
+  updateMaterialActionState();
   updateTemplateToolbarState(disabled);
 }
 
@@ -477,6 +494,7 @@ async function refreshTemplateManagement() {
     await rescanModules();
     await loadTemplates();
     await loadTemplateLibraryTree();
+    await loadMaterials();
   } catch (error) {
     $("#templateSummary").textContent = "模板读取失败。";
     showResult("#templateResult", error);
@@ -1814,8 +1832,361 @@ async function deleteGeneratedForm() {
     const result = await api(`/api/generated-forms/${encodeURIComponent(currentGeneratedForm.id)}`, { method: "DELETE" });
     showResult("#templateResult", result);
     await loadTemplateLibraryTree();
+    await loadMaterials();
   } catch (error) {
     showResult("#templateResult", error);
+  }
+}
+
+function getMaterialFilters() {
+  const form = $("#materialFilterForm");
+  if (!form) {
+    return { projectId: activeProjectId };
+  }
+
+  return {
+    projectId: activeProjectId,
+    ...Object.fromEntries(new FormData(form).entries())
+  };
+}
+
+function getMaterialQuery(exportLedger = false) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(getMaterialFilters())) {
+    if (value) {
+      query.set(key, value);
+    }
+  }
+
+  if (exportLedger) {
+    query.set("export", "true");
+  }
+
+  return query.toString();
+}
+
+async function loadMaterials() {
+  if (!serviceAvailable || !$("#materialRows")) {
+    return;
+  }
+
+  showResult("#materialResult", "正在读取材料进场记录...");
+  const result = await api(`/api/materials?${getMaterialQuery()}`);
+  materialItems = result.items || [];
+  if (selectedMaterial) {
+    selectedMaterial = materialItems.find((item) => item.id === selectedMaterial.id) || null;
+  }
+  renderMaterialRows();
+  renderSelectedMaterial();
+  $("#materialSummary").textContent = materialItems.length
+    ? `当前工程共 ${materialItems.length} 条材料进场记录。`
+    : "当前筛选条件下暂无材料进场记录。";
+  showResult("#materialResult", result);
+}
+
+function renderMaterialRows() {
+  const rows = $("#materialRows");
+  if (!rows) {
+    return;
+  }
+
+  rows.innerHTML = "";
+  if (!materialItems.length) {
+    rows.innerHTML = '<tr><td colspan="9">暂无材料进场记录。</td></tr>';
+    return;
+  }
+
+  for (const item of materialItems) {
+    const tr = document.createElement("tr");
+    tr.className = selectedMaterial?.id === item.id ? "selectedRow" : "";
+    const values = [
+      item.materialName,
+      item.specificationModel,
+      `${item.quantity} ${item.unit || ""}`.trim(),
+      item.entryDate,
+      item.usePart,
+      item.supplier,
+      item.testStatus,
+      item.approvalStatus,
+      item.status
+    ];
+    tr.innerHTML = values.map((value, index) => {
+      const className = index >= 6 ? " class=\"statusCell\"" : "";
+      return `<td${className}>${escapeHtml(value || "")}</td>`;
+    }).join("");
+    tr.addEventListener("click", () => selectMaterial(item.id));
+    rows.appendChild(tr);
+  }
+}
+
+function selectMaterial(id) {
+  selectedMaterial = materialItems.find((item) => item.id === id) || null;
+  renderMaterialRows();
+  renderSelectedMaterial();
+}
+
+function resetMaterialForm() {
+  selectedMaterial = null;
+  const form = $("#materialEntryForm");
+  if (form) {
+    form.reset();
+    form.elements.quantity.value = "0";
+    form.elements.entryDate.value = new Date().toISOString().slice(0, 10);
+  }
+  const testForm = $("#materialTestForm");
+  if (testForm) {
+    testForm.reset();
+  }
+  renderMaterialRows();
+  renderSelectedMaterial();
+}
+
+function renderSelectedMaterial() {
+  const form = $("#materialEntryForm");
+  if (!form) {
+    return;
+  }
+
+  $("#materialFormTitle").textContent = selectedMaterial ? "编辑材料进场" : "新增材料进场";
+  $("#selectedMaterialSummary").textContent = selectedMaterial
+    ? `${selectedMaterial.materialName}｜${selectedMaterial.entryDate}｜${selectedMaterial.status}`
+    : "尚未选择材料。";
+
+  if (selectedMaterial) {
+    form.elements.materialName.value = selectedMaterial.materialName || "";
+    form.elements.specificationModel.value = selectedMaterial.specificationModel || "";
+    form.elements.unit.value = selectedMaterial.unit || "";
+    form.elements.quantity.value = selectedMaterial.quantity ?? 0;
+    form.elements.entryDate.value = selectedMaterial.entryDate || "";
+    form.elements.supplier.value = selectedMaterial.supplier || "";
+    form.elements.manufacturer.value = selectedMaterial.manufacturer || "";
+    form.elements.usePart.value = selectedMaterial.usePart || "";
+    form.elements.batchNo.value = selectedMaterial.batchNo || "";
+    form.elements.remark.value = selectedMaterial.remark || "";
+    form.elements.statusOverride.value = selectedMaterial.statusOverride || "";
+  }
+
+  renderMaterialAttachments();
+  renderMaterialTest();
+  renderMaterialApproval();
+  updateMaterialActionState();
+}
+
+function updateMaterialActionState() {
+  const hasMaterial = !!selectedMaterial && serviceAvailable;
+  if ($("#uploadMaterialAttachment")) $("#uploadMaterialAttachment").disabled = !hasMaterial;
+  if ($("#saveMaterialTest")) $("#saveMaterialTest").disabled = !hasMaterial;
+  if ($("#generateMaterialApproval")) $("#generateMaterialApproval").disabled = !hasMaterial;
+}
+
+function renderMaterialAttachments() {
+  const list = $("#materialAttachmentList");
+  const select = $("#materialReportAttachmentSelect");
+  if (!list || !select) {
+    return;
+  }
+
+  const attachments = selectedMaterial?.certificates || [];
+  list.innerHTML = attachments.length
+    ? attachments.map((item) => `
+        <article class="attachmentItem">
+          <strong>${escapeHtml(item.fileType)} ${escapeHtml(item.certificateNo || "")}</strong>
+          <p>${escapeHtml(item.originalFileName)}｜${escapeHtml(item.filePath)}</p>
+        </article>`).join("")
+    : '<p class="emptyText">暂无附件。</p>';
+
+  const current = selectedMaterial?.test?.reportAttachmentId || "";
+  select.innerHTML = '<option value="">未关联</option>';
+  for (const item of attachments.filter((attachment) => attachment.fileType.includes("报告"))) {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = `${item.fileType} ${item.certificateNo || item.originalFileName}`;
+    select.appendChild(option);
+  }
+  select.value = current;
+}
+
+function renderMaterialTest() {
+  const form = $("#materialTestForm");
+  if (!form) {
+    return;
+  }
+
+  form.reset();
+  const test = selectedMaterial?.test;
+  if (!test) {
+    return;
+  }
+
+  form.elements.isRequired.checked = !!test.isRequired;
+  form.elements.samplingTime.value = toDateTimeLocal(test.samplingTime);
+  form.elements.witness.value = test.witness || "";
+  form.elements.sentTime.value = toDateTimeLocal(test.sentTime);
+  form.elements.inspectionAgency.value = test.inspectionAgency || "";
+  form.elements.reportNo.value = test.reportNo || "";
+  form.elements.result.value = test.result || "";
+  form.elements.reportAttachmentId.value = test.reportAttachmentId || "";
+}
+
+function renderMaterialApproval() {
+  const summary = $("#materialApprovalSummary");
+  if (!summary) {
+    return;
+  }
+
+  if (!selectedMaterial) {
+    summary.textContent = "按模板复制并填充占位符。";
+    return;
+  }
+
+  summary.textContent = selectedMaterial.approval
+    ? `已生成：${selectedMaterial.approval.filePath}`
+    : "尚未生成材料进场报审资料。";
+}
+
+function toDateTimeLocal(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 16);
+}
+
+function fromDateTimeLocal(value) {
+  return value ? new Date(value).toISOString() : null;
+}
+
+function getMaterialEntryPayload() {
+  const data = Object.fromEntries(new FormData($("#materialEntryForm")).entries());
+  return {
+    projectId: activeProjectId,
+    materialName: data.materialName || "",
+    specificationModel: data.specificationModel || "",
+    unit: data.unit || "",
+    quantity: Number(data.quantity || 0),
+    entryDate: data.entryDate || new Date().toISOString().slice(0, 10),
+    supplier: data.supplier || "",
+    manufacturer: data.manufacturer || "",
+    usePart: data.usePart || "",
+    batchNo: data.batchNo || "",
+    remark: data.remark || "",
+    statusOverride: data.statusOverride || null
+  };
+}
+
+async function saveMaterialEntry(event) {
+  event.preventDefault();
+  showResult("#materialResult", "正在保存材料进场记录...");
+  try {
+    const payload = getMaterialEntryPayload();
+    const result = selectedMaterial
+      ? await api(`/api/materials/${encodeURIComponent(selectedMaterial.id)}`, {
+          method: "PUT",
+          body: JSON.stringify(payload)
+        })
+      : await api("/api/materials", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+    selectedMaterial = result.item;
+    showResult("#materialResult", result);
+    await loadMaterials();
+    selectMaterial(result.item.id);
+  } catch (error) {
+    showResult("#materialResult", error);
+  }
+}
+
+async function uploadMaterialAttachment(event) {
+  event.preventDefault();
+  if (!selectedMaterial) {
+    showResult("#materialResult", "请先选择或保存一条材料进场记录。");
+    return;
+  }
+
+  const formData = new FormData($("#materialAttachmentForm"));
+  formData.set("projectId", activeProjectId);
+  showResult("#materialResult", "正在上传材料附件...");
+  try {
+    const result = await api(`/api/materials/${encodeURIComponent(selectedMaterial.id)}/attachments`, {
+      method: "POST",
+      body: formData
+    });
+    showResult("#materialResult", result);
+    $("#materialAttachmentForm").reset();
+    await loadMaterials();
+    selectMaterial(selectedMaterial.id);
+  } catch (error) {
+    showResult("#materialResult", error);
+  }
+}
+
+async function saveMaterialTest(event) {
+  event.preventDefault();
+  if (!selectedMaterial) {
+    showResult("#materialResult", "请先选择或保存一条材料进场记录。");
+    return;
+  }
+
+  const data = Object.fromEntries(new FormData($("#materialTestForm")).entries());
+  const payload = {
+    projectId: activeProjectId,
+    isRequired: $("#materialTestForm").elements.isRequired.checked,
+    samplingTime: fromDateTimeLocal(data.samplingTime),
+    witness: data.witness || "",
+    sentTime: fromDateTimeLocal(data.sentTime),
+    inspectionAgency: data.inspectionAgency || "",
+    reportNo: data.reportNo || "",
+    result: data.result || "",
+    reportAttachmentId: data.reportAttachmentId || null
+  };
+
+  showResult("#materialResult", "正在保存送检记录...");
+  try {
+    const result = await api(`/api/materials/${encodeURIComponent(selectedMaterial.id)}/test`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    showResult("#materialResult", result);
+    await loadMaterials();
+    selectMaterial(selectedMaterial.id);
+  } catch (error) {
+    showResult("#materialResult", error);
+  }
+}
+
+async function generateMaterialApproval() {
+  if (!selectedMaterial) {
+    showResult("#materialResult", "请先选择或保存一条材料进场记录。");
+    return;
+  }
+
+  showResult("#materialResult", "正在生成材料进场报审资料...");
+  try {
+    const result = await api(`/api/materials/${encodeURIComponent(selectedMaterial.id)}/approval/generate?projectId=${encodeURIComponent(activeProjectId)}`, {
+      method: "POST"
+    });
+    showResult("#materialResult", result);
+    await loadMaterials();
+    selectMaterial(selectedMaterial.id);
+  } catch (error) {
+    showResult("#materialResult", error);
+  }
+}
+
+async function exportMaterialLedger() {
+  showResult("#materialResult", "正在导出材料台账...");
+  try {
+    const result = await api(`/api/materials/ledger?${getMaterialQuery(true)}`);
+    showResult("#materialResult", result);
+  } catch (error) {
+    showResult("#materialResult", error);
   }
 }
 
@@ -2356,6 +2727,18 @@ async function boot() {
   $("#reloadTemplates").addEventListener("click", loadTemplates);
   $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);
   $("#openTemplateFolder").addEventListener("click", openTemplateFolder);
+  $("#refreshMaterials").addEventListener("click", loadMaterials);
+  $("#resetMaterialForm").addEventListener("click", resetMaterialForm);
+  $("#exportMaterialLedger").addEventListener("click", exportMaterialLedger);
+  $("#materialFilterForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    loadMaterials();
+  });
+  $("#materialFilterForm").addEventListener("change", loadMaterials);
+  $("#materialEntryForm").addEventListener("submit", saveMaterialEntry);
+  $("#materialAttachmentForm").addEventListener("submit", uploadMaterialAttachment);
+  $("#materialTestForm").addEventListener("submit", saveMaterialTest);
+  $("#generateMaterialApproval").addEventListener("click", generateMaterialApproval);
   $("#newGeneratedForm").addEventListener("click", openGeneratedFormModal);
   $("#saveSpreadsheet").addEventListener("click", saveSpreadsheet);
   $("#exportSpreadsheet").addEventListener("click", exportSpreadsheet);
@@ -2412,6 +2795,7 @@ async function boot() {
     await loadModules().catch((error) => showResult("#templateResult", error));
     await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
     await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+    await loadMaterials().catch((error) => showResult("#materialResult", error));
     await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
     await loadSettings().catch((error) => showResult("#settingsResult", error));
     await runEnvironmentCheck().catch((error) => showResult("#environmentResult", error));

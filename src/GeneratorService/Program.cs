@@ -3,6 +3,7 @@ using GeneratorService.Ai;
 using GeneratorService.Generation;
 using GeneratorService.Knowledge;
 using GeneratorService.Licensing;
+using GeneratorService.Materials;
 using GeneratorService.Models;
 using GeneratorService.Modules;
 using GeneratorService.Projects;
@@ -58,6 +59,11 @@ builder.Services.AddSingleton<ProjectStorageService>();
 builder.Services.AddSingleton<ProjectManager>();
 builder.Services.AddSingleton<ProjectPathResolver>();
 builder.Services.AddSingleton<ProjectFolderDialogService>();
+builder.Services.AddSingleton<MaterialRepository>();
+builder.Services.AddSingleton<MaterialService>();
+builder.Services.AddSingleton<MaterialAttachmentService>();
+builder.Services.AddSingleton<MaterialApprovalService>();
+builder.Services.AddSingleton<MaterialLedgerService>();
 builder.Services.AddSingleton<TemplateTreeRepository>();
 builder.Services.AddSingleton<TemplateTreeService>();
 builder.Services.AddSingleton<TemplateService>();
@@ -80,10 +86,12 @@ var templateCatalog = app.Services.GetRequiredService<TemplateCatalog>();
 var moduleManager = app.Services.GetRequiredService<ModuleManager>();
 var templateTreeRepository = app.Services.GetRequiredService<TemplateTreeRepository>();
 var projectManager = app.Services.GetRequiredService<ProjectManager>();
+var materialRepository = app.Services.GetRequiredService<MaterialRepository>();
 knowledgeRepository.EnsureCreated();
 templateCatalog.EnsureSampleTemplates();
 moduleManager.Scan();
 templateTreeRepository.EnsureCreated();
+materialRepository.EnsureCreated();
 projectManager.GetCurrentProject();
 
 Log.Information("工程资料生成服务已启动。Root={RootPath}, Port={Port}", rootPath.FullName, config.Service.Port);
@@ -294,6 +302,181 @@ app.MapPost("/api/projects/select-folder", (ProjectFolderSelectRequest? request,
 {
     var result = service.SelectFolder(request?.Description, request?.InitialDirectory);
     return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+});
+
+app.MapGet("/api/materials", (
+    string? projectId,
+    string? materialName,
+    DateOnly? entryDateFrom,
+    DateOnly? entryDateTo,
+    string? usePart,
+    string? supplier,
+    string? testStatus,
+    string? approvalStatus,
+    string? status,
+    ProjectManager manager,
+    MaterialService service) =>
+{
+    try
+    {
+        var project = manager.ResolveProject(projectId);
+        var query = new MaterialQuery(
+            project.ProjectId,
+            materialName,
+            entryDateFrom,
+            entryDateTo,
+            usePart,
+            supplier,
+            testStatus,
+            approvalStatus,
+            status);
+        return Results.Ok(service.List(query));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/materials", (MaterialEntryCreateRequest request, MaterialService service) =>
+{
+    try
+    {
+        return Results.Ok(new
+        {
+            success = true,
+            item = service.Create(request)
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPut("/api/materials/{id}", (string id, MaterialEntryUpdateRequest request, MaterialService service) =>
+{
+    try
+    {
+        return Results.Ok(new
+        {
+            success = true,
+            item = service.Update(id, request)
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/materials/{id}/attachments", async (
+    string id,
+    HttpRequest request,
+    MaterialAttachmentService service) =>
+{
+    try
+    {
+        return Results.Ok(await service.UploadAsync(id, request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/materials/{id}/test", (string id, MaterialTestUpsertRequest request, MaterialService service) =>
+{
+    try
+    {
+        return Results.Ok(new
+        {
+            success = true,
+            test = service.SaveTest(id, request)
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/materials/{id}/approval/generate", (
+    string id,
+    string? projectId,
+    MaterialApprovalService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Generate(id, projectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapGet("/api/materials/ledger", (
+    string? projectId,
+    string? materialName,
+    DateOnly? entryDateFrom,
+    DateOnly? entryDateTo,
+    string? usePart,
+    string? supplier,
+    string? testStatus,
+    string? approvalStatus,
+    string? status,
+    bool? export,
+    ProjectManager manager,
+    MaterialLedgerService service) =>
+{
+    try
+    {
+        var project = manager.ResolveProject(projectId);
+        var query = new MaterialQuery(
+            project.ProjectId,
+            materialName,
+            entryDateFrom,
+            entryDateTo,
+            usePart,
+            supplier,
+            testStatus,
+            approvalStatus,
+            status);
+        return Results.Ok(service.GetLedger(query, export == true));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
 });
 
 app.MapGet("/api/template-library/tree", (string? projectId, TemplateTreeService service) =>

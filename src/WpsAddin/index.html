@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>工程资料</title>
-  <link rel="stylesheet" href="./styles.css?v=20260524-template-collapse">
+  <link rel="stylesheet" href="./styles.css?v=20260524-project-management">
   <script src="./main.js"></script>
 </head>
 <body>
@@ -32,6 +32,28 @@
     </section>
 
     <section id="panel" class="tabPanel active">
+      <section class="projectManagerPanel">
+        <div class="sectionHeader">
+          <div>
+            <h2>工程管理</h2>
+            <p id="currentProjectSummary">正在读取当前工程...</p>
+          </div>
+          <button id="refreshCurrentProject" type="button">刷新工程</button>
+        </div>
+        <form id="projectManagerForm" class="formGrid">
+          <label>工程名称<input name="projectName" value="GD-C3-5182" required></label>
+          <label>工程目录<input name="projectRootPath" placeholder="例如 D:\Projects\GD-C3-5182" required></label>
+          <label>默认模块<input name="moduleName" value="广东土建2024"></label>
+          <label>模板版本<input name="templateVersion" value="2024"></label>
+        </form>
+        <div class="actions">
+          <button id="selectProjectFolder" type="button">浏览目录</button>
+          <button id="createProject" type="button" class="primary">新建工程</button>
+          <button id="openProject" type="button">打开工程</button>
+        </div>
+        <pre id="projectManagerResult" class="resultBox compactResult"></pre>
+      </section>
+
       <form id="projectInfoForm" class="projectInfoForm">
         <label class="projectNameField">工程名称<input name="projectName" value="XX项目" required></label>
 
@@ -344,6 +366,6 @@
     </section>
   </div>
 
-  <script src="./app.js?v=20260524-template-collapse"></script>
+  <script src="./app.js?v=20260524-project-management"></script>
 </body>
 </html>

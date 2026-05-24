@@ -159,6 +159,21 @@ main {
   gap: 12px;
 }
 
+.projectManagerPanel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfcfd;
+}
+
+.compactResult {
+  min-height: 72px;
+  max-height: 160px;
+}
+
 .projectNameField {
   max-width: 720px;
 }

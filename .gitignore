@@ -5,6 +5,7 @@ Logs/
 *.pfx
 *.license
 config.json
+Config/CurrentProject.json
 Keys/license-private.pem
 KnowledgeBase/*.db
 Templates/ModuleCache/

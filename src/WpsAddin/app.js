@@ -8,7 +8,8 @@ let currentGeneratedForm = null;
 let serviceAvailable = false;
 let lastExternalTabVersion = "";
 const collapsedTemplateNodeIds = new Set();
-const activeProjectId = "project-default";
+let activeProjectId = "project-default";
+let currentProject = null;
 
 const tabSyncKeys = {
   targetTab: "engineering_docs_target_tab",
@@ -90,6 +91,85 @@ function buildGeneratedFormFields(data) {
   return fields;
 }
 
+function getProjectManagerFormData() {
+  return Object.fromEntries(new FormData($("#projectManagerForm")).entries());
+}
+
+function renderCurrentProject(project) {
+  currentProject = project;
+  activeProjectId = project?.projectId || "project-default";
+  const summary = $("#currentProjectSummary");
+  if (!project) {
+    summary.textContent = "尚未打开工程，将使用默认工程。";
+    return;
+  }
+
+  summary.textContent = `${project.projectName || "默认工程"}｜${project.projectRootPath || ""}`;
+  const form = $("#projectManagerForm");
+  if (form) {
+    form.elements.projectName.value = project.projectName || "";
+    form.elements.projectRootPath.value = project.projectRootPath || "";
+    form.elements.moduleName.value = project.moduleName || "";
+    form.elements.templateVersion.value = project.templateVersion || "";
+  }
+}
+
+async function loadCurrentProject() {
+  const result = await api("/api/projects/current");
+  renderCurrentProject(result.project);
+  showResult("#projectManagerResult", result);
+  return result.project;
+}
+
+async function selectProjectFolder() {
+  try {
+    const result = await api("/api/projects/select-folder", { method: "POST" });
+    if (result.projectRootPath) {
+      $("#projectManagerForm").elements.projectRootPath.value = result.projectRootPath;
+    }
+    showResult("#projectManagerResult", result);
+  } catch (error) {
+    showResult("#projectManagerResult", error);
+  }
+}
+
+async function createProject() {
+  const data = getProjectManagerFormData();
+  try {
+    const result = await api("/api/projects/create", {
+      method: "POST",
+      body: JSON.stringify({
+        projectName: data.projectName || "",
+        projectRootPath: data.projectRootPath || "",
+        moduleName: data.moduleName || "",
+        templateVersion: data.templateVersion || ""
+      })
+    });
+    renderCurrentProject(result.project);
+    showResult("#projectManagerResult", result);
+    await loadTemplateLibraryTree();
+  } catch (error) {
+    showResult("#projectManagerResult", error);
+  }
+}
+
+async function openProject() {
+  const data = getProjectManagerFormData();
+  try {
+    const result = await api("/api/projects/open", {
+      method: "POST",
+      body: JSON.stringify({
+        projectRootPath: data.projectRootPath || ""
+      })
+    });
+    renderCurrentProject(result.project);
+    showResult("#projectManagerResult", result);
+    await loadTemplateLibraryTree();
+  } catch (error) {
+    showResult("#projectManagerResult", error);
+  }
+}
+
 async function api(path, options = {}) {
   const response = await fetch(`${serviceBaseUrl}${path}`, {
     ...options,
@@ -168,6 +248,7 @@ async function retryServiceStatus() {
 
   await loadTemplates().catch((error) => showResult("#generateResult", error));
   await loadModules().catch((error) => showResult("#templateResult", error));
+  await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
   await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
   await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
   await loadSettings().catch((error) => showResult("#settingsResult", error));
@@ -1263,6 +1344,10 @@ async function boot() {
   $("#refreshStatus").addEventListener("click", refreshStatus);
   $("#retryServiceStatus").addEventListener("click", retryServiceStatus);
   $("#copyStartCommand").addEventListener("click", copyStartCommand);
+  $("#refreshCurrentProject").addEventListener("click", loadCurrentProject);
+  $("#selectProjectFolder").addEventListener("click", selectProjectFolder);
+  $("#createProject").addEventListener("click", createProject);
+  $("#openProject").addEventListener("click", openProject);
   $("#reloadTemplates").addEventListener("click", loadTemplates);
   $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);
   $("#openTemplateFolder").addEventListener("click", openTemplateFolder);
@@ -1318,6 +1403,7 @@ async function boot() {
   if (online || serviceAvailable) {
     await loadTemplates().catch((error) => showResult("#generateResult", error));
     await loadModules().catch((error) => showResult("#templateResult", error));
+    await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
     await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
     await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
     await loadSettings().catch((error) => showResult("#settingsResult", error));

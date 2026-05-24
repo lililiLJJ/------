@@ -221,6 +221,27 @@ async function createProject() {
   }
 }
 
+async function saveProject() {
+  try {
+    const data = getProjectManagerFormData();
+    showResult("#projectManagerResult", "正在保存工程信息...");
+    const result = await api("/api/projects/current", {
+      method: "POST",
+      body: JSON.stringify({
+        projectName: data.projectName || "",
+        projectRootPath: data.projectRootPath || "",
+        moduleName: data.moduleName || "",
+        templateVersion: data.templateVersion || ""
+      })
+    });
+    renderCurrentProject(result.project);
+    showResult("#projectManagerResult", result);
+    await loadTemplateLibraryTree();
+  } catch (error) {
+    showResult("#projectManagerResult", error);
+  }
+}
+
 async function openProject() {
   try {
     showResult("#projectManagerResult", "正在打开目录选择窗口...");
@@ -1452,6 +1473,7 @@ async function boot() {
   $("#copyStartCommand").addEventListener("click", copyStartCommand);
   $("#refreshCurrentProject").addEventListener("click", loadCurrentProject);
   $("#createProject").addEventListener("click", createProject);
+  $("#saveProject").addEventListener("click", saveProject);
   $("#openProject").addEventListener("click", openProject);
   $("#reloadTemplates").addEventListener("click", loadTemplates);
   $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);

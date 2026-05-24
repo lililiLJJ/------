@@ -49,6 +49,35 @@ public sealed class ProjectManager
         return context;
     }
 
+    public ProjectContext UpdateCurrentProject(ProjectUpdateRequest request)
+    {
+        lock (_lock)
+        {
+            var context = GetCurrentProject();
+            var requestedRootPath = string.IsNullOrWhiteSpace(request.ProjectRootPath)
+                ? context.ProjectRootPath
+                : Path.GetFullPath(request.ProjectRootPath.Trim());
+            var currentRootPath = Path.GetFullPath(context.ProjectRootPath);
+
+            if (!string.Equals(requestedRootPath, currentRootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("工程目录不能通过保存信息修改，请使用打开工程切换目录。");
+            }
+
+            if (string.IsNullOrWhiteSpace(request.ProjectName))
+            {
+                throw new InvalidOperationException("工程名称不能为空。");
+            }
+
+            context.ProjectName = request.ProjectName.Trim();
+            context.ModuleName = request.ModuleName?.Trim() ?? "";
+            context.TemplateVersion = request.TemplateVersion?.Trim() ?? "";
+            _storage.SaveProjectInfo(context);
+            SaveCurrentProjectPointer(context);
+            return context;
+        }
+    }
+
     public bool IsCurrentProject(string projectId)
     {
         return string.Equals(GetCurrentProject().ProjectId, projectId, StringComparison.OrdinalIgnoreCase);

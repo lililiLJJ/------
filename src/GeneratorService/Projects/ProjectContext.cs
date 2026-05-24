@@ -34,6 +34,12 @@ public sealed record ProjectCreateRequest(
 
 public sealed record ProjectOpenRequest(string ProjectRootPath);
 
+public sealed record ProjectUpdateRequest(
+    string ProjectName,
+    string ProjectRootPath,
+    string? ModuleName,
+    string? TemplateVersion);
+
 public sealed record ProjectFolderSelectResult(
     bool Success,
     string? ProjectRootPath,

@@ -229,6 +229,26 @@ app.MapGet("/api/projects/current", (ProjectManager manager) =>
     });
 });
 
+app.MapPost("/api/projects/current", (ProjectUpdateRequest request, ProjectManager manager) =>
+{
+    try
+    {
+        return Results.Ok(new
+        {
+            success = true,
+            project = manager.UpdateCurrentProject(request)
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
 app.MapPost("/api/projects/create", (ProjectCreateRequest request, ProjectManager manager) =>
 {
     try

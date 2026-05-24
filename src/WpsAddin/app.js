@@ -156,25 +156,74 @@ async function loadCurrentProject() {
 async function selectProjectFolder() {
   try {
     showResult("#projectManagerResult", "正在打开目录选择窗口...");
-    const result = await api("/api/projects/select-folder", { method: "POST" });
+    const result = await requestProjectFolder("选择工程目录");
     if (result.projectRootPath) {
       $("#projectManagerForm").elements.projectRootPath.value = result.projectRootPath;
     }
     showResult("#projectManagerResult", result);
+    return result.projectRootPath || "";
   } catch (error) {
     showResult("#projectManagerResult", error);
+    return "";
   }
 }
 
-async function createProject() {
+async function requestProjectFolder(description) {
+  const form = $("#projectManagerForm");
+  const currentPath = form?.elements.projectRootPath.value || "";
+  return api("/api/projects/select-folder", {
+    method: "POST",
+    body: JSON.stringify({
+      description,
+      initialDirectory: currentPath
+    })
+  });
+}
+
+function shouldPromptForProjectPath(projectRootPath) {
+  const value = (projectRootPath || "").trim().toLowerCase();
+  const currentValue = (currentProject?.projectRootPath || "").trim().toLowerCase();
+  return !value || (!!currentValue && value === currentValue);
+}
+
+async function getProjectPathForAction(description) {
   const data = getProjectManagerFormData();
+  if (!shouldPromptForProjectPath(data.projectRootPath)) {
+    return data.projectRootPath;
+  }
+
+  showResult("#projectManagerResult", "正在打开目录选择窗口...");
   try {
+    const result = await requestProjectFolder(description);
+    if (result.projectRootPath) {
+      $("#projectManagerForm").elements.projectRootPath.value = result.projectRootPath;
+      return result.projectRootPath;
+    }
+  } catch (error) {
+    showResult("#projectManagerResult", {
+      success: false,
+      message: `${error.message || "未选择工程目录"}。也可以在“工程目录”输入框手动输入或粘贴路径后再试。`,
+      detail: error.detail
+    });
+  }
+
+  return "";
+}
+
+async function createProject() {
+  try {
+    const projectRootPath = await getProjectPathForAction("选择新工程保存目录");
+    if (!projectRootPath) {
+      return;
+    }
+
+    const data = getProjectManagerFormData();
     showResult("#projectManagerResult", "正在创建工程...");
     const result = await api("/api/projects/create", {
       method: "POST",
       body: JSON.stringify({
         projectName: data.projectName || "",
-        projectRootPath: data.projectRootPath || "",
+        projectRootPath,
         moduleName: data.moduleName || "",
         templateVersion: data.templateVersion || ""
       })
@@ -188,13 +237,17 @@ async function createProject() {
 }
 
 async function openProject() {
-  const data = getProjectManagerFormData();
   try {
+    const projectRootPath = await getProjectPathForAction("选择要打开的工程目录");
+    if (!projectRootPath) {
+      return;
+    }
+
     showResult("#projectManagerResult", "正在打开工程...");
     const result = await api("/api/projects/open", {
       method: "POST",
       body: JSON.stringify({
-        projectRootPath: data.projectRootPath || ""
+        projectRootPath
       })
     });
     renderCurrentProject(result.project);

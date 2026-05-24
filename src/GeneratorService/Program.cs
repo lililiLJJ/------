@@ -269,9 +269,9 @@ app.MapPost("/api/projects/open", (ProjectOpenRequest request, ProjectManager ma
     }
 });
 
-app.MapPost("/api/projects/select-folder", (ProjectFolderDialogService service) =>
+app.MapPost("/api/projects/select-folder", (ProjectFolderSelectRequest? request, ProjectFolderDialogService service) =>
 {
-    var result = service.SelectFolder();
+    var result = service.SelectFolder(request?.Description, request?.InitialDirectory);
     return result.Success ? Results.Ok(result) : Results.BadRequest(result);
 });
 

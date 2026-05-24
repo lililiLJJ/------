@@ -1,10 +1,11 @@
+using System.Drawing;
 using System.Windows.Forms;
 
 namespace GeneratorService.Projects;
 
 public sealed class ProjectFolderDialogService
 {
-    public ProjectFolderSelectResult SelectFolder()
+    public ProjectFolderSelectResult SelectFolder(string? description = null, string? initialDirectory = null)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -17,14 +18,32 @@ public sealed class ProjectFolderDialogService
         {
             try
             {
+                using var owner = new Form
+                {
+                    TopMost = true,
+                    ShowInTaskbar = false,
+                    StartPosition = FormStartPosition.CenterScreen,
+                    Size = new Size(1, 1),
+                    Opacity = 0
+                };
+
                 using var dialog = new FolderBrowserDialog
                 {
-                    Description = "选择工程目录",
+                    Description = string.IsNullOrWhiteSpace(description) ? "选择工程目录" : description,
                     UseDescriptionForTitle = true,
                     ShowNewFolderButton = true
                 };
 
-                if (dialog.ShowDialog() == DialogResult.OK)
+                if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory))
+                {
+                    dialog.SelectedPath = initialDirectory;
+                }
+
+                owner.Show();
+                owner.Activate();
+                owner.BringToFront();
+
+                if (dialog.ShowDialog(owner) == DialogResult.OK)
                 {
                     selectedPath = dialog.SelectedPath;
                 }

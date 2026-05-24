@@ -6,6 +6,7 @@ Logs/
 *.license
 config.json
 Config/CurrentProject.json
+Projects/project-default/ProjectInfo.json
 Keys/license-private.pem
 KnowledgeBase/*.db
 Templates/ModuleCache/

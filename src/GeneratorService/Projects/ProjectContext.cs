@@ -38,3 +38,7 @@ public sealed record ProjectFolderSelectResult(
     bool Success,
     string? ProjectRootPath,
     string Message);
+
+public sealed record ProjectFolderSelectRequest(
+    string? Description,
+    string? InitialDirectory);

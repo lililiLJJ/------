@@ -51,6 +51,14 @@ public sealed record DeleteGeneratedFormResult(
     string Id,
     string Message);
 
+public sealed record GeneratedFormBackupResult(
+    bool Success,
+    string BackupId,
+    string SourcePath,
+    string BackupPath,
+    DateTimeOffset CreatedAt,
+    string Message);
+
 public sealed record ProjectDocumentInfo(
     string Id,
     string ProjectId,

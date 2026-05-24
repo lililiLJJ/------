@@ -149,6 +149,40 @@ public sealed class GeneratedFormService
         return new DeleteGeneratedFormResult(deleted, nodeId, deleted ? "资料表已删除。" : "资料表节点不存在。");
     }
 
+    public GeneratedFormBackupResult BackupGeneratedForm(string nodeId)
+    {
+        var info = GetGeneratedForm(nodeId);
+        var sourcePath = Path.GetFullPath(info.GeneratedFilePath);
+        if (!File.Exists(sourcePath))
+        {
+            throw new FileNotFoundException($"资料表文件不存在：{sourcePath}", sourcePath);
+        }
+
+        var project = _projectManager.GetCurrentProject();
+        var backupDirectory = Path.Combine(project.VersionsPath, "RowHeightFit");
+        Directory.CreateDirectory(backupDirectory);
+
+        var now = DateTimeOffset.Now;
+        var backupId = $"row-height-{now:yyyyMMddHHmmssfff}";
+        var extension = Path.GetExtension(sourcePath);
+        var backupFileName = $"{Path.GetFileNameWithoutExtension(sourcePath)}.{backupId}{extension}";
+        var backupPath = Path.Combine(backupDirectory, backupFileName);
+
+        using (var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        using (var target = new FileStream(backupPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            source.CopyTo(target);
+        }
+
+        return new GeneratedFormBackupResult(
+            true,
+            backupId,
+            sourcePath,
+            backupPath,
+            now,
+            "已备份当前资料表。");
+    }
+
     private static void ApplyFields(string filePath, string formName, IReadOnlyDictionary<string, string> fields)
     {
         if (!string.Equals(Path.GetExtension(filePath), ".xlsx", StringComparison.OrdinalIgnoreCase))

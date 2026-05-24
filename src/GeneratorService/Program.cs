@@ -374,6 +374,22 @@ app.MapPost("/api/generated-forms/{nodeId}/open", (
     }
 });
 
+app.MapPost("/api/generated-forms/{nodeId}/backups", (string nodeId, GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.BackupGeneratedForm(nodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
 app.MapDelete("/api/generated-forms/{nodeId}", (string nodeId, GeneratedFormService service) =>
 {
     try

@@ -5,6 +5,7 @@ let modules = [];
 let templateTreeNodes = [];
 let selectedTemplateNode = null;
 let currentGeneratedForm = null;
+let lastRowHeightFitAdjustment = null;
 let serviceAvailable = false;
 let lastExternalTabVersion = "";
 const collapsedTemplateNodeIds = new Set();
@@ -571,6 +572,7 @@ async function loadTemplateLibraryTree() {
   templateTreeNodes = result.nodes || [];
   selectedTemplateNode = null;
   currentGeneratedForm = null;
+  lastRowHeightFitAdjustment = null;
   $("#templateSummary").textContent = `${result.projectName}｜已加载工程资料规范层级树。`;
   renderTemplateTreeView();
   renderSpreadsheetPlaceholder();
@@ -721,6 +723,7 @@ function resolveFolderMeta(node) {
 async function selectTemplateTreeNode(node) {
   selectedTemplateNode = node;
   currentGeneratedForm = null;
+  lastRowHeightFitAdjustment = null;
   for (const item of $$(".specTreeNode")) {
     item.classList.toggle("selected", item.dataset.nodeId === node.id);
   }
@@ -817,6 +820,7 @@ async function openGeneratedForm(node) {
   try {
     const form = await api(`/api/generated-forms/${encodeURIComponent(node.id)}`);
     currentGeneratedForm = form;
+    lastRowHeightFitAdjustment = null;
     $("#spreadsheetSummary").textContent = `模板编码：${form.templateCode || "未配置"}｜可编辑：${form.canEdit ? "是" : "否"}`;
     $("#spreadsheetPreview").innerHTML = `
       <div class="spreadsheetFileCard">
@@ -858,11 +862,40 @@ function renderSpreadsheetPlaceholder() {
 function updateTemplateToolbarState(forceDisabled = false) {
   const canCreate = !forceDisabled && selectedTemplateNode?.nodeType === "template";
   const canOperateForm = !forceDisabled && !!currentGeneratedForm;
+  const canUndoRowHeightFit = canOperateForm && !!lastRowHeightFitAdjustment;
   $("#newGeneratedForm").disabled = !canCreate;
   $("#saveSpreadsheet").disabled = !canOperateForm;
   $("#exportSpreadsheet").disabled = !canOperateForm;
+  $("#fitRowHeights").disabled = !canOperateForm;
+  $("#undoRowHeightFit").disabled = !canUndoRowHeightFit;
   $("#deleteGeneratedForm").disabled = !canOperateForm;
 }
+
+const rowHeightBalanceOptions = {
+  topProtectedRows: 5,
+  bottomProtectedRows: 6,
+  maxRounds: 3,
+  minRoundIncrease: 0.5,
+  maxRoundIncrease: 1.5,
+  maxTotalIncrease: 18,
+  maxRowHeight: 120,
+  lineHeight: 15,
+  cellPadding: 4
+};
+
+const protectedRowKeywords = [
+  "标题",
+  "表头",
+  "签字",
+  "签名",
+  "盖章",
+  "建设单位",
+  "施工单位",
+  "监理单位",
+  "项目负责人",
+  "验收结论",
+  "页脚"
+];
 
 function openGeneratedFormModal() {
   if (!selectedTemplateNode || selectedTemplateNode.nodeType !== "template") {
@@ -921,6 +954,495 @@ function saveSpreadsheet() {
 
 function exportSpreadsheet() {
   showResult("#templateResult", "导出功能将基于当前 WPS 工作簿扩展。当前请先使用 WPS 的“另存为/输出为PDF”完成导出。");
+}
+
+async function fitRowHeights() {
+  if (!currentGeneratedForm) {
+    showResult("#templateResult", "请先选择并打开一个已创建的资料表。");
+    return;
+  }
+
+  try {
+    const app = getWpsApplication();
+    const workbook = app.ActiveWorkbook;
+    const sheet = app.ActiveSheet || workbook?.ActiveSheet;
+    if (!workbook || !sheet) {
+      showResult("#templateResult", "未检测到当前 WPS 工作簿，请先打开资料表。");
+      return;
+    }
+
+    if (!isActiveWorkbookForCurrentForm(workbook)) {
+      showResult("#templateResult", "当前活动工作簿不是所选资料表，请先打开当前资料表后再适配行高。");
+      return;
+    }
+
+    if (typeof workbook.Save !== "function") {
+      showResult("#templateResult", "当前环境无法调用 WPS 保存接口，无法在适配前完成安全备份。");
+      return;
+    }
+
+    workbook.Save();
+    const backup = await api(`/api/generated-forms/${encodeURIComponent(currentGeneratedForm.id)}/backups`, { method: "POST" });
+    const rangeInfo = getRowHeightTargetRange(sheet);
+    const eligibleRows = buildEligibleRows(sheet, rangeInfo);
+    if (eligibleRows.length === 0) {
+      showResult("#templateResult", "未找到可安全适配的资料内容区域。");
+      return;
+    }
+
+    const pageCountBefore = getWorksheetPageCount(sheet);
+    const adjustment = applyBalancedRowHeight(sheet, rangeInfo, eligibleRows);
+    adjustment.backupId = backup.backupId;
+    adjustment.backupPath = backup.backupPath;
+    adjustment.formId = currentGeneratedForm.id;
+    adjustment.workbookPath = getWorkbookPath(workbook);
+    adjustment.sheetName = getSheetName(sheet);
+    adjustment.pageCountBefore = pageCountBefore;
+    adjustment.pageCountAfter = getWorksheetPageCount(sheet);
+
+    if (adjustment.rows.length === 0) {
+      showResult("#templateResult", {
+        success: true,
+        message: "当前资料内容区域无需调整行高，已完成适配前备份。",
+        backupPath: backup.backupPath
+      });
+      return;
+    }
+
+    if (hasPageCountIncreased(adjustment.pageCountBefore, adjustment.pageCountAfter)) {
+      restoreRowHeightAdjustment(sheet, adjustment, "originalHeight");
+      const confirmed = window.confirm(
+        `智能适配后打印页数可能从 ${adjustment.pageCountBefore} 页增加到 ${adjustment.pageCountAfter} 页。已先恢复本次调整，是否仍要重新应用？`
+      );
+
+      if (!confirmed) {
+        lastRowHeightFitAdjustment = null;
+        updateTemplateToolbarState(false);
+        showResult("#templateResult", {
+          success: false,
+          message: "已取消智能行高适配，资料表已恢复到调整前行高。",
+          backupPath: backup.backupPath
+        });
+        return;
+      }
+
+      restoreRowHeightAdjustment(sheet, adjustment, "targetHeight");
+    }
+
+    lastRowHeightFitAdjustment = adjustment;
+    updateTemplateToolbarState(false);
+    showResult("#templateResult", {
+      success: true,
+      message: `已智能整体适配 ${adjustment.rows.length} 行。请检查版式后点击“保存”。`,
+      backupPath: backup.backupPath,
+      pageCountBefore: adjustment.pageCountBefore,
+      pageCountAfter: adjustment.pageCountAfter,
+      unresolvedRows: adjustment.unresolvedRows
+    });
+  } catch (error) {
+    showResult("#templateResult", error);
+  }
+}
+
+function undoRowHeightFit() {
+  if (!lastRowHeightFitAdjustment) {
+    showResult("#templateResult", "当前没有可撤销的行高适配。");
+    return;
+  }
+
+  try {
+    const app = getWpsApplication();
+    if (!isUndoTargetActive(app)) {
+      showResult("#templateResult", "当前活动工作簿不是上次适配的资料表，无法安全撤销。");
+      return;
+    }
+
+    const sheet = app.ActiveSheet || app.ActiveWorkbook?.ActiveSheet;
+    restoreRowHeightAdjustment(sheet, lastRowHeightFitAdjustment, "originalHeight");
+    const restoredRows = lastRowHeightFitAdjustment.rows.length;
+    lastRowHeightFitAdjustment = null;
+    updateTemplateToolbarState(false);
+    showResult("#templateResult", `已撤销本次行高适配，恢复 ${restoredRows} 行。`);
+  } catch (error) {
+    showResult("#templateResult", error);
+  }
+}
+
+function isUndoTargetActive(app) {
+  if (!lastRowHeightFitAdjustment) {
+    return false;
+  }
+
+  const activePath = normalizeLocalPath(getWorkbookPath(app.ActiveWorkbook));
+  const targetPath = normalizeLocalPath(lastRowHeightFitAdjustment.workbookPath);
+  const activeSheetName = getSheetName(app.ActiveSheet || app.ActiveWorkbook?.ActiveSheet);
+  if (targetPath && activePath && activePath !== targetPath) {
+    return false;
+  }
+
+  return !lastRowHeightFitAdjustment.sheetName || activeSheetName === lastRowHeightFitAdjustment.sheetName;
+}
+
+function getWpsApplication() {
+  if (!window.Application) {
+    throw new Error("当前环境无法访问 WPS 表格对象模型。");
+  }
+
+  return window.Application;
+}
+
+function getWorkbookPath(workbook) {
+  return String(workbook?.FullName || workbook?.Path || "");
+}
+
+function getSheetName(sheet) {
+  return String(sheet?.Name || "");
+}
+
+function isActiveWorkbookForCurrentForm(workbook) {
+  const activePath = normalizeLocalPath(getWorkbookPath(workbook));
+  const formPath = normalizeLocalPath(currentGeneratedForm?.generatedFilePath || "");
+  if (!activePath || !formPath) {
+    return true;
+  }
+
+  const activeName = activePath.split("/").pop();
+  const formName = formPath.split("/").pop();
+  return activePath === formPath || activeName === formName;
+}
+
+function normalizeLocalPath(value) {
+  return String(value || "").replaceAll("\\", "/").toLowerCase();
+}
+
+function getRowHeightTargetRange(sheet) {
+  const used = getUsedRangeInfo(sheet);
+  const selection = getSelectionRangeInfo();
+  if (selection && rangesIntersect(selection, used) && selection.rowCount * selection.columnCount > 1) {
+    return intersectRanges(selection, used);
+  }
+
+  return {
+    startRow: used.startRow,
+    endRow: used.endRow,
+    startColumn: used.startColumn,
+    endColumn: used.endColumn,
+    rowCount: used.rowCount,
+    columnCount: used.columnCount,
+    fromSelection: false
+  };
+}
+
+function getSelectionRangeInfo() {
+  try {
+    const selection = window.Application?.Selection;
+    if (!selection) {
+      return null;
+    }
+
+    return getRangeInfo(selection, true);
+  } catch {
+    return null;
+  }
+}
+
+function getUsedRangeInfo(sheet) {
+  const used = sheet.UsedRange;
+  return getRangeInfo(used, false);
+}
+
+function getRangeInfo(range, fromSelection) {
+  const startRow = Number(range.Row || 1);
+  const startColumn = Number(range.Column || 1);
+  const rowCount = Number(range.Rows?.Count || 1);
+  const columnCount = Number(range.Columns?.Count || 1);
+  return {
+    startRow,
+    endRow: startRow + rowCount - 1,
+    startColumn,
+    endColumn: startColumn + columnCount - 1,
+    rowCount,
+    columnCount,
+    fromSelection
+  };
+}
+
+function rangesIntersect(left, right) {
+  return left.startRow <= right.endRow &&
+    left.endRow >= right.startRow &&
+    left.startColumn <= right.endColumn &&
+    left.endColumn >= right.startColumn;
+}
+
+function intersectRanges(left, right) {
+  const startRow = Math.max(left.startRow, right.startRow);
+  const endRow = Math.min(left.endRow, right.endRow);
+  const startColumn = Math.max(left.startColumn, right.startColumn);
+  const endColumn = Math.min(left.endColumn, right.endColumn);
+  return {
+    startRow,
+    endRow,
+    startColumn,
+    endColumn,
+    rowCount: endRow - startRow + 1,
+    columnCount: endColumn - startColumn + 1,
+    fromSelection: left.fromSelection
+  };
+}
+
+function buildEligibleRows(sheet, rangeInfo) {
+  const rows = [];
+  for (let row = rangeInfo.startRow; row <= rangeInfo.endRow; row++) {
+    if (!rangeInfo.fromSelection && isProtectedRow(sheet, row, rangeInfo)) {
+      continue;
+    }
+
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function isProtectedRow(sheet, row, rangeInfo) {
+  const topLimit = rangeInfo.startRow + rowHeightBalanceOptions.topProtectedRows - 1;
+  const bottomLimit = rangeInfo.endRow - rowHeightBalanceOptions.bottomProtectedRows + 1;
+  if (row <= topLimit || row >= bottomLimit) {
+    return true;
+  }
+
+  const rowText = getRowText(sheet, row, rangeInfo);
+  return protectedRowKeywords.some(keyword => rowText.includes(keyword));
+}
+
+function getRowText(sheet, row, rangeInfo) {
+  const values = [];
+  const endColumn = Math.min(rangeInfo.endColumn, rangeInfo.startColumn + 24);
+  for (let column = rangeInfo.startColumn; column <= endColumn; column++) {
+    const text = getCellText(sheet, row, column);
+    if (text) {
+      values.push(text);
+    }
+  }
+
+  return values.join(" ");
+}
+
+function applyBalancedRowHeight(sheet, rangeInfo, eligibleRows) {
+  const originalHeights = new Map();
+  const targetHeights = new Map();
+  const eligibleSet = new Set(eligibleRows);
+  let unresolvedRows = [];
+
+  for (let round = 0; round < rowHeightBalanceOptions.maxRounds; round++) {
+    const blocks = buildRowBlocks(eligibleRows);
+    let changed = false;
+    unresolvedRows = [];
+
+    for (const block of blocks) {
+      const deficit = estimateBlockDeficit(sheet, rangeInfo, block, eligibleSet);
+      if (deficit.total <= 0) {
+        continue;
+      }
+
+      unresolvedRows.push(...deficit.rows);
+      const perRowIncrease = clamp(
+        deficit.total / block.length,
+        rowHeightBalanceOptions.minRoundIncrease,
+        rowHeightBalanceOptions.maxRoundIncrease
+      );
+
+      for (const row of block) {
+        const currentHeight = getRowHeight(sheet, row);
+        if (!originalHeights.has(row)) {
+          originalHeights.set(row, currentHeight);
+        }
+
+        const originalHeight = originalHeights.get(row);
+        const maxAllowedHeight = Math.min(
+          rowHeightBalanceOptions.maxRowHeight,
+          originalHeight + rowHeightBalanceOptions.maxTotalIncrease
+        );
+        const nextHeight = Math.min(maxAllowedHeight, currentHeight + perRowIncrease);
+        if (nextHeight > currentHeight) {
+          setRowHeight(sheet, row, nextHeight);
+          targetHeights.set(row, nextHeight);
+          changed = true;
+        }
+      }
+    }
+
+    if (!changed || unresolvedRows.length === 0) {
+      break;
+    }
+  }
+
+  return {
+    rows: [...targetHeights.entries()].map(([row, targetHeight]) => ({
+      row,
+      originalHeight: originalHeights.get(row),
+      targetHeight
+    })),
+    unresolvedRows: [...new Set(unresolvedRows)]
+  };
+}
+
+function buildRowBlocks(rows) {
+  const blocks = [];
+  let current = [];
+  for (const row of rows) {
+    if (current.length === 0 || row === current[current.length - 1] + 1) {
+      current.push(row);
+      continue;
+    }
+
+    blocks.push(current);
+    current = [row];
+  }
+
+  if (current.length > 0) {
+    blocks.push(current);
+  }
+
+  return blocks;
+}
+
+function estimateBlockDeficit(sheet, rangeInfo, block, eligibleSet) {
+  let total = 0;
+  const rows = [];
+  const blockSet = new Set(block);
+  for (const row of block) {
+    const rowDeficit = estimateRowDeficit(sheet, rangeInfo, row, blockSet, eligibleSet);
+    if (rowDeficit <= 0) {
+      continue;
+    }
+
+    total += rowDeficit;
+    rows.push(row);
+  }
+
+  return { total, rows };
+}
+
+function estimateRowDeficit(sheet, rangeInfo, row, blockSet, eligibleSet) {
+  const currentHeight = getRowHeight(sheet, row);
+  let neededHeight = currentHeight;
+  for (let column = rangeInfo.startColumn; column <= rangeInfo.endColumn; column++) {
+    const text = getCellText(sheet, row, column);
+    if (!text || text.length < 10) {
+      continue;
+    }
+
+    const span = getCellRowColumnSpan(sheet, row, column);
+    if (span.startRow !== row || span.startColumn !== column) {
+      continue;
+    }
+
+    if (span.rows > 1 && !isSpanInsideEligibleRows(span, eligibleSet)) {
+      continue;
+    }
+
+    const characterCapacity = Math.max(8, 12 * span.columns);
+    const estimatedLines = estimateTextLines(text, characterCapacity);
+    const requiredHeight = estimatedLines * rowHeightBalanceOptions.lineHeight + rowHeightBalanceOptions.cellPadding;
+    neededHeight = Math.max(neededHeight, requiredHeight / Math.max(1, span.rows));
+  }
+
+  if (!blockSet.has(row)) {
+    return 0;
+  }
+
+  return Math.max(0, neededHeight - currentHeight);
+}
+
+function isSpanInsideEligibleRows(span, eligibleSet) {
+  for (let row = span.startRow; row <= span.endRow; row++) {
+    if (!eligibleSet.has(row)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function estimateTextLines(text, characterCapacity) {
+  return String(text)
+    .split(/\r?\n/)
+    .reduce((total, line) => total + Math.max(1, Math.ceil(getTextWeight(line) / characterCapacity)), 0);
+}
+
+function getTextWeight(text) {
+  return [...String(text)].reduce((total, char) => total + (char.charCodeAt(0) > 255 ? 2 : 1), 0);
+}
+
+function getCellRowColumnSpan(sheet, row, column) {
+  try {
+    const cell = sheet.Cells(row, column);
+    if (!cell?.MergeCells) {
+      return { rows: 1, columns: 1, startRow: row, endRow: row, startColumn: column, endColumn: column };
+    }
+
+    const area = cell.MergeArea;
+    const info = getRangeInfo(area, false);
+    return {
+      rows: info.rowCount,
+      columns: info.columnCount,
+      startRow: info.startRow,
+      endRow: info.endRow,
+      startColumn: info.startColumn,
+      endColumn: info.endColumn
+    };
+  } catch {
+    return { rows: 1, columns: 1, startRow: row, endRow: row, startColumn: column, endColumn: column };
+  }
+}
+
+function getCellText(sheet, row, column) {
+  try {
+    const cell = sheet.Cells(row, column);
+    const value = cell?.Text ?? cell?.Value2 ?? cell?.Value ?? "";
+    return String(value ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function getRowHeight(sheet, row) {
+  const value = Number(sheet.Rows(row).RowHeight);
+  return Number.isFinite(value) && value > 0 ? value : 15;
+}
+
+function setRowHeight(sheet, row, height) {
+  sheet.Rows(row).RowHeight = Math.round(height * 10) / 10;
+}
+
+function restoreRowHeightAdjustment(sheet, adjustment, heightKey) {
+  for (const item of adjustment.rows) {
+    setRowHeight(sheet, item.row, item[heightKey]);
+  }
+}
+
+function getWorksheetPageCount(sheet) {
+  try {
+    const horizontalBreaks = sheet[`H${"Page"}${"Breaks"}`];
+    const verticalBreaks = sheet[`V${"Page"}${"Breaks"}`];
+    const horizontalCount = Number(horizontalBreaks?.Count ?? 0);
+    const verticalCount = Number(verticalBreaks?.Count ?? 0);
+    if (Number.isFinite(horizontalCount) && Number.isFinite(verticalCount)) {
+      return (horizontalCount + 1) * (verticalCount + 1);
+    }
+  } catch {
+    // Page count is best-effort in WPS compatibility mode.
+  }
+
+  return null;
+}
+
+function hasPageCountIncreased(before, after) {
+  return Number.isFinite(before) && Number.isFinite(after) && after > before;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 async function deleteGeneratedForm() {
@@ -1481,6 +2003,8 @@ async function boot() {
   $("#newGeneratedForm").addEventListener("click", openGeneratedFormModal);
   $("#saveSpreadsheet").addEventListener("click", saveSpreadsheet);
   $("#exportSpreadsheet").addEventListener("click", exportSpreadsheet);
+  $("#fitRowHeights").addEventListener("click", fitRowHeights);
+  $("#undoRowHeightFit").addEventListener("click", undoRowHeightFit);
   $("#deleteGeneratedForm").addEventListener("click", deleteGeneratedForm);
   $("#templateSearch").addEventListener("input", renderTemplateTreeView);
   $("#generatedFormForm").addEventListener("submit", createGeneratedForm);

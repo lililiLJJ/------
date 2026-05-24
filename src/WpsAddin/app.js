@@ -1376,7 +1376,7 @@ function getTextWeight(text) {
 
 function getCellRowColumnSpan(sheet, row, column) {
   try {
-    const cell = sheet.Cells(row, column);
+    const cell = getWorksheetCell(sheet, row, column);
     if (!cell?.MergeCells) {
       return { rows: 1, columns: 1, startRow: row, endRow: row, startColumn: column, endColumn: column };
     }
@@ -1398,7 +1398,7 @@ function getCellRowColumnSpan(sheet, row, column) {
 
 function getCellText(sheet, row, column) {
   try {
-    const cell = sheet.Cells(row, column);
+    const cell = getWorksheetCell(sheet, row, column);
     const value = cell?.Text ?? cell?.Value2 ?? cell?.Value ?? "";
     return String(value ?? "").trim();
   } catch {
@@ -1407,12 +1407,58 @@ function getCellText(sheet, row, column) {
 }
 
 function getRowHeight(sheet, row) {
-  const value = Number(sheet.Rows(row).RowHeight);
+  const value = Number(getWorksheetRow(sheet, row).RowHeight);
   return Number.isFinite(value) && value > 0 ? value : 15;
 }
 
 function setRowHeight(sheet, row, height) {
-  sheet.Rows(row).RowHeight = Math.round(height * 10) / 10;
+  getWorksheetRow(sheet, row).RowHeight = Math.round(height * 10) / 10;
+}
+
+function getWorksheetCell(sheet, row, column) {
+  const cells = sheet.Cells;
+  if (typeof cells === "function") {
+    return cells.call(sheet, row, column);
+  }
+
+  if (typeof cells?.Item === "function") {
+    return cells.Item(row, column);
+  }
+
+  if (typeof sheet.Range === "function") {
+    return sheet.Range(`${toColumnName(column)}${row}`);
+  }
+
+  throw new Error("当前 WPS 环境无法访问单元格对象。");
+}
+
+function getWorksheetRow(sheet, row) {
+  const rows = sheet.Rows;
+  if (typeof rows === "function") {
+    return rows.call(sheet, row);
+  }
+
+  if (typeof rows?.Item === "function") {
+    return rows.Item(row);
+  }
+
+  if (typeof sheet.Range === "function") {
+    return sheet.Range(`${row}:${row}`);
+  }
+
+  throw new Error("当前 WPS 环境无法访问行对象。");
+}
+
+function toColumnName(column) {
+  let value = Number(column);
+  let name = "";
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    name = String.fromCharCode(65 + remainder) + name;
+    value = Math.floor((value - 1) / 26);
+  }
+
+  return name || "A";
 }
 
 function restoreRowHeightAdjustment(sheet, adjustment, heightKey) {

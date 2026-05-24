@@ -21,7 +21,33 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
 function showResult(selector, data) {
-  $(selector).textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+  const target = $(selector);
+  if (!target) {
+    return;
+  }
+
+  if (typeof data === "string") {
+    target.textContent = data;
+    return;
+  }
+
+  if (data instanceof Error) {
+    target.textContent = data.message || String(data);
+    return;
+  }
+
+  if (data && typeof data === "object") {
+    const message = data.message || data.error || data.detail;
+    if (message && Object.keys(data).length <= 2) {
+      target.textContent = message;
+      return;
+    }
+
+    target.textContent = JSON.stringify(data, null, 2);
+    return;
+  }
+
+  target.textContent = String(data ?? "");
 }
 
 function getUnitInfo(data, prefix) {
@@ -115,14 +141,21 @@ function renderCurrentProject(project) {
 }
 
 async function loadCurrentProject() {
-  const result = await api("/api/projects/current");
-  renderCurrentProject(result.project);
-  showResult("#projectManagerResult", result);
-  return result.project;
+  try {
+    showResult("#projectManagerResult", "正在刷新当前工程...");
+    const result = await api("/api/projects/current");
+    renderCurrentProject(result.project);
+    showResult("#projectManagerResult", result);
+    return result.project;
+  } catch (error) {
+    showResult("#projectManagerResult", error);
+    throw error;
+  }
 }
 
 async function selectProjectFolder() {
   try {
+    showResult("#projectManagerResult", "正在打开目录选择窗口...");
     const result = await api("/api/projects/select-folder", { method: "POST" });
     if (result.projectRootPath) {
       $("#projectManagerForm").elements.projectRootPath.value = result.projectRootPath;
@@ -136,6 +169,7 @@ async function selectProjectFolder() {
 async function createProject() {
   const data = getProjectManagerFormData();
   try {
+    showResult("#projectManagerResult", "正在创建工程...");
     const result = await api("/api/projects/create", {
       method: "POST",
       body: JSON.stringify({
@@ -156,6 +190,7 @@ async function createProject() {
 async function openProject() {
   const data = getProjectManagerFormData();
   try {
+    showResult("#projectManagerResult", "正在打开工程...");
     const result = await api("/api/projects/open", {
       method: "POST",
       body: JSON.stringify({
@@ -171,14 +206,34 @@ async function openProject() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`${serviceBaseUrl}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    }
-  });
-  const data = await response.json();
+  let response;
+  try {
+    response = await fetch(`${serviceBaseUrl}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    });
+  } catch (error) {
+    throw {
+      success: false,
+      message: `无法连接本地服务：${serviceBaseUrl}。请先启动 GeneratorService，然后点击右上角刷新按钮。`,
+      detail: error?.message || String(error)
+    };
+  }
+
+  let data;
+  try {
+    data = await response.json();
+  } catch (error) {
+    data = {
+      success: false,
+      message: `服务返回内容无法解析：HTTP ${response.status}`,
+      detail: error?.message || String(error)
+    };
+  }
+
   if (!response.ok) {
     throw data;
   }

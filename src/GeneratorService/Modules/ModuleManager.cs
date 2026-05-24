@@ -152,6 +152,75 @@ public sealed class ModuleManager
             templatePath);
     }
 
+    public IReadOnlyList<string> GetTemplateDirectorySegments(string templateNodeId)
+    {
+        if (!TryParseTemplateNodeId(templateNodeId, out var moduleId, out var templateItemId))
+        {
+            return [];
+        }
+
+        var module = FindModule(moduleId);
+        if (module is not { IsValid: true, RulesDbPath: not null, Manifest: not null })
+        {
+            return [];
+        }
+
+        using var connection = new SqliteConnection($"Data Source={module.RulesDbPath};Mode=ReadOnly");
+        connection.Open();
+        using var templateCommand = connection.CreateCommand();
+        templateCommand.CommandText = "SELECT CategoryId, TemplateName FROM TemplateItem WHERE Id = $id;";
+        templateCommand.Parameters.AddWithValue("$id", templateItemId);
+        using var reader = templateCommand.ExecuteReader();
+        if (!reader.Read())
+        {
+            return [];
+        }
+
+        var categoryId = reader.IsDBNull(0) ? 0 : reader.GetInt64(0);
+        var templateName = reader.IsDBNull(1) ? "" : reader.GetString(1);
+        var segments = new List<string>();
+        if (!string.IsNullOrWhiteSpace(module.Manifest.Name))
+        {
+            segments.Add(module.Manifest.Name);
+        }
+
+        segments.AddRange(GetCategorySegments(connection, categoryId));
+        if (!string.IsNullOrWhiteSpace(templateName))
+        {
+            segments.Add(templateName);
+        }
+
+        return segments;
+    }
+
+    private static IReadOnlyList<string> GetCategorySegments(SqliteConnection connection, long categoryId)
+    {
+        var categories = new List<(long Id, long? ParentId, string Name)>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT Id, ParentId, Name FROM TemplateCategory;";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                categories.Add((
+                    reader.GetInt64(0),
+                    reader.IsDBNull(1) ? null : reader.GetInt64(1),
+                    reader.GetString(2)));
+            }
+        }
+
+        var byId = categories.ToDictionary(item => item.Id);
+        var stack = new Stack<string>();
+        var currentId = categoryId;
+        while (currentId != 0 && byId.TryGetValue(currentId, out var category))
+        {
+            stack.Push(category.Name);
+            currentId = category.ParentId ?? 0;
+        }
+
+        return stack.ToArray();
+    }
+
     private ModulePackageInfo LoadPackage(string packagePath, string cacheRoot)
     {
         ModuleManifest? manifest = null;

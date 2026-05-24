@@ -1,5 +1,6 @@
 using GeneratorService.Models;
 using GeneratorService.Modules;
+using GeneratorService.Projects;
 using Microsoft.Data.Sqlite;
 
 namespace GeneratorService.TemplateLibrary;
@@ -8,17 +9,22 @@ public sealed class TemplateTreeService
 {
     private readonly TemplateTreeRepository _repository;
     private readonly ModuleManager _moduleManager;
+    private readonly ProjectManager _projectManager;
 
-    public TemplateTreeService(TemplateTreeRepository repository, ModuleManager moduleManager)
+    public TemplateTreeService(
+        TemplateTreeRepository repository,
+        ModuleManager moduleManager,
+        ProjectManager projectManager)
     {
         _repository = repository;
         _moduleManager = moduleManager;
+        _projectManager = projectManager;
     }
 
     public TemplateTreeResult GetTree(string? projectId)
     {
         var effectiveProjectId = string.IsNullOrWhiteSpace(projectId)
-            ? TemplateTreeRepository.DefaultProjectId
+            ? _projectManager.GetCurrentProject().ProjectId
             : projectId.Trim();
 
         _repository.EnsureProject(effectiveProjectId, null);

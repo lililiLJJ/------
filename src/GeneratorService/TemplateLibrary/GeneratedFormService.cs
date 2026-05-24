@@ -3,6 +3,7 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using GeneratorService.Models;
+using GeneratorService.Projects;
 
 namespace GeneratorService.TemplateLibrary;
 
@@ -26,11 +27,19 @@ public sealed class GeneratedFormService
 
     private readonly TemplateTreeRepository _repository;
     private readonly TemplateService _templateService;
+    private readonly ProjectManager _projectManager;
+    private readonly ProjectPathResolver _pathResolver;
 
-    public GeneratedFormService(TemplateTreeRepository repository, TemplateService templateService)
+    public GeneratedFormService(
+        TemplateTreeRepository repository,
+        TemplateService templateService,
+        ProjectManager projectManager,
+        ProjectPathResolver pathResolver)
     {
         _repository = repository;
         _templateService = templateService;
+        _projectManager = projectManager;
+        _pathResolver = pathResolver;
     }
 
     public GeneratedFormInfo GetGeneratedForm(string nodeId)
@@ -86,13 +95,16 @@ public sealed class GeneratedFormService
             throw new InvalidOperationException("部位名称不能为空。");
         }
 
+        var project = _projectManager.ResolveProject(request.ProjectId);
         var template = _templateService.ResolveTemplate(request.TemplateNodeId);
         var templateCode = template.TemplateCode;
-        var targetDirectory = Path.Combine(
-            _repository.GetProjectsRootPath(),
-            SanitizePathSegment(request.ProjectId),
-            "GeneratedForms",
-            SanitizePathSegment(templateCode));
+        var targetDirectory = project.IsDefault
+            ? Path.Combine(
+                _repository.GetProjectsRootPath(),
+                SanitizePathSegment(project.ProjectId),
+                "GeneratedForms",
+                SanitizePathSegment(templateCode))
+            : _pathResolver.ResolveGeneratedFormDirectory(project, request.TemplateNodeId, template.TemplateName);
         Directory.CreateDirectory(targetDirectory);
 
         var templateExtension = Path.GetExtension(template.TemplatePath);
@@ -107,13 +119,13 @@ public sealed class GeneratedFormService
 
         var node = template.ModuleId == "legacy"
             ? _repository.InsertGeneratedForm(
-                request.ProjectId.Trim(),
+                project.ProjectId,
                 template.TemplateNodeId,
                 request.FormName.Trim(),
                 templateCode,
                 targetPath)
             : _repository.InsertProjectDocument(
-                request.ProjectId.Trim(),
+                project.ProjectId,
                 template.ModuleId,
                 template.TemplateItemId,
                 template.TemplateNodeId,

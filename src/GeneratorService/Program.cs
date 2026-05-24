@@ -5,6 +5,7 @@ using GeneratorService.Knowledge;
 using GeneratorService.Licensing;
 using GeneratorService.Models;
 using GeneratorService.Modules;
+using GeneratorService.Projects;
 using GeneratorService.Templates;
 using GeneratorService.TemplateLibrary;
 using Serilog;
@@ -53,6 +54,10 @@ builder.Services.AddSingleton<ModuleValidator>();
 builder.Services.AddSingleton<ModuleManager>();
 builder.Services.AddSingleton<ModuleInstallService>();
 builder.Services.AddSingleton<ModuleUpdateService>();
+builder.Services.AddSingleton<ProjectStorageService>();
+builder.Services.AddSingleton<ProjectManager>();
+builder.Services.AddSingleton<ProjectPathResolver>();
+builder.Services.AddSingleton<ProjectFolderDialogService>();
 builder.Services.AddSingleton<TemplateTreeRepository>();
 builder.Services.AddSingleton<TemplateTreeService>();
 builder.Services.AddSingleton<TemplateService>();
@@ -73,10 +78,12 @@ var knowledgeRepository = app.Services.GetRequiredService<KnowledgeRepository>()
 var templateCatalog = app.Services.GetRequiredService<TemplateCatalog>();
 var moduleManager = app.Services.GetRequiredService<ModuleManager>();
 var templateTreeRepository = app.Services.GetRequiredService<TemplateTreeRepository>();
+var projectManager = app.Services.GetRequiredService<ProjectManager>();
 knowledgeRepository.EnsureCreated();
 templateCatalog.EnsureSampleTemplates();
 moduleManager.Scan();
 templateTreeRepository.EnsureCreated();
+projectManager.GetCurrentProject();
 
 Log.Information("工程资料生成服务已启动。Root={RootPath}, Port={Port}", rootPath.FullName, config.Service.Port);
 
@@ -211,6 +218,61 @@ app.MapDelete("/api/modules/{moduleId}", (string moduleId, ModuleUpdateService s
             message = ex.Message
         });
     }
+});
+
+app.MapGet("/api/projects/current", (ProjectManager manager) =>
+{
+    return Results.Ok(new
+    {
+        success = true,
+        project = manager.GetCurrentProject()
+    });
+});
+
+app.MapPost("/api/projects/create", (ProjectCreateRequest request, ProjectManager manager) =>
+{
+    try
+    {
+        return Results.Ok(new
+        {
+            success = true,
+            project = manager.CreateProject(request)
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/projects/open", (ProjectOpenRequest request, ProjectManager manager) =>
+{
+    try
+    {
+        return Results.Ok(new
+        {
+            success = true,
+            project = manager.OpenProject(request)
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/projects/select-folder", (ProjectFolderDialogService service) =>
+{
+    var result = service.SelectFolder();
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
 });
 
 app.MapGet("/api/template-library/tree", (string? projectId, TemplateTreeService service) =>

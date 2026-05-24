@@ -6,6 +6,7 @@ using GeneratorService.Ai;
 using GeneratorService.Knowledge;
 using GeneratorService.Licensing;
 using GeneratorService.Models;
+using GeneratorService.Projects;
 using GeneratorService.Templates;
 using Serilog;
 
@@ -21,6 +22,7 @@ public sealed class ExcelGenerationService
     private readonly KnowledgeRepository _knowledgeRepository;
     private readonly AiTextService _aiTextService;
     private readonly LicenseService _licenseService;
+    private readonly ProjectManager _projectManager;
 
     public ExcelGenerationService(
         DirectoryInfo rootPath,
@@ -28,7 +30,8 @@ public sealed class ExcelGenerationService
         TemplateCatalog templateCatalog,
         KnowledgeRepository knowledgeRepository,
         AiTextService aiTextService,
-        LicenseService licenseService)
+        LicenseService licenseService,
+        ProjectManager projectManager)
     {
         _rootPath = rootPath;
         _config = config;
@@ -36,6 +39,7 @@ public sealed class ExcelGenerationService
         _knowledgeRepository = knowledgeRepository;
         _aiTextService = aiTextService;
         _licenseService = licenseService;
+        _projectManager = projectManager;
     }
 
     public async Task<GenerationResult> GenerateCurrentAsync(GenerateRequest request)
@@ -247,7 +251,7 @@ public sealed class ExcelGenerationService
             return requestedPath;
         }
 
-        return _config.GetExportPath(_rootPath);
+        return _projectManager.GetCurrentProject().ExportPath;
     }
 
     private static string BuildOutputFileName(GenerateRequest request)

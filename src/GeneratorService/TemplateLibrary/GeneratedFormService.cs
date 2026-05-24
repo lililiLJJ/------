@@ -29,17 +29,20 @@ public sealed class GeneratedFormService
     private readonly TemplateService _templateService;
     private readonly ProjectManager _projectManager;
     private readonly ProjectPathResolver _pathResolver;
+    private readonly RowHeightBalanceService _rowHeightBalanceService;
 
     public GeneratedFormService(
         TemplateTreeRepository repository,
         TemplateService templateService,
         ProjectManager projectManager,
-        ProjectPathResolver pathResolver)
+        ProjectPathResolver pathResolver,
+        RowHeightBalanceService rowHeightBalanceService)
     {
         _repository = repository;
         _templateService = templateService;
         _projectManager = projectManager;
         _pathResolver = pathResolver;
+        _rowHeightBalanceService = rowHeightBalanceService;
     }
 
     public GeneratedFormInfo GetGeneratedForm(string nodeId)
@@ -116,6 +119,7 @@ public sealed class GeneratedFormService
         var targetPath = ResolveUniquePath(targetDirectory, $"{SanitizePathSegment(request.FormName)}{templateExtension}");
         File.Copy(template.TemplatePath, targetPath);
         ApplyFields(targetPath, request.FormName, request.Fields ?? new Dictionary<string, string>());
+        _rowHeightBalanceService.ApplyLight(targetPath, request.FormName, request.Fields ?? new Dictionary<string, string>());
 
         var node = template.ModuleId == "legacy"
             ? _repository.InsertGeneratedForm(

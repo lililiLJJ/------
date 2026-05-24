@@ -62,6 +62,7 @@ builder.Services.AddSingleton<TemplateTreeRepository>();
 builder.Services.AddSingleton<TemplateTreeService>();
 builder.Services.AddSingleton<TemplateService>();
 builder.Services.AddSingleton<RuleService>();
+builder.Services.AddSingleton<RowHeightBalanceService>();
 builder.Services.AddSingleton<GeneratedFormService>();
 builder.Services.AddSingleton<SpreadsheetOpenService>();
 builder.Services.AddSingleton<AiTextService>();

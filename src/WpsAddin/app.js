@@ -866,6 +866,7 @@ function updateTemplateToolbarState(forceDisabled = false) {
   $("#newGeneratedForm").disabled = !canCreate;
   $("#saveSpreadsheet").disabled = !canOperateForm;
   $("#exportSpreadsheet").disabled = !canOperateForm;
+  $("#rowHeightFitMode").disabled = !canOperateForm;
   $("#fitRowHeights").disabled = !canOperateForm;
   $("#undoRowHeightFit").disabled = !canUndoRowHeightFit;
   $("#deleteGeneratedForm").disabled = !canOperateForm;
@@ -874,13 +875,36 @@ function updateTemplateToolbarState(forceDisabled = false) {
 const rowHeightBalanceOptions = {
   topProtectedRows: 5,
   bottomProtectedRows: 6,
+  protectedRows: new Set([1, 2, 3, 4, 5, 8, 30, 31, 32]),
   maxRounds: 3,
   minRoundIncrease: 0.5,
   maxRoundIncrease: 1.5,
   maxTotalIncrease: 18,
   maxRowHeight: 120,
+  minRowHeight: 12,
+  maxRoundShrink: 1,
+  maxTotalShrink: 4,
   lineHeight: 15,
   cellPadding: 4
+};
+
+const rowHeightFitModes = {
+  normal: {
+    maxRounds: 3,
+    maxRoundIncrease: 1.5,
+    maxRoundShrink: 1,
+    maxTotalIncrease: 18,
+    maxTotalShrink: 4,
+    balancedGrowthLimit: 0.7
+  },
+  "strict-print": {
+    maxRounds: 2,
+    maxRoundIncrease: 1,
+    maxRoundShrink: 0.8,
+    maxTotalIncrease: 10,
+    maxTotalShrink: 3,
+    balancedGrowthLimit: 0.35
+  }
 };
 
 const protectedRowKeywords = [
@@ -894,7 +918,11 @@ const protectedRowKeywords = [
   "监理单位",
   "项目负责人",
   "验收结论",
-  "页脚"
+  "页脚",
+  "固定说明",
+  "合计",
+  "结论",
+  "说明"
 ];
 
 function openGeneratedFormModal() {
@@ -981,6 +1009,12 @@ async function fitRowHeights() {
       return;
     }
 
+    const mode = $("#rowHeightFitMode")?.value || "normal";
+    const confirmed = window.confirm("系统将尝试通过增高内容不足行、压缩富裕行的方式平衡表格版式。调整前会自动备份，是否继续？");
+    if (!confirmed) {
+      return;
+    }
+
     workbook.Save();
     const backup = await api(`/api/generated-forms/${encodeURIComponent(currentGeneratedForm.id)}/backups`, { method: "POST" });
     const rangeInfo = getRowHeightTargetRange(sheet);
@@ -991,7 +1025,7 @@ async function fitRowHeights() {
     }
 
     const pageCountBefore = getWorksheetPageCount(sheet);
-    const adjustment = applyBalancedRowHeight(sheet, rangeInfo, eligibleRows);
+    const adjustment = applyBalancedRowHeight(sheet, rangeInfo, eligibleRows, mode);
     adjustment.backupId = backup.backupId;
     adjustment.backupPath = backup.backupPath;
     adjustment.formId = currentGeneratedForm.id;
@@ -1009,7 +1043,7 @@ async function fitRowHeights() {
       return;
     }
 
-    if (hasPageCountIncreased(adjustment.pageCountBefore, adjustment.pageCountAfter)) {
+    if (mode === "strict-print" && hasPageCountIncreased(adjustment.pageCountBefore, adjustment.pageCountAfter)) {
       restoreRowHeightAdjustment(sheet, adjustment, "originalHeight");
       const confirmed = window.confirm(
         `智能适配后打印页数可能从 ${adjustment.pageCountBefore} 页增加到 ${adjustment.pageCountAfter} 页。已先恢复本次调整，是否仍要重新应用？`
@@ -1031,9 +1065,12 @@ async function fitRowHeights() {
 
     lastRowHeightFitAdjustment = adjustment;
     updateTemplateToolbarState(false);
+    const pageWarning = hasPageCountIncreased(adjustment.pageCountBefore, adjustment.pageCountAfter)
+      ? `但打印页数可能从 ${adjustment.pageCountBefore} 页增加到 ${adjustment.pageCountAfter} 页。可检查版式或点击“撤销行高适配”。`
+      : "请检查版式后点击“保存”。";
     showResult("#templateResult", {
       success: true,
-      message: `已智能整体适配 ${adjustment.rows.length} 行。请检查版式后点击“保存”。`,
+      message: `已智能平衡 ${adjustment.rows.length} 行，${pageWarning}`,
       backupPath: backup.backupPath,
       pageCountBefore: adjustment.pageCountBefore,
       pageCountAfter: adjustment.pageCountAfter,
@@ -1206,7 +1243,7 @@ function buildEligibleRows(sheet, rangeInfo) {
 function isProtectedRow(sheet, row, rangeInfo) {
   const topLimit = rangeInfo.startRow + rowHeightBalanceOptions.topProtectedRows - 1;
   const bottomLimit = rangeInfo.endRow - rowHeightBalanceOptions.bottomProtectedRows + 1;
-  if (row <= topLimit || row >= bottomLimit) {
+  if (rowHeightBalanceOptions.protectedRows.has(row) || row <= topLimit || row >= bottomLimit) {
     return true;
   }
 
@@ -1227,47 +1264,34 @@ function getRowText(sheet, row, rangeInfo) {
   return values.join(" ");
 }
 
-function applyBalancedRowHeight(sheet, rangeInfo, eligibleRows) {
+function applyBalancedRowHeight(sheet, rangeInfo, eligibleRows, modeName = "normal") {
+  const mode = rowHeightFitModes[modeName] || rowHeightFitModes.normal;
   const originalHeights = new Map();
   const targetHeights = new Map();
   const eligibleSet = new Set(eligibleRows);
   let unresolvedRows = [];
 
-  for (let round = 0; round < rowHeightBalanceOptions.maxRounds; round++) {
+  for (let round = 0; round < mode.maxRounds; round++) {
     const blocks = buildRowBlocks(eligibleRows);
     let changed = false;
     unresolvedRows = [];
 
     for (const block of blocks) {
-      const deficit = estimateBlockDeficit(sheet, rangeInfo, block, eligibleSet);
-      if (deficit.total <= 0) {
+      const balance = estimateBlockBalance(sheet, rangeInfo, block, eligibleSet);
+      if (balance.totalDeficit <= 0) {
         continue;
       }
 
-      unresolvedRows.push(...deficit.rows);
-      const perRowIncrease = clamp(
-        deficit.total / block.length,
-        rowHeightBalanceOptions.minRoundIncrease,
-        rowHeightBalanceOptions.maxRoundIncrease
-      );
+      unresolvedRows.push(...balance.deficitRows.map(item => item.row));
+      const recovered = shrinkSurplusRows(sheet, balance.surplusRows, balance.totalDeficit, originalHeights, targetHeights, mode);
+      const remainingDeficit = Math.max(0, balance.totalDeficit - recovered);
+      const directGrowthBudget = recovered + remainingDeficit * 0.65;
+      const sharedGrowthBudget = remainingDeficit * 0.35;
+      changed = recovered > 0 || changed;
+      changed = growDeficitRows(sheet, balance.deficitRows, directGrowthBudget, originalHeights, targetHeights, mode) || changed;
 
-      for (const row of block) {
-        const currentHeight = getRowHeight(sheet, row);
-        if (!originalHeights.has(row)) {
-          originalHeights.set(row, currentHeight);
-        }
-
-        const originalHeight = originalHeights.get(row);
-        const maxAllowedHeight = Math.min(
-          rowHeightBalanceOptions.maxRowHeight,
-          originalHeight + rowHeightBalanceOptions.maxTotalIncrease
-        );
-        const nextHeight = Math.min(maxAllowedHeight, currentHeight + perRowIncrease);
-        if (nextHeight > currentHeight) {
-          setRowHeight(sheet, row, nextHeight);
-          targetHeights.set(row, nextHeight);
-          changed = true;
-        }
+      if (sharedGrowthBudget > 0.5) {
+        changed = growWholeBlock(sheet, block, sharedGrowthBudget, originalHeights, targetHeights, mode) || changed;
       }
     }
 
@@ -1284,6 +1308,135 @@ function applyBalancedRowHeight(sheet, rangeInfo, eligibleRows) {
     })),
     unresolvedRows: [...new Set(unresolvedRows)]
   };
+}
+
+function estimateBlockBalance(sheet, rangeInfo, block, eligibleSet) {
+  const deficitRows = [];
+  const surplusRows = [];
+  for (const row of block) {
+    const deficit = estimateRowDeficit(sheet, rangeInfo, row, new Set(block), eligibleSet);
+    if (deficit > 0) {
+      deficitRows.push({ row, deficit });
+      continue;
+    }
+
+    const surplus = estimateRowSurplus(sheet, rangeInfo, row);
+    if (surplus > 0) {
+      surplusRows.push({ row, surplus });
+    }
+  }
+
+  return {
+    totalDeficit: deficitRows.reduce((total, item) => total + item.deficit, 0),
+    deficitRows,
+    surplusRows
+  };
+}
+
+function shrinkSurplusRows(sheet, surplusRows, totalNeed, originalHeights, targetHeights, mode) {
+  if (surplusRows.length === 0 || totalNeed <= 0) {
+    return 0;
+  }
+
+  let recovered = 0;
+  const totalSurplus = surplusRows.reduce((total, item) => total + item.surplus, 0);
+  for (const item of surplusRows) {
+    const currentHeight = getRowHeight(sheet, item.row);
+    if (!originalHeights.has(item.row)) {
+      originalHeights.set(item.row, currentHeight);
+    }
+
+    const originalHeight = originalHeights.get(item.row);
+    const proportionalShare = totalNeed * (item.surplus / Math.max(totalSurplus, 0.1));
+    const shrink = Math.min(
+      item.surplus,
+      proportionalShare,
+      mode.maxRoundShrink,
+      Math.max(0, originalHeight - rowHeightBalanceOptions.minRowHeight),
+      mode.maxTotalShrink
+    );
+    if (shrink <= 0) {
+      continue;
+    }
+
+    const nextHeight = Math.max(rowHeightBalanceOptions.minRowHeight, currentHeight - shrink);
+    if (nextHeight < currentHeight) {
+      setRowHeight(sheet, item.row, nextHeight);
+      targetHeights.set(item.row, nextHeight);
+      recovered += currentHeight - nextHeight;
+    }
+  }
+
+  return recovered;
+}
+
+function growDeficitRows(sheet, deficitRows, availableHeight, originalHeights, targetHeights, mode) {
+  if (deficitRows.length === 0 || availableHeight <= 0) {
+    return false;
+  }
+
+  let changed = false;
+  const totalDeficit = deficitRows.reduce((total, item) => total + item.deficit, 0);
+  for (const item of deficitRows) {
+    const currentHeight = getRowHeight(sheet, item.row);
+    if (!originalHeights.has(item.row)) {
+      originalHeights.set(item.row, currentHeight);
+    }
+
+    const originalHeight = originalHeights.get(item.row);
+    const proportionalShare = availableHeight * (item.deficit / Math.max(totalDeficit, 0.1));
+    const increase = Math.min(
+      item.deficit,
+      proportionalShare,
+      mode.maxRoundIncrease,
+      Math.max(0, mode.maxTotalIncrease - Math.max(0, currentHeight - originalHeight))
+    );
+    if (increase <= 0) {
+      continue;
+    }
+
+    const nextHeight = Math.min(rowHeightBalanceOptions.maxRowHeight, currentHeight + increase);
+    if (nextHeight > currentHeight) {
+      setRowHeight(sheet, item.row, nextHeight);
+      targetHeights.set(item.row, nextHeight);
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+function growWholeBlock(sheet, block, remainingDeficit, originalHeights, targetHeights, mode) {
+  const perRowIncrease = Math.min(mode.balancedGrowthLimit, remainingDeficit / Math.max(1, block.length));
+  if (perRowIncrease <= 0) {
+    return false;
+  }
+
+  let changed = false;
+  for (const row of block) {
+    const currentHeight = getRowHeight(sheet, row);
+    if (!originalHeights.has(row)) {
+      originalHeights.set(row, currentHeight);
+    }
+
+    const originalHeight = originalHeights.get(row);
+    const increase = Math.min(
+      perRowIncrease,
+      Math.max(0, mode.maxTotalIncrease - Math.max(0, currentHeight - originalHeight))
+    );
+    if (increase <= 0) {
+      continue;
+    }
+
+    const nextHeight = Math.min(rowHeightBalanceOptions.maxRowHeight, currentHeight + increase);
+    if (nextHeight > currentHeight) {
+      setRowHeight(sheet, row, nextHeight);
+      targetHeights.set(row, nextHeight);
+      changed = true;
+    }
+  }
+
+  return changed;
 }
 
 function buildRowBlocks(rows) {
@@ -1352,6 +1505,19 @@ function estimateRowDeficit(sheet, rangeInfo, row, blockSet, eligibleSet) {
   }
 
   return Math.max(0, neededHeight - currentHeight);
+}
+
+function estimateRowSurplus(sheet, rangeInfo, row) {
+  const currentHeight = getRowHeight(sheet, row);
+  const textWeight = getTextWeight(getRowText(sheet, row, rangeInfo));
+  if (textWeight > 16 || currentHeight <= rowHeightBalanceOptions.minRowHeight + 1) {
+    return 0;
+  }
+
+  const estimatedLines = Math.max(1, Math.ceil(textWeight / 42));
+  const neededHeight = estimatedLines * rowHeightBalanceOptions.lineHeight + rowHeightBalanceOptions.cellPadding;
+  const safeMinimum = Math.max(rowHeightBalanceOptions.minRowHeight, neededHeight);
+  return Math.max(0, Math.min(rowHeightBalanceOptions.maxTotalShrink, currentHeight - safeMinimum));
 }
 
 function isSpanInsideEligibleRows(span, eligibleSet) {

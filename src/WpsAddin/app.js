@@ -11,6 +11,15 @@ let selectedMaterial = null;
 let materialLedgerMode = "edit";
 let materialLedgerRows = [];
 const materialLedgerSelectedIds = new Set();
+const materialLedgerColumnFilters = new Map();
+let materialLedgerActiveFilterColumn = null;
+const materialLedgerWindowState = {
+  maximized: false,
+  restore: null,
+  dragging: false,
+  dragOffsetX: 0,
+  dragOffsetY: 0
+};
 let serviceAvailable = false;
 let lastExternalTabVersion = "";
 const collapsedTemplateNodeIds = new Set();
@@ -2144,11 +2153,14 @@ async function openMaterialLedgerDialog(mode = "edit") {
   materialItems = result.items || [];
   materialLedgerRows = materialItems.map(materialItemToLedgerRow);
   materialLedgerSelectedIds.clear();
+  materialLedgerColumnFilters.clear();
+  materialLedgerActiveFilterColumn = null;
   if (mode === "approval-select" && selectedMaterial?.id) {
     materialLedgerSelectedIds.add(selectedMaterial.id);
   }
 
   $("#materialLedgerDialog").classList.remove("hidden");
+  resetMaterialLedgerWindowPosition();
   $("#materialLedgerDialogTitle").textContent = mode === "approval-select" ? "选择报审材料" : "材料台账管理";
   $("#materialLedgerDialogSummary").textContent = mode === "approval-select"
     ? "勾选本次需要报审的材料，确认后按模板生成材料进场报审资料。"
@@ -2156,12 +2168,35 @@ async function openMaterialLedgerDialog(mode = "edit") {
   $("#materialLedgerAddRow").classList.toggle("hidden", mode !== "edit");
   $("#materialLedgerDeleteRows").classList.toggle("hidden", mode !== "edit");
   $("#materialLedgerSave").classList.toggle("hidden", mode !== "edit");
+  $("#materialLedgerExport").classList.toggle("hidden", mode !== "edit");
   $("#materialLedgerConfirmApproval").classList.toggle("hidden", mode !== "approval-select");
+  $("#materialLedgerQuickFilter").value = "";
+  closeMaterialLedgerFilterMenu();
   renderMaterialLedgerGrid();
 }
 
 function closeMaterialLedgerDialog() {
   $("#materialLedgerDialog").classList.add("hidden");
+  closeMaterialLedgerFilterMenu();
+}
+
+function requestCloseMaterialLedgerDialog() {
+  if ($("#materialLedgerDialog")?.classList.contains("hidden")) {
+    return;
+  }
+
+  if (hasUnsavedMaterialLedgerChanges()) {
+    const discard = window.confirm("材料台账存在未保存修改，关闭后这些修改将丢失。确定放弃修改并关闭吗？");
+    if (!discard) {
+      return;
+    }
+  }
+
+  closeMaterialLedgerDialog();
+}
+
+function hasUnsavedMaterialLedgerChanges() {
+  return materialLedgerMode === "edit" && materialLedgerRows.some((row) => row._dirty || row._isNew || row._deleted);
 }
 
 function renderMaterialLedgerGrid() {
@@ -2175,14 +2210,11 @@ function renderMaterialLedgerGrid() {
   head.innerHTML = `
     <tr>
       <th class="ledgerSelectCell">选择</th>
-      ${materialLedgerColumns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}
+      ${materialLedgerColumns.map(renderMaterialLedgerHeaderCell).join("")}
     </tr>`;
 
   const filter = ($("#materialLedgerQuickFilter")?.value || "").trim().toLowerCase();
-  const rows = materialLedgerRows
-    .map((row, index) => ({ row, index }))
-    .filter(({ row }) => !row._deleted)
-    .filter(({ row }) => !filter || materialLedgerColumns.some((column) => String(row[column.key] ?? "").toLowerCase().includes(filter)));
+  const rows = getVisibleMaterialLedgerRows(filter);
 
   body.innerHTML = "";
   if (!rows.length) {
@@ -2199,9 +2231,232 @@ function renderMaterialLedgerGrid() {
     }
   }
 
+  const activeFilterCount = materialLedgerColumnFilters.size;
   $("#materialLedgerStatusText").textContent = materialLedgerMode === "approval-select"
     ? `已加载 ${rows.length} 条材料，已选择 ${materialLedgerSelectedIds.size} 条。`
-    : `已加载 ${rows.length} 条材料，可从 Excel/WPS 复制多行多列后粘贴。`;
+    : `已加载 ${rows.length} 条材料${activeFilterCount ? `，${activeFilterCount} 列正在筛选` : ""}，可从 Excel/WPS 复制多行多列后粘贴。`;
+}
+
+function renderMaterialLedgerHeaderCell(column) {
+  const active = materialLedgerColumnFilters.has(column.key);
+  return `
+    <th class="${active ? "ledgerFilteredHeader" : ""}">
+      <span class="ledgerHeaderLabel">${escapeHtml(column.label)}</span>
+      <button class="ledgerFilterButton" type="button" data-ledger-filter="${escapeHtml(column.key)}" title="筛选 ${escapeHtml(column.label)}">${active ? "●" : "▾"}</button>
+    </th>`;
+}
+
+function getVisibleMaterialLedgerRows(filter) {
+  return materialLedgerRows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => !row._deleted)
+    .filter(({ row }) => !filter || materialLedgerColumns.some((column) => getLedgerFilterValue(row, column).toLowerCase().includes(filter)))
+    .filter(({ row }) => matchesMaterialLedgerColumnFilters(row));
+}
+
+function getLedgerFilterValue(row, column) {
+  const value = formatLedgerCellValue(row[column.key], column);
+  return String(value ?? "").trim() || "空白";
+}
+
+function matchesMaterialLedgerColumnFilters(row) {
+  for (const [key, values] of materialLedgerColumnFilters.entries()) {
+    const column = materialLedgerColumns.find((item) => item.key === key);
+    if (!column || !values.has(getLedgerFilterValue(row, column))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function getMaterialLedgerUniqueValues(column) {
+  return [...new Set(
+    materialLedgerRows
+      .filter((row) => !row._deleted)
+      .map((row) => getLedgerFilterValue(row, column))
+  )].sort((left, right) => left.localeCompare(right, "zh-CN", { numeric: true }));
+}
+
+function openMaterialLedgerFilterMenu(columnKey, anchor) {
+  const column = materialLedgerColumns.find((item) => item.key === columnKey);
+  const menu = $("#materialLedgerFilterMenu");
+  const windowElement = $(".materialLedgerWindow");
+  if (!column || !menu || !windowElement) {
+    return;
+  }
+
+  materialLedgerActiveFilterColumn = columnKey;
+  const values = getMaterialLedgerUniqueValues(column);
+  const selected = materialLedgerColumnFilters.get(columnKey) ?? new Set(values);
+  menu.innerHTML = `
+    <div class="ledgerFilterMenuHeader">
+      <strong>${escapeHtml(column.label)}</strong>
+      <button type="button" data-ledger-filter-close>×</button>
+    </div>
+    <div class="ledgerFilterMenuActions">
+      <button type="button" data-ledger-filter-all>全选</button>
+      <button type="button" data-ledger-filter-empty>清空本列</button>
+      <button type="button" data-ledger-filter-clear-all>清空全部筛选</button>
+    </div>
+    <div class="ledgerFilterValues">
+      ${values.length
+        ? values.map((value) => `
+            <label>
+              <input type="checkbox" data-ledger-filter-value value="${escapeHtml(value)}" ${selected.has(value) ? "checked" : ""}>
+              <span>${escapeHtml(value)}</span>
+            </label>`).join("")
+        : '<p class="emptyText">该列暂无可筛选值。</p>'}
+    </div>
+    <div class="ledgerFilterMenuFooter">
+      <button type="button" class="primary" data-ledger-filter-apply>确定</button>
+    </div>`;
+
+  const anchorRect = anchor.getBoundingClientRect();
+  const windowRect = windowElement.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, anchorRect.left - windowRect.left - 210)}px`;
+  menu.style.top = `${Math.max(48, anchorRect.bottom - windowRect.top + 4)}px`;
+  menu.classList.remove("hidden");
+}
+
+function closeMaterialLedgerFilterMenu() {
+  const menu = $("#materialLedgerFilterMenu");
+  if (menu) {
+    menu.classList.add("hidden");
+    menu.innerHTML = "";
+  }
+  materialLedgerActiveFilterColumn = null;
+}
+
+function applyMaterialLedgerActiveFilter() {
+  if (!materialLedgerActiveFilterColumn) {
+    return;
+  }
+
+  const column = materialLedgerColumns.find((item) => item.key === materialLedgerActiveFilterColumn);
+  const allValues = column ? getMaterialLedgerUniqueValues(column) : [];
+  const checkedValues = $$("[data-ledger-filter-value]:checked").map((item) => item.value);
+  if (!checkedValues.length || checkedValues.length === allValues.length) {
+    materialLedgerColumnFilters.delete(materialLedgerActiveFilterColumn);
+  } else {
+    materialLedgerColumnFilters.set(materialLedgerActiveFilterColumn, new Set(checkedValues));
+  }
+
+  closeMaterialLedgerFilterMenu();
+  renderMaterialLedgerGrid();
+}
+
+function clearMaterialLedgerFilters() {
+  materialLedgerColumnFilters.clear();
+  if ($("#materialLedgerQuickFilter")) {
+    $("#materialLedgerQuickFilter").value = "";
+  }
+  closeMaterialLedgerFilterMenu();
+  renderMaterialLedgerGrid();
+}
+
+function resetMaterialLedgerWindowPosition() {
+  const windowElement = $(".materialLedgerWindow");
+  if (!windowElement) {
+    return;
+  }
+
+  materialLedgerWindowState.maximized = false;
+  materialLedgerWindowState.restore = null;
+  const width = Math.min(1360, Math.max(780, window.innerWidth - 48));
+  const height = Math.min(820, Math.max(460, window.innerHeight - 64));
+  windowElement.style.width = `${width}px`;
+  windowElement.style.height = `${height}px`;
+  windowElement.style.left = `${Math.max(12, (window.innerWidth - width) / 2)}px`;
+  windowElement.style.top = `${Math.max(12, (window.innerHeight - height) / 2)}px`;
+  updateMaterialLedgerWindowButtons();
+}
+
+function maximizeMaterialLedgerWindow() {
+  const windowElement = $(".materialLedgerWindow");
+  if (!windowElement || materialLedgerWindowState.maximized) {
+    return;
+  }
+
+  materialLedgerWindowState.restore = {
+    left: windowElement.style.left,
+    top: windowElement.style.top,
+    width: windowElement.style.width,
+    height: windowElement.style.height
+  };
+  materialLedgerWindowState.maximized = true;
+  windowElement.style.left = "8px";
+  windowElement.style.top = "8px";
+  windowElement.style.width = "calc(100vw - 16px)";
+  windowElement.style.height = "calc(100vh - 16px)";
+  updateMaterialLedgerWindowButtons();
+}
+
+function restoreMaterialLedgerWindow() {
+  const windowElement = $(".materialLedgerWindow");
+  const restore = materialLedgerWindowState.restore;
+  if (!windowElement || !restore) {
+    return;
+  }
+
+  materialLedgerWindowState.maximized = false;
+  windowElement.style.left = restore.left;
+  windowElement.style.top = restore.top;
+  windowElement.style.width = restore.width;
+  windowElement.style.height = restore.height;
+  materialLedgerWindowState.restore = null;
+  updateMaterialLedgerWindowButtons();
+}
+
+function updateMaterialLedgerWindowButtons() {
+  $("#materialLedgerMaximize")?.classList.toggle("hidden", materialLedgerWindowState.maximized);
+  $("#materialLedgerRestore")?.classList.toggle("hidden", !materialLedgerWindowState.maximized);
+}
+
+function beginMaterialLedgerDrag(event) {
+  if (event.button !== 0 || materialLedgerWindowState.maximized || event.target.closest("button")) {
+    return;
+  }
+
+  const windowElement = $(".materialLedgerWindow");
+  if (!windowElement) {
+    return;
+  }
+
+  const rect = windowElement.getBoundingClientRect();
+  materialLedgerWindowState.dragging = true;
+  materialLedgerWindowState.dragOffsetX = event.clientX - rect.left;
+  materialLedgerWindowState.dragOffsetY = event.clientY - rect.top;
+  document.body.classList.add("ledgerDragging");
+  event.preventDefault();
+}
+
+function moveMaterialLedgerWindow(event) {
+  if (!materialLedgerWindowState.dragging) {
+    return;
+  }
+
+  const windowElement = $(".materialLedgerWindow");
+  if (!windowElement) {
+    return;
+  }
+
+  const rect = windowElement.getBoundingClientRect();
+  const left = Math.min(window.innerWidth - 80, Math.max(0, event.clientX - materialLedgerWindowState.dragOffsetX));
+  const top = Math.min(window.innerHeight - 64, Math.max(0, event.clientY - materialLedgerWindowState.dragOffsetY));
+  windowElement.style.left = `${left}px`;
+  windowElement.style.top = `${top}px`;
+  windowElement.style.width = `${rect.width}px`;
+  windowElement.style.height = `${rect.height}px`;
+}
+
+function endMaterialLedgerDrag() {
+  if (!materialLedgerWindowState.dragging) {
+    return;
+  }
+
+  materialLedgerWindowState.dragging = false;
+  document.body.classList.remove("ledgerDragging");
 }
 
 function renderMaterialLedgerCell(row, rowIndex, column) {
@@ -3130,12 +3385,59 @@ async function boot() {
   $("#materialEntryForm").addEventListener("submit", saveMaterialEntry);
   $("#materialAttachmentForm").addEventListener("submit", uploadMaterialAttachment);
   $("#materialTestForm").addEventListener("submit", saveMaterialTest);
-  $("#generateMaterialApproval").addEventListener("click", generateMaterialApproval);  $("#materialLedgerClose").addEventListener("click", closeMaterialLedgerDialog);
+  $("#generateMaterialApproval").addEventListener("click", generateMaterialApproval);  $("#materialLedgerClose").addEventListener("click", requestCloseMaterialLedgerDialog);
+  $("#materialLedgerCloseTop").addEventListener("click", requestCloseMaterialLedgerDialog);
+  $("#materialLedgerMaximize").addEventListener("click", maximizeMaterialLedgerWindow);
+  $("#materialLedgerRestore").addEventListener("click", restoreMaterialLedgerWindow);
   $("#materialLedgerAddRow").addEventListener("click", addMaterialLedgerRow);
   $("#materialLedgerDeleteRows").addEventListener("click", deleteMaterialLedgerRows);
   $("#materialLedgerSave").addEventListener("click", saveMaterialLedgerRows);
+  $("#materialLedgerExport").addEventListener("click", exportMaterialLedger);
   $("#materialLedgerConfirmApproval").addEventListener("click", confirmMaterialApprovalSelection);
   $("#materialLedgerQuickFilter").addEventListener("input", renderMaterialLedgerGrid);
+  $("#materialLedgerClearFilters").addEventListener("click", clearMaterialLedgerFilters);
+  $("#materialLedgerDragHandle").addEventListener("mousedown", beginMaterialLedgerDrag);
+  document.addEventListener("mousemove", moveMaterialLedgerWindow);
+  document.addEventListener("mouseup", endMaterialLedgerDrag);
+  $("#materialLedgerHead").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-ledger-filter]");
+    if (!button) {
+      return;
+    }
+
+    event.stopPropagation();
+    openMaterialLedgerFilterMenu(button.dataset.ledgerFilter, button);
+  });
+  $("#materialLedgerFilterMenu").addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (event.target.closest("[data-ledger-filter-close]")) {
+      closeMaterialLedgerFilterMenu();
+      return;
+    }
+
+    if (event.target.closest("[data-ledger-filter-all]")) {
+      for (const checkbox of $$("[data-ledger-filter-value]")) {
+        checkbox.checked = true;
+      }
+      return;
+    }
+
+    if (event.target.closest("[data-ledger-filter-empty]")) {
+      for (const checkbox of $$("[data-ledger-filter-value]")) {
+        checkbox.checked = false;
+      }
+      return;
+    }
+
+    if (event.target.closest("[data-ledger-filter-clear-all]")) {
+      clearMaterialLedgerFilters();
+      return;
+    }
+
+    if (event.target.closest("[data-ledger-filter-apply]")) {
+      applyMaterialLedgerActiveFilter();
+    }
+  });
   $("#materialLedgerBody").addEventListener("input", (event) => {
     if (event.target.matches("[data-ledger-field]")) {
       updateLedgerCellFromElement(event.target);
@@ -3169,7 +3471,12 @@ async function boot() {
   });
   $("#materialLedgerDialog").addEventListener("click", (event) => {
     if (event.target.id === "materialLedgerDialog") {
-      closeMaterialLedgerDialog();
+      requestCloseMaterialLedgerDialog();
+    }
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest("#materialLedgerFilterMenu") && !event.target.closest("[data-ledger-filter]")) {
+      closeMaterialLedgerFilterMenu();
     }
   });
   $("#newGeneratedForm").addEventListener("click", openGeneratedFormModal);
@@ -3185,7 +3492,7 @@ async function boot() {
   $("#generatedFormModal").addEventListener("click", (event) => {
     if (event.target.id === "generatedFormModal") {
       closeGeneratedFormModal();
-      closeMaterialLedgerDialog();
+      requestCloseMaterialLedgerDialog();
     }
   });
   $("#closeTemplatePreview").addEventListener("click", closeTemplatePreviewModal);
@@ -3198,7 +3505,7 @@ async function boot() {
     if (event.key === "Escape") {
       closeTemplatePreviewModal();
       closeGeneratedFormModal();
-      closeMaterialLedgerDialog();
+      requestCloseMaterialLedgerDialog();
     }
   });
   $("#refreshKnowledge").addEventListener("click", loadKnowledgeItems);

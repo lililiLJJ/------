@@ -397,23 +397,33 @@
       </section>
       <div id="materialLedgerDialog" class="materialLedgerDialog hidden" role="dialog" aria-modal="true" aria-labelledby="materialLedgerDialogTitle">
         <div class="materialLedgerWindow">
-          <div class="materialLedgerHeader">
+          <div class="materialLedgerHeader" id="materialLedgerDragHandle">
             <div>
               <h2 id="materialLedgerDialogTitle">材料台账管理</h2>
               <p id="materialLedgerDialogSummary">可直接编辑、粘贴 Excel/WPS 表格内容并批量保存。</p>
             </div>
+            <div class="materialLedgerWindowControls">
+              <button id="materialLedgerMaximize" type="button" title="最大化">□</button>
+              <button id="materialLedgerRestore" type="button" class="hidden" title="还原">▣</button>
+              <button id="materialLedgerCloseTop" type="button" title="关闭">×</button>
+            </div>
+          </div>
+          <div class="materialLedgerActions">
             <div class="actions compactActions">
               <button id="materialLedgerAddRow" type="button">新增行</button>
               <button id="materialLedgerDeleteRows" type="button">删除行</button>
               <button id="materialLedgerSave" type="button" class="primary">批量保存</button>
+              <button id="materialLedgerExport" type="button">导出材料台账</button>
               <button id="materialLedgerConfirmApproval" type="button" class="primary hidden">确认报审</button>
               <button id="materialLedgerClose" type="button">关闭</button>
             </div>
           </div>
           <div class="materialLedgerToolbar">
-            <label>筛选<input id="materialLedgerQuickFilter" placeholder="材料名称、规格、部位、供应商、报告编号"></label>
+            <label>搜索<input id="materialLedgerQuickFilter" placeholder="材料名称、规格、部位、供应商、报告编号"></label>
+            <button id="materialLedgerClearFilters" type="button">清空筛选</button>
             <span id="materialLedgerStatusText">尚未加载材料。</span>
           </div>
+          <div id="materialLedgerFilterMenu" class="materialLedgerFilterMenu hidden"></div>
           <div class="materialLedgerTableWrap">
             <table class="materialLedgerTable">
               <thead id="materialLedgerHead"></thead>

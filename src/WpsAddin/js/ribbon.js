@@ -17,9 +17,6 @@ function OnAction(control) {
     case "btnOpenPanel":
       openEngineeringDocsPane("panel");
       break;
-    case "btnGenerateCurrent":
-      openEngineeringDocsPane("generation");
-      break;
     case "btnBatchPlan":
       openEngineeringDocsPane("batchPlan");
       break;

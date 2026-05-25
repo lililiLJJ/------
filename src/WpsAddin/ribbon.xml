@@ -3,10 +3,9 @@
   <ribbon startFromScratch="false">
     <tabs>
       <tab id="engineeringDocsTab" label="工程资料">
-        <group id="engineeringDocsGenerateGroup" label="资料生成">
+        <group id="engineeringDocsGenerateGroup" label="工程资料">
           <button id="btnOpenPanel" label="工程信息" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
-          <button id="btnGenerateCurrent" label="资料生成" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
-          <button id="btnBatchPlan" label="批量创建资料" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+          <button id="btnBatchPlan" label="检验批批量生成" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
         </group>
         <group id="engineeringDocsManageGroup" label="系统">
           <button id="btnTemplates" label="模板管理" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>

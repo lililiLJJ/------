@@ -782,6 +782,9 @@ textarea {
   background: rgba(16, 24, 40, 0.38);
 }
 
+.materialLedgerDialog.hidden {
+  display: none;
+}
 .materialLedgerWindow {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);

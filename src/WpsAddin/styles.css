@@ -1017,6 +1017,31 @@ textarea {
   user-select: none !important;
 }
 
+.ledgerStandaloneMode {
+  overflow: hidden;
+  background: #e7ebef;
+}
+
+.ledgerStandaloneMode .topbar,
+.ledgerStandaloneMode main > :not(#materials),
+.ledgerStandaloneMode .tabs,
+.ledgerStandaloneMode #materials > :not(.materialLedgerDialog) {
+  display: none !important;
+}
+
+.ledgerStandaloneMode main {
+  padding: 0;
+}
+
+.ledgerStandaloneMode #materials,
+.ledgerStandaloneMode #materials.active {
+  display: block;
+}
+
+.ledgerStandaloneMode .materialLedgerDialog {
+  background: #e7ebef;
+}
+
 .knowledgeTable td {
   border: 1px solid var(--line);
   padding: 7px;

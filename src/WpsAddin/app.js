@@ -32,6 +32,8 @@ const tabSyncKeys = {
   tabSignal: "engineering_docs_tab_signal"
 };
 
+const materialLedgerWindowHash = "materials-ledger-window";
+
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -2175,6 +2177,34 @@ async function openMaterialLedgerDialog(mode = "edit") {
   renderMaterialLedgerGrid();
 }
 
+async function openMaterialLedgerDesktopWindow(mode = "edit") {
+  if (mode !== "edit" || window.location.hash.replace("#", "") === materialLedgerWindowHash) {
+    await openMaterialLedgerDialog(mode);
+    return;
+  }
+
+  const url = `${window.location.href.split("#")[0]}#${materialLedgerWindowHash}`;
+  let popup = null;
+  try {
+    popup = window.open(url, "material-ledger-window", "popup=yes,width=1380,height=860,resizable=yes,scrollbars=yes");
+  } catch {
+    popup = null;
+  }
+
+  if (popup) {
+    try {
+      popup.focus();
+    } catch {
+      // Some WPS WebViews do not allow focusing external windows.
+    }
+    showResult("#materialResult", "已打开独立材料台账窗口。");
+    return;
+  }
+
+  showResult("#materialResult", "当前 WPS 环境阻止了独立窗口，已改用页面内台账窗口。");
+  await openMaterialLedgerDialog(mode);
+}
+
 function closeMaterialLedgerDialog() {
   $("#materialLedgerDialog").classList.add("hidden");
   closeMaterialLedgerFilterMenu();
@@ -2363,12 +2393,13 @@ function resetMaterialLedgerWindowPosition() {
 
   materialLedgerWindowState.maximized = false;
   materialLedgerWindowState.restore = null;
-  const width = Math.min(1360, Math.max(780, window.innerWidth - 48));
-  const height = Math.min(820, Math.max(460, window.innerHeight - 64));
+  const standalone = document.body.classList.contains("ledgerStandaloneMode");
+  const width = standalone ? Math.max(780, window.innerWidth - 16) : Math.min(1360, Math.max(780, window.innerWidth - 48));
+  const height = standalone ? Math.max(460, window.innerHeight - 16) : Math.min(820, Math.max(460, window.innerHeight - 64));
   windowElement.style.width = `${width}px`;
   windowElement.style.height = `${height}px`;
-  windowElement.style.left = `${Math.max(12, (window.innerWidth - width) / 2)}px`;
-  windowElement.style.top = `${Math.max(12, (window.innerHeight - height) / 2)}px`;
+  windowElement.style.left = `${standalone ? 8 : Math.max(12, (window.innerWidth - width) / 2)}px`;
+  windowElement.style.top = `${standalone ? 8 : Math.max(12, (window.innerHeight - height) / 2)}px`;
   updateMaterialLedgerWindowButtons();
 }
 
@@ -3281,7 +3312,23 @@ function normalizeTabId(tabId) {
 
 function activateTabFromHash() {
   const requestedTab = window.location.hash.replace("#", "") || "panel";
+  if (requestedTab === materialLedgerWindowHash) {
+    activateTab("materials");
+    return;
+  }
+
   activateTab(normalizeTabId(requestedTab));
+}
+
+function isMaterialLedgerStandaloneWindow() {
+  return window.location.hash.replace("#", "") === materialLedgerWindowHash;
+}
+
+async function bootMaterialLedgerStandaloneWindow() {
+  document.body.classList.add("ledgerStandaloneMode");
+  await refreshStatus();
+  await loadCurrentProject().catch((error) => showResult("#materialResult", error));
+  await openMaterialLedgerDialog("edit");
 }
 
 function applyExternalTabSignal(message) {
@@ -3371,7 +3418,7 @@ async function boot() {
   $("#resetMaterialForm").addEventListener("click", resetMaterialForm);
   $("#openMaterialLedgerDialog").addEventListener("click", async () => {
     try {
-      await openMaterialLedgerDialog("edit");
+      await openMaterialLedgerDesktopWindow("edit");
     } catch (error) {
       showResult("#materialResult", error);
     }
@@ -3528,6 +3575,15 @@ async function boot() {
   $("#copyMachineCode").addEventListener("click", copyMachineCode);
   $("#activateLicense").addEventListener("click", activateLicense);
   $("#loadLogs").addEventListener("click", loadLogs);
+
+  if (isMaterialLedgerStandaloneWindow()) {
+    try {
+      await bootMaterialLedgerStandaloneWindow();
+    } catch (error) {
+      showResult("#materialResult", error);
+    }
+    return;
+  }
 
   createBatchRow();
   createBatchRow({ date: "2026-05-23" });

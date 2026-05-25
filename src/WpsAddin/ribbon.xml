@@ -4,6 +4,7 @@
     <tabs>
       <tab id="engineeringDocsTab" label="工程资料">
         <group id="engineeringDocsGenerateGroup" label="工程资料">
+          <button id="btnProjectSelector" label="工程选择" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnOpenPanel" label="工程信息" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnBatchPlan" label="检验批批量生成" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
         </group>

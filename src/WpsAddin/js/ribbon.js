@@ -14,6 +14,9 @@ function OnAddinLoad(ribbonUI) {
 // Ribbon 所有按钮统一进入这里，再根据按钮 id 决定打开哪个功能页。
 function OnAction(control) {
   switch (control.Id) {
+    case "btnProjectSelector":
+      openEngineeringDocsPane("projectSelector");
+      break;
     case "btnOpenPanel":
       openEngineeringDocsPane("panel");
       break;

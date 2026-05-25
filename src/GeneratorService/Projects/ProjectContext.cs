@@ -48,3 +48,19 @@ public sealed record ProjectFolderSelectResult(
 public sealed record ProjectFolderSelectRequest(
     string? Description,
     string? InitialDirectory);
+
+public sealed record RecentProjectInfo(
+    string ProjectId,
+    string ProjectName,
+    string ProjectPath,
+    DateTimeOffset LastOpenedAt,
+    DateTimeOffset CreatedAt,
+    string DefaultModule,
+    string TemplateVersion,
+    string Status);
+
+public sealed record RecentProjectsResult(
+    bool Success,
+    string CurrentProjectId,
+    IReadOnlyList<RecentProjectInfo> Items,
+    string Message);

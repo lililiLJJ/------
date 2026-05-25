@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>工程资料</title>
-  <link rel="stylesheet" href="./styles.css?v=20260525-ledger-attachments">
+  <link rel="stylesheet" href="./styles.css?v=20260526-project-selector">
   <script src="./main.js"></script>
 </head>
 <body>
@@ -38,7 +38,10 @@
             <h2>工程管理</h2>
             <p id="currentProjectSummary">正在读取当前工程...</p>
           </div>
-          <button id="refreshCurrentProject" type="button">刷新工程</button>
+          <div class="actions compactActions">
+            <button id="openProjectSelection" type="button" class="primary">工程选择</button>
+            <button id="refreshCurrentProject" type="button">刷新工程</button>
+          </div>
         </div>
         <form id="projectManagerForm" class="formGrid">
           <label>工程名称<input name="projectName" value="GD-C3-5182" required></label>
@@ -626,6 +629,70 @@
     </section>
   </main>
 
+  <div id="projectSelectionDialog" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="projectSelectionTitle">
+    <div class="modalPanel projectSelectionPanel">
+      <div class="modalHeader">
+        <div>
+          <h2 id="projectSelectionTitle">工程选择</h2>
+          <p>打开已有工程，或从最近工程列表快速切换。</p>
+        </div>
+        <button id="closeProjectSelection" class="iconButton" title="关闭">×</button>
+      </div>
+      <div class="projectSelectionContent">
+        <section class="projectSelectionCard">
+          <div class="sectionHeader compactSectionHeader">
+            <div>
+              <h3>当前工程</h3>
+              <p>当前正在使用的工程上下文。</p>
+            </div>
+          </div>
+          <div id="projectSelectionCurrent"></div>
+        </section>
+
+        <section class="projectSelectionCard">
+          <div class="sectionHeader compactSectionHeader">
+            <div>
+              <h3>打开工程</h3>
+              <p>有效工程目录必须包含 ProjectInfo.json。</p>
+            </div>
+            <button id="projectSelectionPickFolder" type="button" class="primary">选择工程文件夹</button>
+          </div>
+        </section>
+
+        <section class="projectSelectionCard recentProjectSection">
+          <div class="sectionHeader compactSectionHeader">
+            <div>
+              <h3>最近工程</h3>
+              <p>按最近打开时间倒序排列。</p>
+            </div>
+            <div class="actions compactActions">
+              <button id="projectSelectionValidateRecent" type="button">刷新状态</button>
+              <button id="projectSelectionOpenRecent" type="button" class="primary">打开</button>
+              <button id="projectSelectionRemoveRecent" type="button">移除记录</button>
+              <button id="projectSelectionClearRecent" type="button">清空历史</button>
+            </div>
+          </div>
+          <div class="projectRecentTableWrap">
+            <table class="projectRecentTable">
+              <thead>
+                <tr>
+                  <th>工程名称</th>
+                  <th>工程路径</th>
+                  <th>最近打开时间</th>
+                  <th>模板/模块</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody id="recentProjectRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <pre id="projectSelectionResult" class="resultBox compactResult"></pre>
+      </div>
+    </div>
+  </div>
+
   <div id="templatePreviewModal" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="templatePreviewTitle">
     <section class="modalPanel">
       <div class="modalHeader">
@@ -661,6 +728,6 @@
     </section>
   </div>
 
-  <script src="./app.js?v=20260525-ledger-attachments"></script>
+  <script src="./app.js?v=20260526-project-selector"></script>
 </body>
 </html>

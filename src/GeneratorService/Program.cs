@@ -57,6 +57,7 @@ builder.Services.AddSingleton<ModuleInstallService>();
 builder.Services.AddSingleton<ModuleUpdateService>();
 builder.Services.AddSingleton<ProjectStorageService>();
 builder.Services.AddSingleton<ProjectManager>();
+builder.Services.AddSingleton<RecentProjectService>();
 builder.Services.AddSingleton<ProjectPathResolver>();
 builder.Services.AddSingleton<ProjectFolderDialogService>();
 builder.Services.AddSingleton<MaterialRepository>();
@@ -263,14 +264,16 @@ app.MapPost("/api/projects/current", (ProjectUpdateRequest request, ProjectManag
     }
 });
 
-app.MapPost("/api/projects/create", (ProjectCreateRequest request, ProjectManager manager) =>
+app.MapPost("/api/projects/create", (ProjectCreateRequest request, ProjectManager manager, RecentProjectService recentProjects) =>
 {
     try
     {
+        var project = manager.CreateProject(request);
+        recentProjects.Upsert(project);
         return Results.Ok(new
         {
             success = true,
-            project = manager.CreateProject(request)
+            project
         });
     }
     catch (Exception ex)
@@ -283,14 +286,16 @@ app.MapPost("/api/projects/create", (ProjectCreateRequest request, ProjectManage
     }
 });
 
-app.MapPost("/api/projects/open", (ProjectOpenRequest request, ProjectManager manager) =>
+app.MapPost("/api/projects/open", (ProjectOpenRequest request, ProjectManager manager, RecentProjectService recentProjects) =>
 {
     try
     {
+        var project = manager.OpenProject(request);
+        recentProjects.Upsert(project);
         return Results.Ok(new
         {
             success = true,
-            project = manager.OpenProject(request)
+            project
         });
     }
     catch (Exception ex)
@@ -307,6 +312,26 @@ app.MapPost("/api/projects/select-folder", (ProjectFolderSelectRequest? request,
 {
     var result = service.SelectFolder(request?.Description, request?.InitialDirectory);
     return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+});
+
+app.MapGet("/api/projects/recent", (ProjectManager manager, RecentProjectService recentProjects) =>
+{
+    return Results.Ok(recentProjects.List(manager.GetCurrentProject()));
+});
+
+app.MapPost("/api/projects/recent/validate", (ProjectManager manager, RecentProjectService recentProjects) =>
+{
+    return Results.Ok(recentProjects.Validate(manager.GetCurrentProject()));
+});
+
+app.MapDelete("/api/projects/recent", (ProjectManager manager, RecentProjectService recentProjects) =>
+{
+    return Results.Ok(recentProjects.Clear(manager.GetCurrentProject()));
+});
+
+app.MapDelete("/api/projects/recent/{projectId}", (string projectId, ProjectManager manager, RecentProjectService recentProjects) =>
+{
+    return Results.Ok(recentProjects.Remove(manager.GetCurrentProject(), projectId));
 });
 
 app.MapGet("/api/materials", (

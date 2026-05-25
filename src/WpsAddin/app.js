@@ -33,6 +33,8 @@ let lastExternalTabVersion = "";
 const collapsedTemplateNodeIds = new Set();
 let activeProjectId = "project-default";
 let currentProject = null;
+let recentProjects = [];
+let selectedRecentProjectId = "";
 
 const tabSyncKeys = {
   targetTab: "engineering_docs_target_tab",
@@ -209,6 +211,44 @@ async function loadCurrentProject() {
   }
 }
 
+function hasUnsavedProjectSwitchChanges() {
+  return hasUnsavedMaterialLedgerChanges() ||
+    batchPlanRows.some((row) => row._dirty);
+}
+
+function canSwitchProject() {
+  if (!hasUnsavedProjectSwitchChanges()) {
+    return true;
+  }
+
+  window.alert("当前存在未保存内容，请先保存材料台账或批量创建计划后再切换工程。");
+  return false;
+}
+
+async function refreshProjectWorkspace(project, resultSelector = "#projectManagerResult") {
+  renderCurrentProject(project);
+  closeMaterialLedgerDialog();
+  selectedMaterial = null;
+  materialItems = [];
+  materialLedgerRows = [];
+  materialLedgerSelectedIds.clear();
+  materialLedgerColumnFilters.clear();
+  selectedTemplateNode = null;
+  currentGeneratedForm = null;
+  selectedSummaryNode = null;
+  currentSummaryPreview = null;
+  currentBatchPlan = null;
+  batchPlanRows = [];
+  currentBatchPreview = null;
+
+  await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+  await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
+  await loadBatchPlans().catch((error) => showResult("#batchPlanResult", error));
+  await loadMaterials().catch((error) => showResult("#materialResult", error));
+  await loadRecentProjects().catch((error) => showResult(resultSelector, error));
+  $("#logsResult").textContent = "";
+}
+
 async function requestProjectFolder(description) {
   const form = $("#projectManagerForm");
   const currentPath = form?.elements.projectRootPath.value || "";
@@ -253,6 +293,10 @@ async function getProjectPathForAction(description) {
 
 async function createProject() {
   try {
+    if (!canSwitchProject()) {
+      return;
+    }
+
     const projectRootPath = await getProjectPathForAction("选择新工程保存目录");
     if (!projectRootPath) {
       return;
@@ -269,12 +313,8 @@ async function createProject() {
         templateVersion: data.templateVersion || ""
       })
     });
-    renderCurrentProject(result.project);
     showResult("#projectManagerResult", result);
-    await loadTemplateLibraryTree();
-    await loadSummaryTree();
-    await loadBatchPlans();
-    await loadMaterials();
+    await refreshProjectWorkspace(result.project);
   } catch (error) {
     showResult("#projectManagerResult", error);
   }
@@ -293,12 +333,8 @@ async function saveProject() {
         templateVersion: data.templateVersion || ""
       })
     });
-    renderCurrentProject(result.project);
     showResult("#projectManagerResult", result);
-    await loadTemplateLibraryTree();
-    await loadSummaryTree();
-    await loadBatchPlans();
-    await loadMaterials();
+    await refreshProjectWorkspace(result.project);
   } catch (error) {
     showResult("#projectManagerResult", error);
   }
@@ -306,6 +342,10 @@ async function saveProject() {
 
 async function openProject() {
   try {
+    if (!canSwitchProject()) {
+      return;
+    }
+
     showResult("#projectManagerResult", "正在打开目录选择窗口...");
     const folderResult = await requestProjectFolder("选择要打开的工程目录");
     const projectRootPath = folderResult.projectRootPath || "";
@@ -321,12 +361,8 @@ async function openProject() {
         projectRootPath
       })
     });
-    renderCurrentProject(result.project);
     showResult("#projectManagerResult", result);
-    await loadTemplateLibraryTree();
-    await loadSummaryTree();
-    await loadBatchPlans();
-    await loadMaterials();
+    await refreshProjectWorkspace(result.project);
   } catch (error) {
     const message = error?.message || "";
     if (message.includes("ProjectInfo.json")) {
@@ -339,6 +375,206 @@ async function openProject() {
     }
 
     showResult("#projectManagerResult", error);
+  }
+}
+
+function formatProjectDate(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function getRecentProjectStatusClass(status) {
+  if (status === "正常") {
+    return "ok";
+  }
+
+  if (status === "路径不存在" || status === "无效工程") {
+    return "error";
+  }
+
+  return "warning";
+}
+
+function renderProjectSelectionDialog() {
+  const current = currentProject;
+  const currentPanel = $("#projectSelectionCurrent");
+  if (currentPanel) {
+    currentPanel.innerHTML = current
+      ? `
+        <dl class="projectSelectionMeta">
+          <div><dt>工程名称</dt><dd>${escapeHtml(current.projectName || "未命名工程")}</dd></div>
+          <div><dt>工程路径</dt><dd title="${escapeHtml(current.projectRootPath || "")}">${escapeHtml(current.projectRootPath || "")}</dd></div>
+          <div><dt>创建时间</dt><dd>${escapeHtml(formatProjectDate(current.createdAt))}</dd></div>
+          <div><dt>最近打开</dt><dd>${escapeHtml(formatProjectDate(recentProjects.find((item) => item.projectId === current.projectId)?.lastOpenedAt))}</dd></div>
+          <div><dt>默认模块</dt><dd>${escapeHtml(current.moduleName || "-")}</dd></div>
+          <div><dt>模板版本</dt><dd>${escapeHtml(current.templateVersion || "-")}</dd></div>
+        </dl>`
+      : '<p class="emptyText">当前未打开工程。</p>';
+  }
+
+  const body = $("#recentProjectRows");
+  if (!body) {
+    return;
+  }
+
+  if (!recentProjects.length) {
+    body.innerHTML = '<tr><td colspan="5" class="emptyText">暂无最近工程记录。</td></tr>';
+    return;
+  }
+
+  body.innerHTML = recentProjects.map((item) => {
+    const selected = item.projectId === selectedRecentProjectId;
+    const currentRow = current?.projectId === item.projectId;
+    const statusClass = getRecentProjectStatusClass(item.status);
+    return `
+      <tr class="${selected ? "selectedRow" : ""} ${currentRow ? "currentProjectRow" : ""}" data-recent-project-id="${escapeHtml(item.projectId)}" title="${escapeHtml(item.projectPath)}">
+        <td>${escapeHtml(item.projectName || "未命名工程")}</td>
+        <td class="projectPathCell">${escapeHtml(item.projectPath || "")}</td>
+        <td>${escapeHtml(formatProjectDate(item.lastOpenedAt))}</td>
+        <td>${escapeHtml(item.templateVersion || item.defaultModule || "-")}</td>
+        <td><span class="projectStatusBadge ${statusClass}">${escapeHtml(item.status || "未知")}</span></td>
+      </tr>`;
+  }).join("");
+}
+
+async function loadRecentProjects() {
+  const result = await api("/api/projects/recent");
+  recentProjects = result.items || [];
+  if (!recentProjects.some((item) => item.projectId === selectedRecentProjectId)) {
+    selectedRecentProjectId = recentProjects[0]?.projectId || "";
+  }
+  renderProjectSelectionDialog();
+  return result;
+}
+
+async function openProjectSelectionDialog() {
+  activateTab("panel");
+  $("#projectSelectionDialog").classList.remove("hidden");
+  showResult("#projectSelectionResult", "正在读取最近工程...");
+  await loadCurrentProject().catch((error) => showResult("#projectSelectionResult", error));
+  try {
+    const result = await loadRecentProjects();
+    showResult("#projectSelectionResult", result);
+  } catch (error) {
+    showResult("#projectSelectionResult", error);
+  }
+}
+
+function closeProjectSelectionDialog() {
+  $("#projectSelectionDialog").classList.add("hidden");
+}
+
+async function openProjectFromSelection(projectRootPath) {
+  if (!projectRootPath || !canSwitchProject()) {
+    return;
+  }
+
+  showResult("#projectSelectionResult", "正在打开工程...");
+  try {
+    const result = await api("/api/projects/open", {
+      method: "POST",
+      body: JSON.stringify({ projectRootPath })
+    });
+    await refreshProjectWorkspace(result.project, "#projectSelectionResult");
+    renderProjectSelectionDialog();
+    showResult("#projectSelectionResult", `已切换到工程：${result.project?.projectName || ""}`);
+  } catch (error) {
+    const message = error?.message || "";
+    showResult("#projectSelectionResult", message.includes("ProjectInfo.json")
+      ? { success: false, message: "无法打开工程：未找到 ProjectInfo.json。", detail: message }
+      : error);
+  }
+}
+
+async function selectProjectFolderFromDialog() {
+  if (!canSwitchProject()) {
+    return;
+  }
+
+  showResult("#projectSelectionResult", "正在打开目录选择窗口...");
+  try {
+    const folderResult = await requestProjectFolder("选择要打开的工程目录");
+    const projectRootPath = folderResult.projectRootPath || "";
+    if (!projectRootPath) {
+      showResult("#projectSelectionResult", folderResult);
+      return;
+    }
+
+    await openProjectFromSelection(projectRootPath);
+  } catch (error) {
+    showResult("#projectSelectionResult", error);
+  }
+}
+
+async function openSelectedRecentProject() {
+  const item = recentProjects.find((project) => project.projectId === selectedRecentProjectId);
+  if (!item) {
+    showResult("#projectSelectionResult", "请先选择一个最近工程。");
+    return;
+  }
+
+  if (item.status === "路径不存在") {
+    showResult("#projectSelectionResult", "工程路径不存在，请检查文件夹是否被移动或删除。");
+    return;
+  }
+
+  if (item.status === "无效工程") {
+    showResult("#projectSelectionResult", "无法打开工程：未找到 ProjectInfo.json。");
+    return;
+  }
+
+  await openProjectFromSelection(item.projectPath);
+}
+
+async function removeSelectedRecentProject() {
+  if (!selectedRecentProjectId) {
+    showResult("#projectSelectionResult", "请先选择要移除的最近工程。");
+    return;
+  }
+
+  try {
+    const result = await api(`/api/projects/recent/${encodeURIComponent(selectedRecentProjectId)}`, { method: "DELETE" });
+    recentProjects = result.items || [];
+    selectedRecentProjectId = recentProjects[0]?.projectId || "";
+    renderProjectSelectionDialog();
+    showResult("#projectSelectionResult", result);
+  } catch (error) {
+    showResult("#projectSelectionResult", error);
+  }
+}
+
+async function clearRecentProjects() {
+  if (!window.confirm("确定清空全部最近工程记录吗？")) {
+    return;
+  }
+
+  try {
+    const result = await api("/api/projects/recent", { method: "DELETE" });
+    recentProjects = [];
+    selectedRecentProjectId = "";
+    renderProjectSelectionDialog();
+    showResult("#projectSelectionResult", result);
+  } catch (error) {
+    showResult("#projectSelectionResult", error);
+  }
+}
+
+async function validateRecentProjects() {
+  try {
+    const result = await api("/api/projects/recent/validate", { method: "POST" });
+    recentProjects = result.items || [];
+    renderProjectSelectionDialog();
+    showResult("#projectSelectionResult", result);
+  } catch (error) {
+    showResult("#projectSelectionResult", error);
   }
 }
 
@@ -455,6 +691,7 @@ async function retryServiceStatus() {
   await loadTemplates().catch((error) => showResult("#generateResult", error));
   await loadModules().catch((error) => showResult("#templateResult", error));
   await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
+  await loadRecentProjects().catch((error) => showResult("#projectSelectionResult", error));
   await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
   await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
   await loadBatchPlans().catch((error) => showResult("#batchPlanResult", error));
@@ -466,6 +703,7 @@ async function retryServiceStatus() {
 }
 
 function setGenerateDisabled(disabled) {
+  if ($("#openProjectSelection")) $("#openProjectSelection").disabled = disabled;
   $("#generateCurrent").disabled = disabled;
   $("#generateBatch").disabled = disabled;
   $("#reloadTemplates").disabled = disabled;
@@ -4026,6 +4264,12 @@ function activateTabFromHash() {
   }
 
   const requestedTab = window.location.hash.replace("#", "") || "panel";
+  if (requestedTab === "projectSelector") {
+    activateTab("panel");
+    setTimeout(() => openProjectSelectionDialog().catch((error) => showResult("#projectSelectionResult", error)), 0);
+    return;
+  }
+
   if (requestedTab === materialLedgerWindowHash) {
     activateTab("materials");
     return;
@@ -4054,6 +4298,15 @@ function applyExternalTabSignal(message) {
 
   const version = String(message.version || "");
   if (version && version === lastExternalTabVersion) {
+    return;
+  }
+
+  if (message.tabName === "projectSelector") {
+    activateTab("panel");
+    openProjectSelectionDialog().catch((error) => showResult("#projectSelectionResult", error));
+    if (version) {
+      lastExternalTabVersion = version;
+    }
     return;
   }
 
@@ -4123,10 +4376,40 @@ async function boot() {
   $("#refreshStatus").addEventListener("click", refreshStatus);
   $("#retryServiceStatus").addEventListener("click", retryServiceStatus);
   $("#copyStartCommand").addEventListener("click", copyStartCommand);
+  $("#openProjectSelection").addEventListener("click", () => openProjectSelectionDialog().catch((error) => showResult("#projectSelectionResult", error)));
   $("#refreshCurrentProject").addEventListener("click", loadCurrentProject);
   $("#createProject").addEventListener("click", createProject);
   $("#saveProject").addEventListener("click", saveProject);
   $("#openProject").addEventListener("click", openProject);
+  $("#closeProjectSelection").addEventListener("click", closeProjectSelectionDialog);
+  $("#projectSelectionPickFolder").addEventListener("click", selectProjectFolderFromDialog);
+  $("#projectSelectionOpenRecent").addEventListener("click", openSelectedRecentProject);
+  $("#projectSelectionRemoveRecent").addEventListener("click", removeSelectedRecentProject);
+  $("#projectSelectionClearRecent").addEventListener("click", clearRecentProjects);
+  $("#projectSelectionValidateRecent").addEventListener("click", validateRecentProjects);
+  $("#recentProjectRows").addEventListener("click", (event) => {
+    const row = event.target.closest("[data-recent-project-id]");
+    if (!row) {
+      return;
+    }
+
+    selectedRecentProjectId = row.dataset.recentProjectId || "";
+    renderProjectSelectionDialog();
+  });
+  $("#recentProjectRows").addEventListener("dblclick", (event) => {
+    const row = event.target.closest("[data-recent-project-id]");
+    if (!row) {
+      return;
+    }
+
+    selectedRecentProjectId = row.dataset.recentProjectId || "";
+    openSelectedRecentProject();
+  });
+  $("#projectSelectionDialog").addEventListener("click", (event) => {
+    if (event.target.id === "projectSelectionDialog") {
+      closeProjectSelectionDialog();
+    }
+  });
   $("#reloadTemplates").addEventListener("click", loadTemplates);
   $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);
   $("#openTemplateFolder").addEventListener("click", openTemplateFolder);
@@ -4370,6 +4653,7 @@ async function boot() {
     await loadTemplates().catch((error) => showResult("#generateResult", error));
     await loadModules().catch((error) => showResult("#templateResult", error));
     await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
+    await loadRecentProjects().catch((error) => showResult("#projectSelectionResult", error));
     await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
     await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
     await loadBatchPlans().catch((error) => showResult("#batchPlanResult", error));

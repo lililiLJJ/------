@@ -2412,6 +2412,7 @@ async function openMaterialLedgerDialog(mode = "edit") {
   $("#materialLedgerDeleteRows").classList.toggle("hidden", mode !== "edit");
   $("#materialLedgerSave").classList.toggle("hidden", mode !== "edit");
   $("#materialLedgerExport").classList.toggle("hidden", mode !== "edit");
+  $("#materialLedgerAttachmentForm")?.classList.toggle("hidden", mode !== "edit");
   $("#materialLedgerConfirmApproval").classList.toggle("hidden", mode !== "approval-select");
   $("#materialLedgerQuickFilter").value = "";
   closeMaterialLedgerFilterMenu();
@@ -2519,6 +2520,7 @@ function renderMaterialLedgerGrid() {
   $("#materialLedgerStatusText").textContent = materialLedgerMode === "approval-select"
     ? `已加载 ${rows.length} 条材料，已选择 ${materialLedgerSelectedIds.size} 条。`
     : `已加载 ${rows.length} 条材料${activeFilterCount ? `，${activeFilterCount} 列正在筛选` : ""}，可从 Excel/WPS 复制多行多列后粘贴。`;
+  updateMaterialLedgerAttachmentState();
 }
 
 function renderMaterialLedgerHeaderCell(column) {
@@ -2832,6 +2834,50 @@ function getActiveLedgerRowIndexes() {
   return [];
 }
 
+function getMaterialLedgerAttachmentTarget() {
+  const checked = $$("[data-ledger-row-check]:checked").map((item) => Number(item.dataset.ledgerRowCheck));
+  const indexes = checked.length ? checked : getActiveLedgerRowIndexes();
+  if (indexes.length !== 1) {
+    return { row: null, index: null, reason: indexes.length > 1 ? "一次只能为一条材料上传附件。" : "请先勾选一条已保存材料。" };
+  }
+
+  const index = indexes[0];
+  const row = materialLedgerRows[index];
+  if (!row || row._deleted) {
+    return { row: null, index: null, reason: "所选材料已被删除或不存在。" };
+  }
+
+  if (!row.id) {
+    return { row: null, index, reason: "该材料尚未保存，请先批量保存后再上传附件。" };
+  }
+
+  return { row, index, reason: "" };
+}
+
+function updateMaterialLedgerAttachmentState() {
+  const form = $("#materialLedgerAttachmentForm");
+  if (!form) {
+    return;
+  }
+
+  form.classList.toggle("hidden", materialLedgerMode !== "edit");
+  if (materialLedgerMode !== "edit") {
+    return;
+  }
+
+  const target = getMaterialLedgerAttachmentTarget();
+  const targetText = $("#materialLedgerAttachmentTarget");
+  const uploadButton = $("#materialLedgerUploadAttachment");
+  if (targetText) {
+    targetText.textContent = target.row
+      ? `当前材料：${target.row.materialName || "未命名材料"}${target.row.specificationModel ? ` / ${target.row.specificationModel}` : ""}`
+      : target.reason;
+  }
+  if (uploadButton) {
+    uploadButton.disabled = !target.row;
+  }
+}
+
 function parseLedgerPasteText(text) {
   return text
     .replace(/\r\n/g, "\n")
@@ -2937,6 +2983,67 @@ async function saveMaterialLedgerRows() {
     renderSelectedMaterial();
     renderMaterialLedgerGrid();
     showResult("#materialResult", result);
+  } catch (error) {
+    showResult("#materialResult", error);
+  }
+}
+
+async function uploadMaterialLedgerAttachment(event) {
+  event.preventDefault();
+  const target = getMaterialLedgerAttachmentTarget();
+  if (!target.row) {
+    showResult("#materialResult", target.reason);
+    updateMaterialLedgerAttachmentState();
+    return;
+  }
+
+  const form = $("#materialLedgerAttachmentForm");
+  const formData = new FormData(form);
+  const file = formData.get("file");
+  if (!file || !file.name) {
+    showResult("#materialResult", "请选择要上传的附件文件。");
+    return;
+  }
+
+  formData.set("projectId", activeProjectId);
+  const fileType = String(formData.get("fileType") || "");
+  const certificateNo = String(formData.get("certificateNo") || "").trim();
+  showResult("#materialResult", `正在上传 ${fileType || "材料附件"}...`);
+
+  try {
+    const result = await api(`/api/materials/${encodeURIComponent(target.row.id)}/attachments`, {
+      method: "POST",
+      body: formData
+    });
+
+    if (fileType === "第三方检测报告") {
+      const material = materialItems.find((item) => item.id === target.row.id);
+      const test = material?.test || {};
+      await api(`/api/materials/${encodeURIComponent(target.row.id)}/test`, {
+        method: "POST",
+        body: JSON.stringify({
+          projectId: activeProjectId,
+          isRequired: true,
+          samplingTime: test.samplingTime || null,
+          witness: test.witness || "",
+          sentTime: target.row.sentTime ? new Date(`${target.row.sentTime}T00:00:00`).toISOString() : (test.sentTime || null),
+          inspectionAgency: target.row.inspectionAgency || test.inspectionAgency || "",
+          reportNo: certificateNo || target.row.reportNo || test.reportNo || "",
+          result: target.row.result || test.result || "",
+          reportAttachmentId: result.attachment?.id || null
+        })
+      });
+    }
+
+    form.reset();
+    await loadMaterials();
+    materialLedgerRows = materialItems.map(materialItemToLedgerRow);
+    renderMaterialLedgerGrid();
+    showResult("#materialResult", {
+      success: true,
+      message: fileType === "第三方检测报告" ? "第三方检测报告已上传并关联送检记录。" : "材料附件已上传。",
+      attachment: result.attachment
+    });
   } catch (error) {
     showResult("#materialResult", error);
   }
@@ -4062,6 +4169,7 @@ async function boot() {
   $("#materialLedgerSave").addEventListener("click", saveMaterialLedgerRows);
   $("#materialLedgerExport").addEventListener("click", exportMaterialLedger);
   $("#materialLedgerConfirmApproval").addEventListener("click", confirmMaterialApprovalSelection);
+  $("#materialLedgerAttachmentForm").addEventListener("submit", uploadMaterialLedgerAttachment);
   $("#materialLedgerQuickFilter").addEventListener("input", renderMaterialLedgerGrid);
   $("#materialLedgerClearFilters").addEventListener("click", clearMaterialLedgerFilters);
   $("#materialLedgerDragHandle").addEventListener("mousedown", beginMaterialLedgerDrag);
@@ -4149,7 +4257,17 @@ async function boot() {
       updateLedgerCellFromElement(event.target);
     }
   });
+  $("#materialLedgerBody").addEventListener("focusin", (event) => {
+    if (event.target.closest("[data-ledger-field]")) {
+      updateMaterialLedgerAttachmentState();
+    }
+  });
   $("#materialLedgerBody").addEventListener("change", (event) => {
+    if (event.target.closest("[data-ledger-row-check]")) {
+      updateMaterialLedgerAttachmentState();
+      return;
+    }
+
     const approvalSelect = event.target.closest("[data-ledger-select]");
     if (approvalSelect) {
       const row = materialLedgerRows[Number(approvalSelect.dataset.ledgerSelect)];

@@ -1003,7 +1003,7 @@ textarea {
 .materialLedgerWindow {
   position: absolute;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   width: min(1360px, 96vw);
   height: min(820px, 90vh);
   min-width: 780px;
@@ -1077,6 +1077,42 @@ textarea {
   align-items: center;
   gap: 8px;
   color: var(--muted);
+}
+
+.materialLedgerAttachmentBar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(150px, 0.7fr) minmax(180px, 0.8fr) minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+
+.materialLedgerAttachmentBar.hidden {
+  display: none;
+}
+
+.materialLedgerAttachmentBar span {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.materialLedgerAttachmentBar label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.materialLedgerAttachmentBar input,
+.materialLedgerAttachmentBar select {
+  min-height: 34px;
+}
+
+.ledgerAttachmentFile input {
+  padding: 6px 8px;
 }
 
 .materialLedgerTableWrap {

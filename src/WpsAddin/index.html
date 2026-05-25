@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>工程资料</title>
-  <link rel="stylesheet" href="./styles.css?v=20260525-batch-plan-ledger-entry">
+  <link rel="stylesheet" href="./styles.css?v=20260525-ledger-attachments">
   <script src="./main.js"></script>
 </head>
 <body>
@@ -462,6 +462,19 @@
             <button id="materialLedgerClearFilters" type="button">清空筛选</button>
             <span id="materialLedgerStatusText">尚未加载材料。</span>
           </div>
+          <form id="materialLedgerAttachmentForm" class="materialLedgerAttachmentBar">
+            <span id="materialLedgerAttachmentTarget">请先勾选一条已保存材料。</span>
+            <label>附件类型
+              <select name="fileType">
+                <option value="合格证">合格证</option>
+                <option value="厂家检测报告">厂家检测报告</option>
+                <option value="第三方检测报告">第三方检测报告</option>
+              </select>
+            </label>
+            <label>编号<input name="certificateNo" placeholder="合格证号或报告编号"></label>
+            <label class="ledgerAttachmentFile">文件<input name="file" type="file" required></label>
+            <button id="materialLedgerUploadAttachment" type="submit" class="primary">上传附件</button>
+          </form>
           <div id="materialLedgerFilterMenu" class="materialLedgerFilterMenu hidden"></div>
           <div class="materialLedgerTableWrap">
             <table class="materialLedgerTable">
@@ -648,6 +661,6 @@
     </section>
   </div>
 
-  <script src="./app.js?v=20260525-batch-plan-ledger-entry"></script>
+  <script src="./app.js?v=20260525-ledger-attachments"></script>
 </body>
 </html>

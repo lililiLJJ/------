@@ -190,7 +190,7 @@ public sealed class GeneratedFormService
             "已备份当前资料表。");
     }
 
-    private static void ApplyFields(string filePath, string formName, IReadOnlyDictionary<string, string> fields)
+    internal static void ApplyFields(string filePath, string formName, IReadOnlyDictionary<string, string> fields)
     {
         if (!string.Equals(Path.GetExtension(filePath), ".xlsx", StringComparison.OrdinalIgnoreCase))
         {

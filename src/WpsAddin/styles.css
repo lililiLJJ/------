@@ -554,6 +554,93 @@ textarea {
   color: #745200;
 }
 
+.batchPlanHeaderGrid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1fr) minmax(140px, 0.7fr) minmax(120px, 0.6fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.batchPlanHeaderGrid label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+}
+
+.batchPlanTableWrap {
+  min-height: 260px;
+  max-height: 48vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.batchPlanTable {
+  width: max-content;
+  min-width: 1180px;
+  border-collapse: collapse;
+}
+
+.batchPlanTable th,
+.batchPlanTable td {
+  min-width: 96px;
+  max-width: 260px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.batchPlanTable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  color: var(--muted);
+  background: #eef3f8;
+}
+
+.batchPlanTable td[contenteditable="true"] {
+  background: #fff;
+  outline-color: var(--primary);
+}
+
+.batchPlanTable select {
+  width: 100%;
+  min-width: 220px;
+}
+
+.batchPlanSelectCell {
+  width: 52px;
+  min-width: 52px !important;
+  max-width: 52px !important;
+  text-align: center !important;
+}
+
+.requiredMark {
+  margin-left: 2px;
+  color: #bd3b2b;
+}
+
+.batchPlanPreviewPanel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.batchPlanPreviewHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.batchPlanPreviewHeader strong {
+  color: var(--text);
+}
+
 .templateInfoGrid {
   display: grid;
   grid-template-columns: 84px minmax(0, 1fr);
@@ -1396,7 +1483,8 @@ textarea {
 
 @media (max-width: 720px) {
   .formGrid,
-  .unitGrid {
+  .unitGrid,
+  .batchPlanHeaderGrid {
     grid-template-columns: 1fr;
   }
 

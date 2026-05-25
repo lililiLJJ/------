@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>工程资料</title>
-  <link rel="stylesheet" href="./styles.css?v=20260525-ledger-entry">
+  <link rel="stylesheet" href="./styles.css?v=20260525-batch-plan-ledger-entry">
   <script src="./main.js"></script>
 </head>
 <body>
@@ -174,6 +174,44 @@
         AI文本不会用于主控项目、一般项目、允许偏差、检查方法、规范条文和实测值。
       </div>
       <pre id="aiResult" class="resultBox"></pre>
+    </section>
+
+    <section id="batchPlan" class="tabPanel">
+      <div class="sectionHeader">
+        <div>
+          <h2>批量创建资料</h2>
+          <p id="batchPlanSummary">通过检验批划分表一次创建多张资料。</p>
+        </div>
+        <div class="actions compactActions">
+          <button id="refreshBatchPlans" type="button">刷新计划</button>
+          <button id="batchPlanAddRow" type="button">新增行</button>
+          <button id="batchPlanDeleteRows" type="button">删除行</button>
+          <button id="batchPlanSave" type="button">保存计划</button>
+          <button id="batchPlanPreview" type="button">预览</button>
+          <button id="batchPlanGenerate" type="button" class="primary">批量创建</button>
+        </div>
+      </div>
+      <div class="batchPlanHeaderGrid">
+        <label>计划名称<input id="batchPlanName" value="检验批划分计划"></label>
+        <label>备注<input id="batchPlanRemark" placeholder="可填写楼栋、专业或批次说明"></label>
+        <label>批量施工日期<input id="batchPlanBulkDate" type="date"></label>
+        <label>批量容量单位<input id="batchPlanBulkUnit" placeholder="套、个系统、m"></label>
+        <div class="actions compactActions">
+          <button id="batchPlanApplyDate" type="button">应用日期</button>
+          <button id="batchPlanApplyUnit" type="button">应用单位</button>
+          <button id="batchPlanUseSelectedTemplate" type="button">使用当前模板新增</button>
+        </div>
+      </div>
+      <div class="batchPlanTableWrap">
+        <table class="batchPlanTable">
+          <thead id="batchPlanHead"></thead>
+          <tbody id="batchPlanBody"></tbody>
+        </table>
+      </div>
+      <section id="batchPlanPreviewPanel" class="batchPlanPreviewPanel">
+        <p class="emptyText">保存计划后点击预览，可查看将生成的资料、映射命中和警告。</p>
+      </section>
+      <pre id="batchPlanResult" class="resultBox compactResult"></pre>
     </section>
 
     <section id="templates" class="tabPanel">
@@ -610,6 +648,6 @@
     </section>
   </div>
 
-  <script src="./app.js?v=20260525-ledger-entry"></script>
+  <script src="./app.js?v=20260525-batch-plan-ledger-entry"></script>
 </body>
 </html>

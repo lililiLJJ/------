@@ -16,6 +16,11 @@ let materialLedgerRows = [];
 const materialLedgerSelectedIds = new Set();
 const materialLedgerColumnFilters = new Map();
 let materialLedgerActiveFilterColumn = null;
+let batchPlans = [];
+let currentBatchPlan = null;
+let batchPlanRows = [];
+let batchDeviceFields = [];
+let currentBatchPreview = null;
 const materialLedgerWindowState = {
   maximized: false,
   restore: null,
@@ -60,6 +65,15 @@ const materialLedgerColumns = [
   { key: "approvalStatus", label: "报审状态", readOnly: true },
   { key: "status", label: "状态", readOnly: true },
   { key: "remark", label: "备注" }
+];
+
+const batchPlanBaseColumns = [
+  { key: "template", label: "检验批模板", required: true, type: "template", width: 240 },
+  { key: "partName", label: "检验批部位", required: true, width: 170 },
+  { key: "capacity", label: "容量", width: 88 },
+  { key: "quantityUnit", label: "单位", width: 72 },
+  { key: "constructionDate", label: "施工日期", type: "date", width: 126 },
+  { key: "remark", label: "备注", width: 160 }
 ];
 
 function showResult(selector, data) {
@@ -259,6 +273,7 @@ async function createProject() {
     showResult("#projectManagerResult", result);
     await loadTemplateLibraryTree();
     await loadSummaryTree();
+    await loadBatchPlans();
     await loadMaterials();
   } catch (error) {
     showResult("#projectManagerResult", error);
@@ -282,6 +297,7 @@ async function saveProject() {
     showResult("#projectManagerResult", result);
     await loadTemplateLibraryTree();
     await loadSummaryTree();
+    await loadBatchPlans();
     await loadMaterials();
   } catch (error) {
     showResult("#projectManagerResult", error);
@@ -309,6 +325,7 @@ async function openProject() {
     showResult("#projectManagerResult", result);
     await loadTemplateLibraryTree();
     await loadSummaryTree();
+    await loadBatchPlans();
     await loadMaterials();
   } catch (error) {
     const message = error?.message || "";
@@ -404,6 +421,10 @@ function setServiceOffline() {
   $("#summaryTreeView").innerHTML = '<p class="emptyText">请先启动 GeneratorService。</p>';
   $("#summaryPreview").innerHTML = '<p class="emptyText">请先启动 GeneratorService。</p>';
   $("#summarySummary").textContent = "本地服务未启动，暂时无法读取分部分项汇总。";
+  if ($("#batchPlanBody")) {
+    $("#batchPlanBody").innerHTML = '<tr><td colspan="12">请先启动 GeneratorService。</td></tr>';
+    $("#batchPlanSummary").textContent = "本地服务未启动，暂时无法读取批量创建计划。";
+  }
   if ($("#materialRows")) {
     $("#materialRows").innerHTML = '<tr><td colspan="9">请先启动 GeneratorService。</td></tr>';
     $("#materialSummary").textContent = "本地服务未启动，暂时无法读取材料管理数据。";
@@ -436,6 +457,7 @@ async function retryServiceStatus() {
   await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
   await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
   await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
+  await loadBatchPlans().catch((error) => showResult("#batchPlanResult", error));
   await loadMaterials().catch((error) => showResult("#materialResult", error));
   await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
   await loadSettings().catch((error) => showResult("#settingsResult", error));
@@ -458,6 +480,12 @@ function setGenerateDisabled(disabled) {
   if ($("#resetMaterialForm")) $("#resetMaterialForm").disabled = disabled;
   if ($("#openMaterialLedgerDialog")) $("#openMaterialLedgerDialog").disabled = disabled;
   if ($("#exportMaterialLedger")) $("#exportMaterialLedger").disabled = disabled;
+  if ($("#refreshBatchPlans")) $("#refreshBatchPlans").disabled = disabled;
+  if ($("#batchPlanAddRow")) $("#batchPlanAddRow").disabled = disabled;
+  if ($("#batchPlanDeleteRows")) $("#batchPlanDeleteRows").disabled = disabled;
+  if ($("#batchPlanSave")) $("#batchPlanSave").disabled = disabled;
+  if ($("#batchPlanPreview")) $("#batchPlanPreview").disabled = disabled;
+  if ($("#batchPlanGenerate")) $("#batchPlanGenerate").disabled = disabled;
   updateMaterialActionState();
   updateTemplateToolbarState(disabled);
 }
@@ -3388,6 +3416,354 @@ async function runEnvironmentCheck() {
   }
 }
 
+function getBatchPlanColumns() {
+  return [
+    ...batchPlanBaseColumns,
+    ...batchDeviceFields.map((field) => ({
+      key: `device:${field.key}`,
+      label: field.displayName || field.key,
+      type: "number",
+      width: 110
+    }))
+  ];
+}
+
+function createEmptyBatchPlanRow(templateNode = null) {
+  return {
+    id: "",
+    moduleId: templateNode?.moduleId || "",
+    templateItemId: templateNode?.templateItemId || 0,
+    templateName: templateNode?.name || "",
+    partName: "",
+    capacity: "",
+    quantityUnit: "",
+    constructionDate: "",
+    remark: "",
+    deviceQuantities: {},
+    status: "planned",
+    errorMessage: "",
+    _selected: false,
+    _dirty: true
+  };
+}
+
+function flattenTemplateOptions(nodes = templateTreeNodes) {
+  const items = [];
+  const visit = (node) => {
+    if (!node) return;
+    if (node.nodeType === "template" && node.moduleId && node.templateItemId) {
+      items.push({
+        id: `${node.moduleId}:${node.templateItemId}`,
+        moduleId: node.moduleId,
+        templateItemId: node.templateItemId,
+        name: node.name
+      });
+    }
+    for (const child of node.children || []) visit(child);
+  };
+  for (const node of nodes || []) visit(node);
+  return items;
+}
+
+async function loadBatchPlans() {
+  if (!serviceAvailable) {
+    return;
+  }
+
+  $("#batchPlanSummary").textContent = "正在读取批量创建计划...";
+  await loadBatchDeviceFields();
+  const result = await api(`/api/batch-plans?projectId=${encodeURIComponent(activeProjectId)}`);
+  batchPlans = result.plans || [];
+  currentBatchPlan = batchPlans[0] || null;
+  if (currentBatchPlan) {
+    $("#batchPlanName").value = currentBatchPlan.name || "";
+    $("#batchPlanRemark").value = currentBatchPlan.remark || "";
+    batchPlanRows = (currentBatchPlan.items || []).map(batchPlanItemToRow);
+  } else {
+    $("#batchPlanName").value = `检验批划分计划-${new Date().toISOString().slice(0, 10)}`;
+    $("#batchPlanRemark").value = "";
+    batchPlanRows = [createEmptyBatchPlanRow()];
+  }
+  currentBatchPreview = null;
+  renderBatchPlanTable();
+  renderBatchPlanPreview(null);
+  $("#batchPlanSummary").textContent = currentBatchPlan
+    ? `已加载计划：${currentBatchPlan.name}，共 ${batchPlanRows.length} 行。`
+    : "当前工程暂无批量计划，已创建一张空白划分表。";
+  showResult("#batchPlanResult", result);
+}
+
+async function loadBatchDeviceFields(moduleId = "", templateItemId = 0) {
+  const result = await api(`/api/device-fields?moduleId=${encodeURIComponent(moduleId)}&templateItemId=${encodeURIComponent(templateItemId)}`);
+  batchDeviceFields = result.fields || [];
+  return batchDeviceFields;
+}
+
+function batchPlanItemToRow(item) {
+  return {
+    id: item.id || "",
+    moduleId: item.moduleId || "",
+    templateItemId: item.templateItemId || 0,
+    templateName: item.templateName || "",
+    partName: item.partName || "",
+    capacity: item.capacity || "",
+    quantityUnit: item.quantityUnit || "",
+    constructionDate: item.constructionDate || "",
+    remark: item.remark || "",
+    deviceQuantities: { ...(item.deviceQuantities || {}) },
+    generatedDocumentId: item.generatedDocumentId || "",
+    status: item.status || "planned",
+    errorMessage: item.errorMessage || "",
+    _selected: false,
+    _dirty: false
+  };
+}
+
+function renderBatchPlanTable() {
+  const head = $("#batchPlanHead");
+  const body = $("#batchPlanBody");
+  if (!head || !body) {
+    return;
+  }
+
+  const columns = getBatchPlanColumns();
+  head.innerHTML = `
+    <tr>
+      <th class="batchPlanSelectCell">选择</th>
+      ${columns.map((column) => `<th style="width:${column.width || 120}px">${escapeHtml(column.label)}${column.required ? '<span class="requiredMark">*</span>' : ""}</th>`).join("")}
+      <th>状态</th>
+      <th>错误</th>
+    </tr>`;
+
+  if (!batchPlanRows.length) {
+    body.innerHTML = `<tr><td colspan="${columns.length + 3}" class="emptyText">暂无划分行。</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = "";
+  for (let rowIndex = 0; rowIndex < batchPlanRows.length; rowIndex++) {
+    const row = batchPlanRows[rowIndex];
+    const tr = document.createElement("tr");
+    tr.className = row._dirty ? "ledgerDirtyRow" : "";
+    tr.innerHTML = `
+      <td class="batchPlanSelectCell"><input type="checkbox" data-batch-row-check="${rowIndex}" ${row._selected ? "checked" : ""}></td>
+      ${columns.map((column) => renderBatchPlanCell(row, rowIndex, column)).join("")}
+      <td>${escapeHtml(row.status || "planned")}</td>
+      <td>${escapeHtml(row.errorMessage || "")}</td>`;
+    body.appendChild(tr);
+  }
+}
+
+function renderBatchPlanCell(row, rowIndex, column) {
+  if (column.type === "template") {
+    const options = flattenTemplateOptions();
+    const selectedValue = row.moduleId && row.templateItemId ? `${row.moduleId}:${row.templateItemId}` : "";
+    return `
+      <td>
+        <select data-batch-row="${rowIndex}" data-batch-field="template">
+          <option value="">请选择模板</option>
+          ${options.map((option) => `<option value="${escapeHtml(option.id)}" ${option.id === selectedValue ? "selected" : ""}>${escapeHtml(option.name)}</option>`).join("")}
+        </select>
+      </td>`;
+  }
+
+  if (column.key.startsWith("device:")) {
+    const deviceKey = column.key.slice("device:".length);
+    const value = row.deviceQuantities?.[deviceKey] ?? "";
+    return `<td contenteditable="true" data-batch-row="${rowIndex}" data-batch-field="${escapeHtml(column.key)}">${escapeHtml(value)}</td>`;
+  }
+
+  return `<td contenteditable="true" data-batch-row="${rowIndex}" data-batch-field="${escapeHtml(column.key)}">${escapeHtml(row[column.key] || "")}</td>`;
+}
+
+function updateBatchPlanCell(rowIndex, field, value) {
+  const row = batchPlanRows[rowIndex];
+  if (!row) {
+    return;
+  }
+
+  if (field === "template") {
+    const option = flattenTemplateOptions().find((item) => item.id === value);
+    row.moduleId = option?.moduleId || "";
+    row.templateItemId = option?.templateItemId || 0;
+    row.templateName = option?.name || "";
+  } else if (field.startsWith("device:")) {
+    const key = field.slice("device:".length);
+    const numberValue = parseNumber(value);
+    if (numberValue === null) {
+      delete row.deviceQuantities[key];
+    } else {
+      row.deviceQuantities[key] = numberValue;
+    }
+  } else {
+    row[field] = value.trim();
+  }
+
+  row._dirty = true;
+}
+
+function parseNumber(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return null;
+  }
+  const numberValue = Number(text.replace(",", ""));
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function addBatchPlanRow(useSelectedTemplate = false) {
+  const templateNode = useSelectedTemplate && selectedTemplateNode?.nodeType === "template"
+    ? selectedTemplateNode
+    : null;
+  batchPlanRows.push(createEmptyBatchPlanRow(templateNode));
+  renderBatchPlanTable();
+}
+
+function deleteSelectedBatchPlanRows() {
+  batchPlanRows = batchPlanRows.filter((row) => !row._selected);
+  if (!batchPlanRows.length) {
+    batchPlanRows.push(createEmptyBatchPlanRow());
+  }
+  renderBatchPlanTable();
+}
+
+function applyBatchPlanBulk(field, value) {
+  if (!value) {
+    return;
+  }
+  for (const row of batchPlanRows) {
+    row[field] = value;
+    row._dirty = true;
+  }
+  renderBatchPlanTable();
+}
+
+function buildBatchPlanSaveRequest() {
+  return {
+    projectId: activeProjectId,
+    name: $("#batchPlanName").value.trim() || "检验批划分计划",
+    remark: $("#batchPlanRemark").value.trim(),
+    items: batchPlanRows.map((row) => ({
+      id: row.id || null,
+      moduleId: row.moduleId || "",
+      templateItemId: Number(row.templateItemId || 0),
+      templateName: row.templateName || "",
+      partName: row.partName || "",
+      capacity: row.capacity || "",
+      quantityUnit: row.quantityUnit || "",
+      constructionDate: row.constructionDate || "",
+      deviceQuantities: row.deviceQuantities || {},
+      status: row.status || "planned",
+      errorMessage: row.errorMessage || ""
+    }))
+  };
+}
+
+async function saveBatchPlan() {
+  const payload = buildBatchPlanSaveRequest();
+  const isUpdate = Boolean(currentBatchPlan?.id);
+  const result = await api(isUpdate ? `/api/batch-plans/${encodeURIComponent(currentBatchPlan.id)}` : "/api/batch-plans", {
+    method: isUpdate ? "PUT" : "POST",
+    body: JSON.stringify(payload)
+  });
+  currentBatchPlan = result.plan;
+  batchPlanRows = (currentBatchPlan.items || []).map(batchPlanItemToRow);
+  renderBatchPlanTable();
+  $("#batchPlanSummary").textContent = `计划已保存：${currentBatchPlan.name}，共 ${batchPlanRows.length} 行。`;
+  showResult("#batchPlanResult", result);
+  return currentBatchPlan;
+}
+
+async function previewBatchPlan() {
+  const plan = await saveBatchPlan();
+  const result = await api(`/api/batch-plans/${encodeURIComponent(plan.id)}/preview`, { method: "POST" });
+  currentBatchPreview = result;
+  renderBatchPlanPreview(result);
+  $("#batchPlanSummary").textContent = `预览完成：可生成 ${result.generatableCount} 张，阻止 ${result.blockedCount} 张。`;
+  showResult("#batchPlanResult", result);
+  return result;
+}
+
+function renderBatchPlanPreview(result) {
+  const panel = $("#batchPlanPreviewPanel");
+  if (!panel) {
+    return;
+  }
+
+  if (!result) {
+    panel.innerHTML = '<p class="emptyText">保存计划后点击预览，可查看将生成的资料、映射命中和警告。</p>';
+    return;
+  }
+
+  panel.innerHTML = `
+    <div class="batchPlanPreviewHeader">
+      <strong>将生成 ${result.generatableCount} 张资料</strong>
+      <span>阻止 ${result.blockedCount} 行｜总计 ${result.totalCount} 行</span>
+    </div>
+    <div class="tableScroller">
+      <table class="summaryTable">
+        <thead>
+          <tr><th>行</th><th>资料名称</th><th>部位</th><th>容量</th><th>施工日期</th><th>映射</th><th>提示</th></tr>
+        </thead>
+        <tbody>
+          ${(result.rows || []).map((row) => `
+            <tr>
+              <td>${row.rowIndex}</td>
+              <td>${escapeHtml(row.outputName)}</td>
+              <td>${escapeHtml(row.partName)}</td>
+              <td>${escapeHtml([row.capacity, row.quantityUnit].filter(Boolean).join(""))}</td>
+              <td>${escapeHtml(row.constructionDate || "")}</td>
+              <td>${escapeHtml((row.mappings || []).map((item) => `${item.deviceDisplayName}:${item.inspectionItemName}`).join("；") || "无")}</td>
+              <td>${escapeHtml([...(row.errors || []), ...(row.warnings || [])].join("；"))}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+async function generateBatchPlan() {
+  const preview = await previewBatchPlan();
+  if (!preview.generatableCount) {
+    showResult("#batchPlanResult", "没有可生成的划分行，请先处理预览错误。");
+    return;
+  }
+
+  const result = await api(`/api/batch-plans/${encodeURIComponent(currentBatchPlan.id)}/generate`, {
+    method: "POST",
+    body: JSON.stringify({ fields: buildGeneratedFormFields({ formName: "" }) })
+  });
+  showResult("#batchPlanResult", result);
+  $("#batchPlanSummary").textContent = result.message || "批量创建完成。";
+  await loadTemplateLibraryTree();
+  await loadBatchPlans();
+}
+
+function pasteIntoBatchPlan(startRowIndex, startField, text) {
+  const rows = parseLedgerPasteText(text);
+  const columns = getBatchPlanColumns().filter((column) => column.type !== "template");
+  const startColumnIndex = columns.findIndex((column) => column.key === startField);
+  if (startColumnIndex < 0 || !rows.length) {
+    return;
+  }
+
+  for (let rowOffset = 0; rowOffset < rows.length; rowOffset++) {
+    const targetRowIndex = startRowIndex + rowOffset;
+    while (targetRowIndex >= batchPlanRows.length) {
+      batchPlanRows.push(createEmptyBatchPlanRow());
+    }
+
+    for (let columnOffset = 0; columnOffset < rows[rowOffset].length; columnOffset++) {
+      const column = columns[startColumnIndex + columnOffset];
+      if (!column) {
+        continue;
+      }
+      updateBatchPlanCell(targetRowIndex, column.key, rows[rowOffset][columnOffset]);
+    }
+  }
+
+  renderBatchPlanTable();
+}
+
 async function generateCurrent() {
   showResult("#generateResult", "正在生成...");
   try {
@@ -3530,7 +3906,8 @@ function activateTab(tabId) {
 
 function normalizeTabId(tabId) {
   const legacyTabs = {
-    batch: "generation",
+    batch: "batchPlan",
+    "batch-plan": "batchPlan",
     ai: "generation"
   };
   return legacyTabs[tabId] || tabId;
@@ -3648,6 +4025,15 @@ async function boot() {
   $("#openTemplateFolder").addEventListener("click", openTemplateFolder);
   $("#refreshSummary").addEventListener("click", loadSummaryTree);
   $("#generateSummary").addEventListener("click", generateSummary);
+  $("#refreshBatchPlans").addEventListener("click", () => loadBatchPlans().catch((error) => showResult("#batchPlanResult", error)));
+  $("#batchPlanAddRow").addEventListener("click", () => addBatchPlanRow(false));
+  $("#batchPlanUseSelectedTemplate").addEventListener("click", () => addBatchPlanRow(true));
+  $("#batchPlanDeleteRows").addEventListener("click", deleteSelectedBatchPlanRows);
+  $("#batchPlanSave").addEventListener("click", () => saveBatchPlan().catch((error) => showResult("#batchPlanResult", error)));
+  $("#batchPlanPreview").addEventListener("click", () => previewBatchPlan().catch((error) => showResult("#batchPlanResult", error)));
+  $("#batchPlanGenerate").addEventListener("click", () => generateBatchPlan().catch((error) => showResult("#batchPlanResult", error)));
+  $("#batchPlanApplyDate").addEventListener("click", () => applyBatchPlanBulk("constructionDate", $("#batchPlanBulkDate").value));
+  $("#batchPlanApplyUnit").addEventListener("click", () => applyBatchPlanBulk("quantityUnit", $("#batchPlanBulkUnit").value));
   $("#refreshMaterials").addEventListener("click", loadMaterials);
   $("#resetMaterialForm").addEventListener("click", resetMaterialForm);
   $("#openMaterialLedgerDialog").addEventListener("click", async () => {
@@ -3719,6 +4105,44 @@ async function boot() {
     if (event.target.closest("[data-ledger-filter-apply]")) {
       applyMaterialLedgerActiveFilter();
     }
+  });
+  $("#batchPlanBody").addEventListener("input", (event) => {
+    const cell = event.target.closest("[data-batch-field]");
+    if (!cell || cell.tagName === "SELECT") {
+      return;
+    }
+
+    updateBatchPlanCell(Number(cell.dataset.batchRow), cell.dataset.batchField, cell.textContent || "");
+  });
+  $("#batchPlanBody").addEventListener("change", (event) => {
+    const selector = event.target.closest("[data-batch-field='template']");
+    if (selector) {
+      updateBatchPlanCell(Number(selector.dataset.batchRow), "template", selector.value);
+      renderBatchPlanTable();
+      return;
+    }
+
+    const checkbox = event.target.closest("[data-batch-row-check]");
+    if (checkbox) {
+      const row = batchPlanRows[Number(checkbox.dataset.batchRowCheck)];
+      if (row) {
+        row._selected = checkbox.checked;
+      }
+    }
+  });
+  $("#batchPlanBody").addEventListener("paste", (event) => {
+    const cell = event.target.closest("[data-batch-field]");
+    if (!cell || cell.dataset.batchField === "template") {
+      return;
+    }
+
+    const text = event.clipboardData?.getData("text/plain") || "";
+    if (!text.includes("\t") && !text.includes("\n")) {
+      return;
+    }
+
+    event.preventDefault();
+    pasteIntoBatchPlan(Number(cell.dataset.batchRow), cell.dataset.batchField, text);
   });
   $("#materialLedgerBody").addEventListener("input", (event) => {
     if (event.target.matches("[data-ledger-field]")) {
@@ -3797,6 +4221,7 @@ async function boot() {
       await rescanModules();
       await loadTemplateLibraryTree();
       await loadSummaryTree();
+      await loadBatchPlans();
     } catch (error) {
       $("#moduleSummary").textContent = "模块刷新失败。";
       showResult("#moduleResult", error);
@@ -3829,6 +4254,7 @@ async function boot() {
     await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
     await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
     await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
+    await loadBatchPlans().catch((error) => showResult("#batchPlanResult", error));
     await loadMaterials().catch((error) => showResult("#materialResult", error));
     await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
     await loadSettings().catch((error) => showResult("#settingsResult", error));

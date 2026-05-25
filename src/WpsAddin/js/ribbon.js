@@ -20,6 +20,9 @@ function OnAction(control) {
     case "btnGenerateCurrent":
       openEngineeringDocsPane("generation");
       break;
+    case "btnBatchPlan":
+      openEngineeringDocsPane("batchPlan");
+      break;
     case "btnTemplates":
       openEngineeringDocsPane("templates");
       break;

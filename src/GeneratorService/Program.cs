@@ -65,12 +65,14 @@ builder.Services.AddSingleton<MaterialAttachmentService>();
 builder.Services.AddSingleton<MaterialApprovalService>();
 builder.Services.AddSingleton<MaterialLedgerService>();
 builder.Services.AddSingleton<TemplateTreeRepository>();
+builder.Services.AddSingleton<BatchPlanRepository>();
 builder.Services.AddSingleton<TemplateTreeService>();
 builder.Services.AddSingleton<TemplateService>();
 builder.Services.AddSingleton<RuleService>();
 builder.Services.AddSingleton<RowHeightBalanceService>();
 builder.Services.AddSingleton<GeneratedFormService>();
 builder.Services.AddSingleton<SummaryService>();
+builder.Services.AddSingleton<BatchPlanService>();
 builder.Services.AddSingleton<SpreadsheetOpenService>();
 builder.Services.AddSingleton<AiTextService>();
 builder.Services.AddSingleton<LicenseService>();
@@ -88,11 +90,13 @@ var moduleManager = app.Services.GetRequiredService<ModuleManager>();
 var templateTreeRepository = app.Services.GetRequiredService<TemplateTreeRepository>();
 var projectManager = app.Services.GetRequiredService<ProjectManager>();
 var materialRepository = app.Services.GetRequiredService<MaterialRepository>();
+var batchPlanRepository = app.Services.GetRequiredService<BatchPlanRepository>();
 knowledgeRepository.EnsureCreated();
 templateCatalog.EnsureSampleTemplates();
 moduleManager.Scan();
 templateTreeRepository.EnsureCreated();
 materialRepository.EnsureCreated();
+batchPlanRepository.EnsureCreated();
 projectManager.GetCurrentProject();
 
 Log.Information("工程资料生成服务已启动。Root={RootPath}, Port={Port}", rootPath.FullName, config.Service.Port);
@@ -774,6 +778,140 @@ app.MapPost("/api/summary/generate", (GenerateSummaryRequest request, SummarySer
     try
     {
         return Results.Ok(service.Generate(request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapGet("/api/batch-plans", (string? projectId, BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.List(projectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/batch-plans", (BatchPlanSaveRequest request, BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Create(request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPut("/api/batch-plans/{id}", (string id, BatchPlanSaveRequest request, BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Update(id, request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/batch-plans/{id}/preview", (string id, BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Preview(id));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/batch-plans/{id}/generate", async (string id, HttpRequest httpRequest, BatchPlanService service) =>
+{
+    try
+    {
+        BatchPlanGenerateRequest? request = null;
+        if (httpRequest.ContentLength is > 0)
+        {
+            request = await httpRequest.ReadFromJsonAsync<BatchPlanGenerateRequest>();
+        }
+
+        return Results.Ok(service.Generate(id, request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapGet("/api/device-fields", (string? moduleId, long? templateItemId, BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetDeviceFields(moduleId, templateItemId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapGet("/api/device-mappings", (string? moduleId, long? templateItemId, BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetDeviceMappings(moduleId, templateItemId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPut("/api/device-mappings", (DeviceMappingsSaveRequest request, BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.SaveDeviceMappings(request));
     }
     catch (Exception ex)
     {

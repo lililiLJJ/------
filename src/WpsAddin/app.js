@@ -2396,7 +2396,21 @@ async function openMaterialLedgerDesktopWindow(mode = "edit") {
     return;
   }
 
-  const url = `${window.location.href.split("#")[0]}#${materialLedgerWindowHash}`;
+  const ledgerUrl = new URL(window.location.href);
+  ledgerUrl.hash = "";
+  ledgerUrl.searchParams.set("view", materialLedgerWindowHash);
+  const url = ledgerUrl.toString();
+  try {
+    await api("/api/files/open-url", {
+      method: "POST",
+      body: JSON.stringify({ url })
+    });
+    showResult("#materialResult", "已打开独立材料台账窗口。");
+    return;
+  } catch (error) {
+    console.warn("Failed to open material ledger in system window.", error);
+  }
+
   let popup = null;
   try {
     popup = window.open(url, "material-ledger-window", "popup=yes,width=1380,height=860,resizable=yes,scrollbars=yes");
@@ -3524,6 +3538,10 @@ function normalizeTabId(tabId) {
 }
 
 function activateTabFromHash() {
+  if (isMaterialLedgerStandaloneWindow()) {
+    return;
+  }
+
   const requestedTab = window.location.hash.replace("#", "") || "panel";
   if (requestedTab === materialLedgerWindowHash) {
     activateTab("materials");
@@ -3534,7 +3552,9 @@ function activateTabFromHash() {
 }
 
 function isMaterialLedgerStandaloneWindow() {
-  return window.location.hash.replace("#", "") === materialLedgerWindowHash;
+  const params = new URLSearchParams(window.location.search);
+  return params.get("view") === materialLedgerWindowHash
+    || window.location.hash.replace("#", "") === materialLedgerWindowHash;
 }
 
 async function bootMaterialLedgerStandaloneWindow() {

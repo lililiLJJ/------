@@ -447,6 +447,113 @@ textarea {
   word-break: break-all;
 }
 
+.summaryWorkbench {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+  min-height: 520px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.summaryTreePane {
+  min-width: 0;
+  border-right: 1px solid var(--line);
+}
+
+.summaryTreeView,
+.summaryPreview {
+  height: 100%;
+  overflow: auto;
+  padding: 12px;
+}
+
+.summaryTreeRoot,
+.summaryTreeChildren,
+.summaryTreeBranch {
+  display: grid;
+  gap: 6px;
+}
+
+.summaryTreeChildren {
+  margin-left: 14px;
+  padding-left: 10px;
+  border-left: 1px dashed var(--line);
+}
+
+.summaryTreeNode {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 8px;
+  text-align: left;
+  white-space: normal;
+}
+
+.summaryTreeNode small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.summaryTreeNode.Division {
+  background: #f4f8ff;
+  border-color: #bfd0f2;
+}
+
+.summaryTreeNode.SubDivision {
+  background: #f3fbf8;
+  border-color: #b8d8cf;
+}
+
+.summaryTreeNode.SubItem {
+  background: #fbf9ff;
+  border-color: #d6c7f6;
+}
+
+.summaryTreeNode.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgb(23 107 93 / 14%);
+}
+
+.summaryEmpty,
+.summaryPreviewPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.summaryPreviewHeader h3 {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.summaryTable {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.summaryTable th,
+.summaryTable td {
+  padding: 8px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.summaryTable th {
+  background: #f7f9fb;
+}
+
+.summaryWarnings {
+  margin: 0;
+  padding: 10px 10px 10px 28px;
+  border: 1px solid #ead7a2;
+  border-radius: 6px;
+  background: #fff9e8;
+  color: #745200;
+}
+
 .templateInfoGrid {
   display: grid;
   grid-template-columns: 84px minmax(0, 1fr);
@@ -674,6 +781,27 @@ textarea {
 .batchTable th,
 .batchTable td,
 .knowledgeTable th,
+.knowledgeTable td {
+  border: 1px solid var(--line);
+  padding: 7px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.batchTable th,
+.knowledgeTable th {
+  color: var(--muted);
+  font-weight: 700;
+  background: #eef3f8;
+}
+
+.knowledgeTable {
+  min-width: 980px;
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
 .materialTable {
   min-width: 1120px;
   width: 100%;
@@ -1040,27 +1168,6 @@ textarea {
 
 .ledgerStandaloneMode .materialLedgerDialog {
   background: #e7ebef;
-}
-
-.knowledgeTable td {
-  border: 1px solid var(--line);
-  padding: 7px;
-  text-align: left;
-  vertical-align: top;
-}
-
-.batchTable th,
-.knowledgeTable th {
-  color: var(--muted);
-  font-weight: 700;
-  background: #eef3f8;
-}
-
-.knowledgeTable {
-  min-width: 980px;
-  width: 100%;
-  border-collapse: collapse;
-  background: #fff;
 }
 
 .knowledgeTable td {

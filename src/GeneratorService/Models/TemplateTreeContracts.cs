@@ -66,7 +66,86 @@ public sealed record ProjectDocumentInfo(
     long TemplateItemId,
     string DocumentName,
     string PartName,
+    string? Capacity,
     string FilePath,
+    string Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public sealed record SummaryTreeResult(
+    bool Success,
+    string ProjectId,
+    string ProjectName,
+    IReadOnlyList<SummaryTreeNodeDto> Nodes,
+    IReadOnlyList<string> Warnings);
+
+public sealed record SummaryTreeNodeDto(
+    string Id,
+    string ProjectId,
+    string ModuleId,
+    string CategoryId,
+    string SummaryType,
+    string Name,
+    string DivisionName,
+    string SubDivisionName,
+    string SubItemName,
+    int SourceDocumentCount,
+    int InspectionBatchCount,
+    int SubItemCount,
+    int SubDivisionCount,
+    IReadOnlyList<SummaryTreeNodeDto> Children);
+
+public sealed record SummaryPreviewResult(
+    bool Success,
+    string ProjectId,
+    string SummaryType,
+    string CategoryId,
+    string Title,
+    string DivisionName,
+    string SubDivisionName,
+    string SubItemName,
+    IReadOnlyList<SummaryPreviewRow> Rows,
+    SummaryPreviewTotals Totals,
+    IReadOnlyList<string> Warnings);
+
+public sealed record SummaryPreviewRow(
+    int Sequence,
+    string Name,
+    string Capacity,
+    string PartName,
+    int Count,
+    string ConstructorResult,
+    string SupervisorConclusion);
+
+public sealed record SummaryPreviewTotals(
+    int SourceDocumentCount,
+    int InspectionBatchCount,
+    int SubItemCount,
+    int SubDivisionCount);
+
+public sealed record GenerateSummaryRequest(
+    string ProjectId,
+    string Type,
+    string CategoryId);
+
+public sealed record GenerateSummaryResult(
+    bool Success,
+    SummaryDocumentInfo? SummaryDocument,
+    string FilePath,
+    string Message,
+    IReadOnlyList<string> Warnings);
+
+public sealed record SummaryDocumentInfo(
+    string Id,
+    string ProjectId,
+    string ModuleId,
+    string SummaryType,
+    string DivisionName,
+    string SubDivisionName,
+    string SubItemName,
+    string DocumentName,
+    string FilePath,
+    int SourceDocumentCount,
     string Status,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);

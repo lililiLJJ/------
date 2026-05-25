@@ -70,6 +70,7 @@ builder.Services.AddSingleton<TemplateService>();
 builder.Services.AddSingleton<RuleService>();
 builder.Services.AddSingleton<RowHeightBalanceService>();
 builder.Services.AddSingleton<GeneratedFormService>();
+builder.Services.AddSingleton<SummaryService>();
 builder.Services.AddSingleton<SpreadsheetOpenService>();
 builder.Services.AddSingleton<AiTextService>();
 builder.Services.AddSingleton<LicenseService>();
@@ -413,6 +414,7 @@ app.MapDelete("/api/materials/{id}", (string id, string? projectId, MaterialServ
         });
     }
 });
+
 app.MapPost("/api/materials/{id}/attachments", async (
     string id,
     HttpRequest request,
@@ -488,6 +490,7 @@ app.MapPost("/api/materials/approval/generate", (
         });
     }
 });
+
 app.MapGet("/api/materials/ledger", (
     string? projectId,
     string? materialName,
@@ -578,6 +581,51 @@ app.MapPost("/api/files/open", (OpenSpreadsheetRequest request, SpreadsheetOpenS
         });
     }
 });
+
+app.MapPost("/api/files/open-url", (OpenUrlRequest request) =>
+{
+    try
+    {
+        var url = request.Url?.Trim();
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new InvalidOperationException("打开地址不能为空。");
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            throw new InvalidOperationException("打开地址格式无效。");
+        }
+
+        var isLoopbackHttp = (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) && uri.IsLoopback;
+        if (!uri.IsFile && !isLoopbackHttp)
+        {
+            throw new InvalidOperationException("只允许打开本地文件或本机服务地址。");
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = url,
+            UseShellExecute = true
+        });
+
+        return Results.Ok(new
+        {
+            success = true,
+            url,
+            message = "已打开独立窗口。"
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
 app.MapGet("/api/template-library/tree", (string? projectId, TemplateTreeService service) =>
 {
     return Results.Ok(service.GetTree(projectId));
@@ -678,6 +726,54 @@ app.MapDelete("/api/generated-forms/{nodeId}", (string nodeId, GeneratedFormServ
     try
     {
         return Results.Ok(service.DeleteGeneratedForm(nodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapGet("/api/summary/tree", (string? projectId, SummaryService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetTree(projectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapGet("/api/summary/preview", (string? projectId, string type, string categoryId, SummaryService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetPreview(projectId, type, categoryId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/summary/generate", (GenerateSummaryRequest request, SummaryService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Generate(request));
     }
     catch (Exception ex)
     {
@@ -913,3 +1009,5 @@ static int CountTemplateNodes(TemplateLibraryNode node)
 }
 
 public sealed record OpenSpreadsheetRequest(string FilePath);
+
+public sealed record OpenUrlRequest(string Url);

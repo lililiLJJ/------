@@ -9,6 +9,7 @@
         </group>
         <group id="engineeringDocsManageGroup" label="系统">
           <button id="btnTemplates" label="模板管理" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
+          <button id="btnSummary" label="分部分项汇总" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnMaterials" label="材料管理" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnModules" label="模块管理" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>
           <button id="btnKnowledge" label="知识库管理" onAction="OnAction" getEnabled="OnGetEnabled" visible="true" size="large"/>

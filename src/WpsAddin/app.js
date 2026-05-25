@@ -6,6 +6,9 @@ let templateTreeNodes = [];
 let selectedTemplateNode = null;
 let currentGeneratedForm = null;
 let lastRowHeightFitAdjustment = null;
+let summaryTreeNodes = [];
+let selectedSummaryNode = null;
+let currentSummaryPreview = null;
 let materialItems = [];
 let selectedMaterial = null;
 let materialLedgerMode = "edit";
@@ -255,6 +258,7 @@ async function createProject() {
     renderCurrentProject(result.project);
     showResult("#projectManagerResult", result);
     await loadTemplateLibraryTree();
+    await loadSummaryTree();
     await loadMaterials();
   } catch (error) {
     showResult("#projectManagerResult", error);
@@ -277,6 +281,7 @@ async function saveProject() {
     renderCurrentProject(result.project);
     showResult("#projectManagerResult", result);
     await loadTemplateLibraryTree();
+    await loadSummaryTree();
     await loadMaterials();
   } catch (error) {
     showResult("#projectManagerResult", error);
@@ -303,6 +308,7 @@ async function openProject() {
     renderCurrentProject(result.project);
     showResult("#projectManagerResult", result);
     await loadTemplateLibraryTree();
+    await loadSummaryTree();
     await loadMaterials();
   } catch (error) {
     const message = error?.message || "";
@@ -395,6 +401,9 @@ function setServiceOffline() {
   renderTemplateList();
   $("#templateSummary").textContent = "本地服务未启动，暂时无法读取工程资料规范层级树。";
   $("#templateTreeView").innerHTML = '<p class="emptyText">请先启动 GeneratorService。</p>';
+  $("#summaryTreeView").innerHTML = '<p class="emptyText">请先启动 GeneratorService。</p>';
+  $("#summaryPreview").innerHTML = '<p class="emptyText">请先启动 GeneratorService。</p>';
+  $("#summarySummary").textContent = "本地服务未启动，暂时无法读取分部分项汇总。";
   if ($("#materialRows")) {
     $("#materialRows").innerHTML = '<tr><td colspan="9">请先启动 GeneratorService。</td></tr>';
     $("#materialSummary").textContent = "本地服务未启动，暂时无法读取材料管理数据。";
@@ -426,6 +435,7 @@ async function retryServiceStatus() {
   await loadModules().catch((error) => showResult("#templateResult", error));
   await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
   await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+  await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
   await loadMaterials().catch((error) => showResult("#materialResult", error));
   await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
   await loadSettings().catch((error) => showResult("#settingsResult", error));
@@ -531,7 +541,6 @@ async function refreshTemplateManagement() {
     await rescanModules();
     await loadTemplates();
     await loadTemplateLibraryTree();
-    await loadMaterials();
   } catch (error) {
     $("#templateSummary").textContent = "模板读取失败。";
     showResult("#templateResult", error);
@@ -947,6 +956,200 @@ function updateTemplateToolbarState(forceDisabled = false) {
   $("#deleteGeneratedForm").disabled = !canOperateForm;
 }
 
+async function loadSummaryTree() {
+  if (!serviceAvailable) {
+    return;
+  }
+
+  selectedSummaryNode = null;
+  currentSummaryPreview = null;
+  $("#summarySummary").textContent = "正在读取分部分项汇总...";
+  const result = await api(`/api/summary/tree?projectId=${encodeURIComponent(activeProjectId)}`);
+  summaryTreeNodes = result.nodes || [];
+  renderSummaryTree();
+  renderSummaryPlaceholder(result.warnings || []);
+  $("#summarySummary").textContent = summaryTreeNodes.length === 0
+    ? "当前工程还没有可汇总的已创建检验批资料。"
+    : `已读取 ${summaryTreeNodes.length} 个分部汇总节点。`;
+  showResult("#summaryResult", result);
+  return result;
+}
+
+function renderSummaryTree() {
+  const tree = $("#summaryTreeView");
+  if (!tree) {
+    return;
+  }
+
+  tree.innerHTML = "";
+  if (!summaryTreeNodes.length) {
+    tree.innerHTML = '<p class="emptyText">当前工程暂无可汇总资料。</p>';
+    return;
+  }
+
+  const root = document.createElement("div");
+  root.className = "summaryTreeRoot";
+  for (const node of summaryTreeNodes) {
+    root.appendChild(createSummaryTreeNode(node));
+  }
+  tree.appendChild(root);
+}
+
+function createSummaryTreeNode(node) {
+  const branch = document.createElement("div");
+  branch.className = "summaryTreeBranch";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `summaryTreeNode ${node.summaryType}`;
+  button.classList.toggle("selected", selectedSummaryNode?.id === node.id);
+
+  const title = document.createElement("span");
+  title.textContent = node.name;
+  const meta = document.createElement("small");
+  meta.textContent = buildSummaryNodeMeta(node);
+  button.append(title, meta);
+  button.addEventListener("click", () => selectSummaryNode(node));
+  branch.appendChild(button);
+
+  if (node.children?.length) {
+    const children = document.createElement("div");
+    children.className = "summaryTreeChildren";
+    for (const child of node.children) {
+      children.appendChild(createSummaryTreeNode(child));
+    }
+    branch.appendChild(children);
+  }
+
+  return branch;
+}
+
+function buildSummaryNodeMeta(node) {
+  if (node.summaryType === "Division") {
+    return `${node.subDivisionCount} 个子分部｜${node.subItemCount} 个分项`;
+  }
+
+  if (node.summaryType === "SubDivision") {
+    return `${node.subItemCount} 个分项｜${node.inspectionBatchCount} 个检验批`;
+  }
+
+  return `${node.inspectionBatchCount} 个检验批`;
+}
+
+async function selectSummaryNode(node) {
+  selectedSummaryNode = node;
+  for (const item of $$(".summaryTreeNode")) {
+    item.classList.remove("selected");
+  }
+  renderSummaryTree();
+  $("#summaryPreview").innerHTML = '<p class="emptyText">正在生成预览...</p>';
+  $("#generateSummary").disabled = true;
+
+  try {
+    const query = new URLSearchParams({
+      projectId: activeProjectId,
+      type: node.summaryType,
+      categoryId: node.categoryId
+    });
+    const preview = await api(`/api/summary/preview?${query.toString()}`);
+    currentSummaryPreview = preview;
+    renderSummaryPreview(preview);
+    $("#generateSummary").disabled = (preview.rows || []).length === 0;
+    showResult("#summaryResult", preview);
+  } catch (error) {
+    currentSummaryPreview = null;
+    $("#summaryPreview").innerHTML = `<p class="emptyText">${escapeHtml(error.message || "汇总预览失败。")}</p>`;
+    showResult("#summaryResult", error);
+  }
+}
+
+function renderSummaryPlaceholder(warnings = []) {
+  const warningMarkup = warnings.length
+    ? `<ul class="summaryWarnings">${warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : "";
+  $("#summaryPreview").innerHTML = `
+    <div class="summaryEmpty">
+      <strong>请选择左侧分部、子分部或分项。</strong>
+      <p>系统只统计当前工程中已经创建且有效的检验批资料。</p>
+      ${warningMarkup}
+    </div>`;
+  $("#generateSummary").disabled = true;
+}
+
+function renderSummaryPreview(preview) {
+  const rows = preview.rows || [];
+  const columns = preview.summaryType === "SubItem"
+    ? ["序号", "检验批名称", "检验批容量", "检验批部位", "施工单位检查结果", "监理单位验收结论"]
+    : preview.summaryType === "SubDivision"
+      ? ["序号", "分项工程名称", "检验批数", "施工单位检查评定结果", "监理单位验收结论"]
+      : ["序号", "子分部工程名称", "分项数", "施工单位检查评定结果", "监理单位验收结论"];
+
+  const body = rows.map((row) => {
+    const values = preview.summaryType === "SubItem"
+      ? [row.sequence, row.name, row.capacity, row.partName, row.constructorResult, row.supervisorConclusion]
+      : [row.sequence, row.name, row.count, row.constructorResult, row.supervisorConclusion];
+    return `<tr>${values.map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`;
+  }).join("");
+
+  const warnings = (preview.warnings || []).length
+    ? `<ul class="summaryWarnings">${preview.warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : "";
+
+  $("#summaryPreview").innerHTML = `
+    <section class="summaryPreviewPanel">
+      <div class="summaryPreviewHeader">
+        <h3>${escapeHtml(preview.title)}</h3>
+        <p>检验批 ${preview.totals.inspectionBatchCount} 个｜分项 ${preview.totals.subItemCount} 个｜子分部 ${preview.totals.subDivisionCount} 个</p>
+      </div>
+      <div class="tableScroller">
+        <table class="summaryTable">
+          <thead><tr>${columns.map((column) => `<th>${column}</th>`).join("")}</tr></thead>
+          <tbody>${body || `<tr><td colspan="${columns.length}">暂无可汇总数据</td></tr>`}</tbody>
+        </table>
+      </div>
+      ${warnings}
+    </section>`;
+}
+
+async function generateSummary() {
+  if (!selectedSummaryNode || !currentSummaryPreview) {
+    showResult("#summaryResult", "请先选择一个汇总节点并确认预览。");
+    return;
+  }
+
+  $("#generateSummary").disabled = true;
+  showResult("#summaryResult", "正在生成汇总表...");
+  try {
+    const result = await api("/api/summary/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        projectId: activeProjectId,
+        type: selectedSummaryNode.summaryType,
+        categoryId: selectedSummaryNode.categoryId
+      })
+    });
+    showResult("#summaryResult", result);
+    if (result.filePath || result.summaryDocument?.filePath) {
+      openSummarySpreadsheet(result.filePath || result.summaryDocument.filePath);
+    }
+    await loadSummaryTree();
+  } catch (error) {
+    showResult("#summaryResult", error);
+  } finally {
+    $("#generateSummary").disabled = !currentSummaryPreview;
+  }
+}
+
+function openSummarySpreadsheet(filePath) {
+  try {
+    if (window.Application && window.Application.Workbooks && typeof window.Application.Workbooks.Open === "function") {
+      window.Application.Workbooks.Open(filePath);
+    }
+  } catch {
+    // 浏览器预览环境无法直接打开本地 WPS 文件，生成结果中会显示完整路径。
+  }
+}
+
 const rowHeightBalanceOptions = {
   topProtectedRows: 5,
   bottomProtectedRows: 6,
@@ -1039,6 +1242,7 @@ async function createGeneratedForm(event) {
     });
     closeGeneratedFormModal();
     await loadTemplateLibraryTree();
+    await loadSummaryTree();
     await openGeneratedForm(result.node);
   } catch (error) {
     showResult("#templateResult", error);
@@ -1889,10 +2093,19 @@ async function deleteGeneratedForm() {
     const result = await api(`/api/generated-forms/${encodeURIComponent(currentGeneratedForm.id)}`, { method: "DELETE" });
     showResult("#templateResult", result);
     await loadTemplateLibraryTree();
-    await loadMaterials();
+    await loadSummaryTree();
   } catch (error) {
     showResult("#templateResult", error);
   }
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function getMaterialFilters() {
@@ -3414,6 +3627,8 @@ async function boot() {
   $("#reloadTemplates").addEventListener("click", loadTemplates);
   $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);
   $("#openTemplateFolder").addEventListener("click", openTemplateFolder);
+  $("#refreshSummary").addEventListener("click", loadSummaryTree);
+  $("#generateSummary").addEventListener("click", generateSummary);
   $("#refreshMaterials").addEventListener("click", loadMaterials);
   $("#resetMaterialForm").addEventListener("click", resetMaterialForm);
   $("#openMaterialLedgerDialog").addEventListener("click", async () => {
@@ -3432,7 +3647,8 @@ async function boot() {
   $("#materialEntryForm").addEventListener("submit", saveMaterialEntry);
   $("#materialAttachmentForm").addEventListener("submit", uploadMaterialAttachment);
   $("#materialTestForm").addEventListener("submit", saveMaterialTest);
-  $("#generateMaterialApproval").addEventListener("click", generateMaterialApproval);  $("#materialLedgerClose").addEventListener("click", requestCloseMaterialLedgerDialog);
+  $("#generateMaterialApproval").addEventListener("click", generateMaterialApproval);
+  $("#materialLedgerClose").addEventListener("click", requestCloseMaterialLedgerDialog);
   $("#materialLedgerCloseTop").addEventListener("click", requestCloseMaterialLedgerDialog);
   $("#materialLedgerMaximize").addEventListener("click", maximizeMaterialLedgerWindow);
   $("#materialLedgerRestore").addEventListener("click", restoreMaterialLedgerWindow);
@@ -3539,7 +3755,6 @@ async function boot() {
   $("#generatedFormModal").addEventListener("click", (event) => {
     if (event.target.id === "generatedFormModal") {
       closeGeneratedFormModal();
-      requestCloseMaterialLedgerDialog();
     }
   });
   $("#closeTemplatePreview").addEventListener("click", closeTemplatePreviewModal);
@@ -3562,6 +3777,7 @@ async function boot() {
     try {
       await rescanModules();
       await loadTemplateLibraryTree();
+      await loadSummaryTree();
     } catch (error) {
       $("#moduleSummary").textContent = "模块刷新失败。";
       showResult("#moduleResult", error);
@@ -3593,6 +3809,7 @@ async function boot() {
     await loadModules().catch((error) => showResult("#templateResult", error));
     await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
     await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+    await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
     await loadMaterials().catch((error) => showResult("#materialResult", error));
     await loadKnowledgeItems().catch((error) => showResult("#knowledgeResult", error));
     await loadSettings().catch((error) => showResult("#settingsResult", error));

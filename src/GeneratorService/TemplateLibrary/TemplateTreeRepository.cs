@@ -62,6 +62,7 @@ public sealed class TemplateTreeRepository
               TemplateItemId INTEGER NOT NULL,
               DocumentName TEXT NOT NULL,
               PartName TEXT NOT NULL,
+              Capacity TEXT NULL,
               FilePath TEXT NOT NULL,
               CreatedAt TEXT NOT NULL,
               UpdatedAt TEXT NOT NULL,
@@ -70,8 +71,28 @@ public sealed class TemplateTreeRepository
 
             CREATE INDEX IF NOT EXISTS idx_project_document_project
               ON ProjectDocument(ProjectId, ModuleId, TemplateItemId);
+
+            CREATE TABLE IF NOT EXISTS SummaryDocument (
+              Id TEXT PRIMARY KEY,
+              ProjectId TEXT NOT NULL,
+              ModuleId TEXT NOT NULL,
+              SummaryType TEXT NOT NULL,
+              DivisionName TEXT NOT NULL,
+              SubDivisionName TEXT NOT NULL,
+              SubItemName TEXT NOT NULL,
+              DocumentName TEXT NOT NULL,
+              FilePath TEXT NOT NULL,
+              SourceDocumentCount INTEGER NOT NULL,
+              CreatedAt TEXT NOT NULL,
+              UpdatedAt TEXT NOT NULL,
+              Status TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_summary_document_project
+              ON SummaryDocument(ProjectId, ModuleId, SummaryType, Status);
             """;
         command.ExecuteNonQuery();
+        EnsureColumn(connection, "ProjectDocument", "Capacity", "TEXT NULL");
 
         EnsureProject(DefaultProjectId, DefaultProjectName);
         if (CountCatalogNodes(connection) == 0)
@@ -168,6 +189,7 @@ public sealed class TemplateTreeRepository
         string templateNodeId,
         string documentName,
         string partName,
+        string? capacity,
         string templateCode,
         string generatedFilePath)
     {
@@ -181,11 +203,11 @@ public sealed class TemplateTreeRepository
         command.CommandText = """
             INSERT INTO ProjectDocument (
                 Id, ProjectId, ModuleId, TemplateItemId, DocumentName,
-                PartName, FilePath, CreatedAt, UpdatedAt, Status
+                PartName, Capacity, FilePath, CreatedAt, UpdatedAt, Status
             )
             VALUES (
                 $id, $projectId, $moduleId, $templateItemId, $documentName,
-                $partName, $filePath, $createdAt, $updatedAt, 'active'
+                $partName, $capacity, $filePath, $createdAt, $updatedAt, 'active'
             );
             """;
         command.Parameters.AddWithValue("$id", documentId);
@@ -194,6 +216,7 @@ public sealed class TemplateTreeRepository
         command.Parameters.AddWithValue("$templateItemId", templateItemId);
         command.Parameters.AddWithValue("$documentName", documentName);
         command.Parameters.AddWithValue("$partName", partName);
+        command.Parameters.AddWithValue("$capacity", string.IsNullOrWhiteSpace(capacity) ? DBNull.Value : capacity.Trim());
         command.Parameters.AddWithValue("$filePath", storedPath);
         command.Parameters.AddWithValue("$createdAt", now.ToString("O"));
         command.Parameters.AddWithValue("$updatedAt", now.ToString("O"));
@@ -226,7 +249,7 @@ public sealed class TemplateTreeRepository
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Id, ProjectId, ModuleId, TemplateItemId, DocumentName,
-                   PartName, FilePath, Status, CreatedAt, UpdatedAt
+                   PartName, Capacity, FilePath, Status, CreatedAt, UpdatedAt
             FROM ProjectDocument
             WHERE Id = $id;
             """;
@@ -241,7 +264,7 @@ public sealed class TemplateTreeRepository
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Id, ProjectId, ModuleId, TemplateItemId, DocumentName,
-                   PartName, FilePath, Status, CreatedAt, UpdatedAt
+                   PartName, Capacity, FilePath, Status, CreatedAt, UpdatedAt
             FROM ProjectDocument
             WHERE ProjectId = $projectId
             ORDER BY CreatedAt, DocumentName;
@@ -256,6 +279,66 @@ public sealed class TemplateTreeRepository
         }
 
         return documents;
+    }
+
+    public SummaryDocumentInfo InsertSummaryDocument(
+        string projectId,
+        string moduleId,
+        string summaryType,
+        string divisionName,
+        string subDivisionName,
+        string subItemName,
+        string documentName,
+        string filePath,
+        int sourceDocumentCount)
+    {
+        EnsureProject(projectId, DefaultProjectName);
+        using var connection = OpenConnection();
+        var now = DateTimeOffset.Now;
+        var summaryId = $"summary:{Guid.NewGuid():N}";
+        var storedPath = ToStoredPath(filePath);
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO SummaryDocument (
+                Id, ProjectId, ModuleId, SummaryType, DivisionName,
+                SubDivisionName, SubItemName, DocumentName, FilePath,
+                SourceDocumentCount, CreatedAt, UpdatedAt, Status
+            )
+            VALUES (
+                $id, $projectId, $moduleId, $summaryType, $divisionName,
+                $subDivisionName, $subItemName, $documentName, $filePath,
+                $sourceDocumentCount, $createdAt, $updatedAt, 'active'
+            );
+            """;
+        command.Parameters.AddWithValue("$id", summaryId);
+        command.Parameters.AddWithValue("$projectId", projectId);
+        command.Parameters.AddWithValue("$moduleId", moduleId);
+        command.Parameters.AddWithValue("$summaryType", summaryType);
+        command.Parameters.AddWithValue("$divisionName", divisionName);
+        command.Parameters.AddWithValue("$subDivisionName", subDivisionName);
+        command.Parameters.AddWithValue("$subItemName", subItemName);
+        command.Parameters.AddWithValue("$documentName", documentName);
+        command.Parameters.AddWithValue("$filePath", storedPath);
+        command.Parameters.AddWithValue("$sourceDocumentCount", sourceDocumentCount);
+        command.Parameters.AddWithValue("$createdAt", now.ToString("O"));
+        command.Parameters.AddWithValue("$updatedAt", now.ToString("O"));
+        command.ExecuteNonQuery();
+
+        return new SummaryDocumentInfo(
+            summaryId,
+            projectId,
+            moduleId,
+            summaryType,
+            divisionName,
+            subDivisionName,
+            subItemName,
+            documentName,
+            storedPath,
+            sourceDocumentCount,
+            "active",
+            now,
+            now);
     }
 
     public bool DeleteGeneratedForm(string nodeId)
@@ -302,6 +385,26 @@ public sealed class TemplateTreeRepository
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM template_tree_nodes WHERE node_type <> 'generated_form';";
         return (long)command.ExecuteScalar()!;
+    }
+
+    private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string definition)
+    {
+        using (var check = connection.CreateCommand())
+        {
+            check.CommandText = $"PRAGMA table_info({tableName});";
+            using var reader = check.ExecuteReader();
+            while (reader.Read())
+            {
+                if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+        }
+
+        using var command = connection.CreateCommand();
+        command.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {definition};";
+        command.ExecuteNonQuery();
     }
 
     private void SeedCatalog(SqliteConnection connection)
@@ -493,10 +596,11 @@ public sealed class TemplateTreeRepository
             reader.GetInt64(3),
             reader.GetString(4),
             reader.GetString(5),
-            reader.GetString(6),
+            reader.IsDBNull(6) ? null : reader.GetString(6),
             reader.GetString(7),
-            DateTimeOffset.Parse(reader.GetString(8)),
-            DateTimeOffset.Parse(reader.GetString(9)));
+            reader.GetString(8),
+            DateTimeOffset.Parse(reader.GetString(9)),
+            DateTimeOffset.Parse(reader.GetString(10)));
     }
 
     private static int GetNextChildSortOrder(SqliteConnection connection, string parentId)

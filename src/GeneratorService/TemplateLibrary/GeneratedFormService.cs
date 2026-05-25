@@ -116,11 +116,12 @@ public sealed class GeneratedFormService
             templateExtension = ".xlsx";
         }
 
+        var fields = request.Fields ?? new Dictionary<string, string>();
         var targetPath = ResolveUniquePath(targetDirectory, $"{SanitizePathSegment(request.FormName)}{templateExtension}");
         File.Copy(template.TemplatePath, targetPath);
         var rowHeightBaseline = _rowHeightBalanceService.CaptureBaseline(targetPath);
-        ApplyFields(targetPath, request.FormName, request.Fields ?? new Dictionary<string, string>());
-        _rowHeightBalanceService.ApplyLight(targetPath, request.FormName, request.Fields ?? new Dictionary<string, string>(), rowHeightBaseline);
+        ApplyFields(targetPath, request.FormName, fields);
+        _rowHeightBalanceService.ApplyLight(targetPath, request.FormName, fields, rowHeightBaseline);
 
         var node = template.ModuleId == "legacy"
             ? _repository.InsertGeneratedForm(
@@ -136,6 +137,7 @@ public sealed class GeneratedFormService
                 template.TemplateNodeId,
                 request.FormName.Trim(),
                 request.FormName.Trim(),
+                GetField(fields, "capacity", "妫€楠屾壒瀹归噺"),
                 templateCode,
                 targetPath);
 

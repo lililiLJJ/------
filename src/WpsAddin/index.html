@@ -228,7 +228,8 @@
         </div>
         <div class="actions compactActions">
           <button id="refreshMaterials" type="button">刷新材料</button>
-          <button id=\
+          <button id="resetMaterialForm" type="button">新增材料</button>
+          <button id="openMaterialLedgerDialog" type="button">查看全部</button>
           <button id="exportMaterialLedger" type="button" class="primary">导出材料台账</button>
         </div>
       </div>
@@ -433,6 +434,28 @@
         </div>
       </div>
       <pre id="materialResult" class="resultBox compactResult"></pre>
+    </section>
+
+    <section id="summary" class="tabPanel">
+      <div class="sectionHeader">
+        <div>
+          <h2>分部分项汇总</h2>
+          <p id="summarySummary">正在读取分部分项汇总...</p>
+        </div>
+        <div class="actions compactActions">
+          <button id="refreshSummary" type="button">刷新汇总</button>
+          <button id="generateSummary" type="button" class="primary" disabled>生成汇总表</button>
+        </div>
+      </div>
+      <div class="summaryWorkbench">
+        <aside class="summaryTreePane">
+          <div id="summaryTreeView" class="summaryTreeView"></div>
+        </aside>
+        <section id="summaryPreview" class="summaryPreview">
+          <p class="emptyText">请选择左侧分部、子分部或分项。</p>
+        </section>
+      </div>
+      <pre id="summaryResult" class="resultBox compactResult"></pre>
     </section>
 
     <section id="modules" class="tabPanel">

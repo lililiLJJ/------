@@ -772,6 +772,132 @@ textarea {
   word-break: break-all;
 }
 
+.materialLedgerDialog {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(16, 24, 40, 0.38);
+}
+
+.materialLedgerWindow {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: min(1360px, 96vw);
+  height: min(820px, 90vh);
+  min-width: 780px;
+  min-height: 460px;
+  resize: both;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 60px rgba(15, 23, 42, 0.24);
+}
+
+.materialLedgerHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: #f8fbfa;
+}
+
+.materialLedgerHeader h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.materialLedgerHeader p,
+.materialLedgerToolbar span {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.materialLedgerToolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.materialLedgerToolbar label {
+  display: grid;
+  grid-template-columns: auto minmax(260px, 420px);
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.materialLedgerTableWrap {
+  min-height: 0;
+  overflow: auto;
+}
+
+.materialLedgerTable {
+  width: max-content;
+  min-width: 1480px;
+  border-collapse: collapse;
+  background: #fff;
+  table-layout: fixed;
+}
+
+.materialLedgerTable th,
+.materialLedgerTable td {
+  width: 132px;
+  min-width: 132px;
+  max-width: 240px;
+  height: 34px;
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.materialLedgerTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--muted);
+  font-weight: 700;
+  background: #eef3f8;
+}
+
+.materialLedgerTable .ledgerSelectCell {
+  width: 54px;
+  min-width: 54px;
+  max-width: 54px;
+  text-align: center;
+}
+
+.ledgerEditableCell {
+  background: #fff;
+  cursor: text;
+}
+
+.ledgerEditableCell:focus {
+  outline: 2px solid rgba(36, 130, 103, 0.36);
+  outline-offset: -2px;
+  background: #f7fffc;
+}
+
+.ledgerReadonlyCell {
+  color: var(--muted);
+  background: #f6f8fa;
+}
+
+.ledgerDirtyRow td {
+  background-color: #fffaf0;
+}
+
 .knowledgeTable td {
   border: 1px solid var(--line);
   padding: 7px;

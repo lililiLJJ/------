@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>工程资料</title>
-  <link rel="stylesheet" href="./styles.css?v=20260524-project-management">
+  <link rel="stylesheet" href="./styles.css?v=20260525-material-ledger">
   <script src="./main.js"></script>
 </head>
 <body>
@@ -228,7 +228,7 @@
         </div>
         <div class="actions compactActions">
           <button id="refreshMaterials" type="button">刷新材料</button>
-          <button id="resetMaterialForm" type="button">新增材料</button>
+          <button id=\
           <button id="exportMaterialLedger" type="button" class="primary">导出材料台账</button>
         </div>
       </div>
@@ -391,10 +391,37 @@
               <h2>报审资料</h2>
               <p id="materialApprovalSummary">按模板复制并填充占位符。</p>
             </div>
-            <button id="generateMaterialApproval" type="button" class="primary">生成报审资料</button>
+            <button id="generateMaterialApproval" type="button" class="primary">材料报审</button>
           </div>
         </section>
       </section>
+      <div id="materialLedgerDialog" class="materialLedgerDialog hidden" role="dialog" aria-modal="true" aria-labelledby="materialLedgerDialogTitle">
+        <div class="materialLedgerWindow">
+          <div class="materialLedgerHeader">
+            <div>
+              <h2 id="materialLedgerDialogTitle">材料台账管理</h2>
+              <p id="materialLedgerDialogSummary">可直接编辑、粘贴 Excel/WPS 表格内容并批量保存。</p>
+            </div>
+            <div class="actions compactActions">
+              <button id="materialLedgerAddRow" type="button">新增行</button>
+              <button id="materialLedgerDeleteRows" type="button">删除行</button>
+              <button id="materialLedgerSave" type="button" class="primary">批量保存</button>
+              <button id="materialLedgerConfirmApproval" type="button" class="primary hidden">确认报审</button>
+              <button id="materialLedgerClose" type="button">关闭</button>
+            </div>
+          </div>
+          <div class="materialLedgerToolbar">
+            <label>筛选<input id="materialLedgerQuickFilter" placeholder="材料名称、规格、部位、供应商、报告编号"></label>
+            <span id="materialLedgerStatusText">尚未加载材料。</span>
+          </div>
+          <div class="materialLedgerTableWrap">
+            <table class="materialLedgerTable">
+              <thead id="materialLedgerHead"></thead>
+              <tbody id="materialLedgerBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
       <pre id="materialResult" class="resultBox compactResult"></pre>
     </section>
 
@@ -550,6 +577,6 @@
     </section>
   </div>
 
-  <script src="./app.js?v=20260524-project-management"></script>
+  <script src="./app.js?v=20260525-material-ledger"></script>
 </body>
 </html>

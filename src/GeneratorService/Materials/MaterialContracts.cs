@@ -148,10 +148,23 @@ public sealed record MaterialApprovalGenerateResult(
     bool Success,
     MaterialApprovalInfo Approval,
     string FilePath,
+    string AbsoluteFilePath,
+    string Message);
+
+public sealed record MaterialApprovalBatchGenerateRequest(
+    string? ProjectId,
+    IReadOnlyList<string> MaterialEntryIds);
+
+public sealed record MaterialApprovalBatchGenerateResult(
+    bool Success,
+    IReadOnlyList<MaterialApprovalGenerateResult> Results,
+    string? FirstFilePath,
+    string? FirstAbsoluteFilePath,
     string Message);
 
 public sealed record MaterialLedgerRow(
     int Sequence,
+    string Id,
     string MaterialName,
     string SpecificationModel,
     string Unit,
@@ -175,4 +188,60 @@ public sealed record MaterialLedgerResult(
     int Total,
     IReadOnlyList<MaterialLedgerRow> Rows,
     string? FilePath,
+    string? AbsoluteFilePath,
+    string Message);
+
+public sealed record MaterialLedgerSaveRow(
+    string? Id,
+    string MaterialName,
+    string? SpecificationModel,
+    string? Unit,
+    decimal? Quantity,
+    DateOnly? EntryDate,
+    string? Supplier,
+    string? Manufacturer,
+    string? UsePart,
+    string? BatchNo,
+    string? CertificateNo,
+    string? FactoryReportNo,
+    bool? IsRequired,
+    DateTimeOffset? SentTime,
+    string? InspectionAgency,
+    string? ReportNo,
+    string? Result,
+    string? Remark,
+    string? StatusOverride,
+    bool Delete);
+
+public sealed record MaterialBatchSaveRequest(
+    string? ProjectId,
+    IReadOnlyList<MaterialLedgerSaveRow> Rows);
+
+public sealed record MaterialLedgerExportRequest(
+    string? ProjectId,
+    string? MaterialName,
+    DateOnly? EntryDateFrom,
+    DateOnly? EntryDateTo,
+    string? UsePart,
+    string? Supplier,
+    string? TestStatus,
+    string? ApprovalStatus,
+    string? Status);
+
+public sealed record MaterialBatchSaveRowResult(
+    int RowIndex,
+    bool Success,
+    string? Id,
+    string? Message);
+
+public sealed record MaterialBatchSaveResult(
+    bool Success,
+    string ProjectId,
+    IReadOnlyList<MaterialBatchSaveRowResult> Results,
+    IReadOnlyList<MaterialEntryInfo> Items,
+    string Message);
+
+public sealed record MaterialDeleteResult(
+    bool Success,
+    string Id,
     string Message);

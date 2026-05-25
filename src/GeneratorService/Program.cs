@@ -382,6 +382,37 @@ app.MapPut("/api/materials/{id}", (string id, MaterialEntryUpdateRequest request
     }
 });
 
+app.MapPost("/api/materials/batch-save", (MaterialBatchSaveRequest request, MaterialService service) =>
+{
+    try
+    {
+        return Results.Ok(service.BatchSave(request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapDelete("/api/materials/{id}", (string id, string? projectId, MaterialService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Delete(id, projectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
 app.MapPost("/api/materials/{id}/attachments", async (
     string id,
     HttpRequest request,
@@ -440,6 +471,23 @@ app.MapPost("/api/materials/{id}/approval/generate", (
     }
 });
 
+app.MapPost("/api/materials/approval/generate", (
+    MaterialApprovalBatchGenerateRequest request,
+    MaterialApprovalService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GenerateBatch(request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
 app.MapGet("/api/materials/ledger", (
     string? projectId,
     string? materialName,
@@ -479,6 +527,57 @@ app.MapGet("/api/materials/ledger", (
     }
 });
 
+app.MapPost("/api/materials/ledger/export", (
+    MaterialLedgerExportRequest request,
+    ProjectManager manager,
+    MaterialLedgerService service) =>
+{
+    try
+    {
+        var project = manager.ResolveProject(request.ProjectId);
+        var query = new MaterialQuery(
+            project.ProjectId,
+            request.MaterialName,
+            request.EntryDateFrom,
+            request.EntryDateTo,
+            request.UsePart,
+            request.Supplier,
+            request.TestStatus,
+            request.ApprovalStatus,
+            request.Status);
+        return Results.Ok(service.GetLedger(query, true));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/files/open", (OpenSpreadsheetRequest request, SpreadsheetOpenService openService) =>
+{
+    try
+    {
+        openService.OpenSpreadsheet(request.FilePath);
+        return Results.Ok(new
+        {
+            success = true,
+            path = request.FilePath,
+            message = "已打开表格文件。"
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
 app.MapGet("/api/template-library/tree", (string? projectId, TemplateTreeService service) =>
 {
     return Results.Ok(service.GetTree(projectId));
@@ -812,3 +911,5 @@ static int CountTemplateNodes(TemplateLibraryNode node)
     var self = node.Type == "template" ? 1 : 0;
     return self + node.Children.Sum(CountTemplateNodes);
 }
+
+public sealed record OpenSpreadsheetRequest(string FilePath);

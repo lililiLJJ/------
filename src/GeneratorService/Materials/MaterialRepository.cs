@@ -32,6 +32,7 @@ public sealed class MaterialRepository
               BatchNo TEXT NOT NULL,
               Remark TEXT NOT NULL,
               StatusOverride TEXT NULL,
+              DeletedAt TEXT NULL,
               CreatedAt TEXT NOT NULL,
               UpdatedAt TEXT NOT NULL
             );
@@ -92,6 +93,7 @@ public sealed class MaterialRepository
               ON MaterialApproval(ProjectId, MaterialEntryId, Status);
             """;
         command.ExecuteNonQuery();
+        EnsureColumn(connection, "MaterialEntry", "DeletedAt", "TEXT NULL");
     }
 
     public MaterialEntryRecord InsertEntry(string projectId, MaterialEntryCreateRequest request)
@@ -111,6 +113,7 @@ public sealed class MaterialRepository
             Clean(request.BatchNo),
             Clean(request.Remark),
             CleanStatus(request.StatusOverride),
+            null,
             now,
             now);
 
@@ -120,12 +123,12 @@ public sealed class MaterialRepository
             INSERT INTO MaterialEntry (
                 Id, ProjectId, MaterialName, SpecificationModel, Unit, Quantity,
                 EntryDate, Supplier, Manufacturer, UsePart, BatchNo, Remark,
-                StatusOverride, CreatedAt, UpdatedAt
+                StatusOverride, DeletedAt, CreatedAt, UpdatedAt
             )
             VALUES (
                 $id, $projectId, $materialName, $specificationModel, $unit, $quantity,
                 $entryDate, $supplier, $manufacturer, $usePart, $batchNo, $remark,
-                $statusOverride, $createdAt, $updatedAt
+                $statusOverride, $deletedAt, $createdAt, $updatedAt
             );
             """;
         BindEntry(command, entry);
@@ -203,9 +206,10 @@ public sealed class MaterialRepository
         command.CommandText = $"""
             SELECT Id, ProjectId, MaterialName, SpecificationModel, Unit, Quantity,
                    EntryDate, Supplier, Manufacturer, UsePart, BatchNo, Remark,
-                   StatusOverride, CreatedAt, UpdatedAt
+                   StatusOverride, DeletedAt, CreatedAt, UpdatedAt
             FROM MaterialEntry
             WHERE {string.Join(" AND ", where)}
+              AND DeletedAt IS NULL
             ORDER BY EntryDate DESC, CreatedAt DESC;
             """;
 
@@ -226,14 +230,35 @@ public sealed class MaterialRepository
         command.CommandText = """
             SELECT Id, ProjectId, MaterialName, SpecificationModel, Unit, Quantity,
                    EntryDate, Supplier, Manufacturer, UsePart, BatchNo, Remark,
-                   StatusOverride, CreatedAt, UpdatedAt
+                   StatusOverride, DeletedAt, CreatedAt, UpdatedAt
             FROM MaterialEntry
-            WHERE ProjectId = $projectId AND Id = $id;
+            WHERE ProjectId = $projectId AND Id = $id AND DeletedAt IS NULL;
             """;
         command.Parameters.AddWithValue("$projectId", projectId);
         command.Parameters.AddWithValue("$id", id);
         using var reader = command.ExecuteReader();
         return reader.Read() ? ReadEntry(reader) : null;
+    }
+
+    public void SoftDeleteEntry(string projectId, string id)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE MaterialEntry
+            SET DeletedAt = $deletedAt,
+                UpdatedAt = $updatedAt
+            WHERE ProjectId = $projectId AND Id = $id AND DeletedAt IS NULL;
+            """;
+        var now = DateTimeOffset.Now.ToString("O");
+        command.Parameters.AddWithValue("$projectId", projectId);
+        command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$deletedAt", now);
+        command.Parameters.AddWithValue("$updatedAt", now);
+        if (command.ExecuteNonQuery() == 0)
+        {
+            throw new InvalidOperationException("材料进场记录不存在。");
+        }
     }
 
     public MaterialCertificateInfo InsertCertificate(
@@ -458,6 +483,47 @@ public sealed class MaterialRepository
         return approval;
     }
 
+    public void SetLedgerCertificateNumber(string projectId, string materialEntryId, string fileType, string certificateNo)
+    {
+        using var connection = OpenConnection();
+        using var selectCommand = connection.CreateCommand();
+        selectCommand.CommandText = """
+            SELECT Id
+            FROM MaterialCertificate
+            WHERE ProjectId = $projectId
+              AND MaterialEntryId = $materialEntryId
+              AND FileType = $fileType
+            ORDER BY UploadedAt DESC
+            LIMIT 1;
+            """;
+        selectCommand.Parameters.AddWithValue("$projectId", projectId);
+        selectCommand.Parameters.AddWithValue("$materialEntryId", materialEntryId);
+        selectCommand.Parameters.AddWithValue("$fileType", fileType);
+        var existingId = selectCommand.ExecuteScalar() as string;
+
+        if (!string.IsNullOrWhiteSpace(existingId))
+        {
+            using var updateCommand = connection.CreateCommand();
+            updateCommand.CommandText = """
+                UPDATE MaterialCertificate
+                SET CertificateNo = $certificateNo
+                WHERE Id = $id AND ProjectId = $projectId;
+                """;
+            updateCommand.Parameters.AddWithValue("$certificateNo", Clean(certificateNo));
+            updateCommand.Parameters.AddWithValue("$id", existingId);
+            updateCommand.Parameters.AddWithValue("$projectId", projectId);
+            updateCommand.ExecuteNonQuery();
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(certificateNo))
+        {
+            return;
+        }
+
+        InsertCertificate(projectId, materialEntryId, fileType, certificateNo, "", "");
+    }
+
     public MaterialApprovalInfo? GetLatestApproval(string projectId, string materialEntryId)
     {
         using var connection = OpenConnection();
@@ -516,6 +582,24 @@ public sealed class MaterialRepository
         return connection;
     }
 
+    private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string definition)
+    {
+        using var readCommand = connection.CreateCommand();
+        readCommand.CommandText = $"PRAGMA table_info({tableName});";
+        using var reader = readCommand.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {definition};";
+        alterCommand.ExecuteNonQuery();
+    }
+
     private static void BindEntry(SqliteCommand command, MaterialEntryRecord entry)
     {
         command.Parameters.AddWithValue("$id", entry.Id);
@@ -531,6 +615,7 @@ public sealed class MaterialRepository
         command.Parameters.AddWithValue("$batchNo", entry.BatchNo);
         command.Parameters.AddWithValue("$remark", entry.Remark);
         command.Parameters.AddWithValue("$statusOverride", (object?)entry.StatusOverride ?? DBNull.Value);
+        command.Parameters.AddWithValue("$deletedAt", (object?)entry.DeletedAt ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdAt", entry.CreatedAt.ToString("O"));
         command.Parameters.AddWithValue("$updatedAt", entry.UpdatedAt.ToString("O"));
     }
@@ -582,8 +667,9 @@ public sealed class MaterialRepository
             reader.GetString(10),
             reader.GetString(11),
             reader.IsDBNull(12) ? null : reader.GetString(12),
-            DateTimeOffset.Parse(reader.GetString(13)),
-            DateTimeOffset.Parse(reader.GetString(14)));
+            reader.IsDBNull(13) ? null : reader.GetString(13),
+            DateTimeOffset.Parse(reader.GetString(14)),
+            DateTimeOffset.Parse(reader.GetString(15)));
     }
 
     private static IReadOnlyList<MaterialCertificateInfo> ReadCertificates(SqliteCommand command)
@@ -720,5 +806,6 @@ public sealed record MaterialEntryRecord(
     string BatchNo,
     string Remark,
     string? StatusOverride,
+    string? DeletedAt,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);

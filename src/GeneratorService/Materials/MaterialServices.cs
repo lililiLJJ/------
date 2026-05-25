@@ -41,6 +41,111 @@ public sealed class MaterialService
         return Get(project.ProjectId, id);
     }
 
+    public MaterialBatchSaveResult BatchSave(MaterialBatchSaveRequest request)
+    {
+        var project = _projectManager.ResolveProject(request.ProjectId);
+        var results = new List<MaterialBatchSaveRowResult>();
+        var savedIds = new List<string>();
+        var rowsToSave = request.Rows ?? Array.Empty<MaterialLedgerSaveRow>();
+
+        for (var index = 0; index < rowsToSave.Count; index++)
+        {
+            var row = rowsToSave[index];
+            try
+            {
+                if (row.Delete)
+                {
+                    if (string.IsNullOrWhiteSpace(row.Id))
+                    {
+                        results.Add(new MaterialBatchSaveRowResult(index, true, null, "空白新行已忽略。"));
+                    }
+                    else
+                    {
+                        _repository.SoftDeleteEntry(project.ProjectId, row.Id);
+                        results.Add(new MaterialBatchSaveRowResult(index, true, row.Id, "已删除。"));
+                    }
+
+                    continue;
+                }
+
+                if (IsBlankLedgerRow(row))
+                {
+                    results.Add(new MaterialBatchSaveRowResult(index, true, row.Id, "空白行已忽略。"));
+                    continue;
+                }
+
+                var entryDate = row.EntryDate ?? DateOnly.FromDateTime(DateTime.Today);
+                var quantity = row.Quantity ?? 0;
+                var entry = string.IsNullOrWhiteSpace(row.Id)
+                    ? _repository.InsertEntry(project.ProjectId, new MaterialEntryCreateRequest(
+                        project.ProjectId,
+                        row.MaterialName,
+                        row.SpecificationModel,
+                        row.Unit,
+                        quantity,
+                        entryDate,
+                        row.Supplier,
+                        row.Manufacturer,
+                        row.UsePart,
+                        row.BatchNo,
+                        row.Remark,
+                        row.StatusOverride))
+                    : _repository.UpdateEntry(project.ProjectId, row.Id, new MaterialEntryUpdateRequest(
+                        row.MaterialName,
+                        row.SpecificationModel,
+                        row.Unit,
+                        quantity,
+                        entryDate,
+                        row.Supplier,
+                        row.Manufacturer,
+                        row.UsePart,
+                        row.BatchNo,
+                        row.Remark,
+                        row.StatusOverride));
+
+                _repository.SetLedgerCertificateNumber(project.ProjectId, entry.Id, "合格证", row.CertificateNo ?? "");
+                _repository.SetLedgerCertificateNumber(project.ProjectId, entry.Id, "厂家检测报告", row.FactoryReportNo ?? "");
+
+                if (ShouldSaveTest(row))
+                {
+                    _repository.UpsertTest(project.ProjectId, entry.Id, new MaterialTestUpsertRequest(
+                        project.ProjectId,
+                        row.IsRequired ?? false,
+                        null,
+                        null,
+                        row.SentTime,
+                        row.InspectionAgency,
+                        row.ReportNo,
+                        row.Result,
+                        null));
+                }
+
+                savedIds.Add(entry.Id);
+                results.Add(new MaterialBatchSaveRowResult(index, true, entry.Id, "已保存。"));
+            }
+            catch (Exception ex)
+            {
+                results.Add(new MaterialBatchSaveRowResult(index, false, row.Id, ex.Message));
+            }
+        }
+
+        var items = List(new MaterialQuery(project.ProjectId, null, null, null, null, null, null, null, null)).Items;
+        var success = results.All(item => item.Success);
+        return new MaterialBatchSaveResult(
+            success,
+            project.ProjectId,
+            results,
+            items,
+            success ? $"已批量保存 {savedIds.Count} 条材料。" : "部分材料保存失败，请检查表格中的错误行。");
+    }
+
+    public MaterialDeleteResult Delete(string id, string? projectId)
+    {
+        var project = _projectManager.ResolveProject(projectId);
+        _repository.SoftDeleteEntry(project.ProjectId, id);
+        return new MaterialDeleteResult(true, id, "材料已删除。");
+    }
+
     public MaterialEntryInfo Get(string projectId, string id)
     {
         var entry = _repository.GetEntry(projectId, id) ?? throw new InvalidOperationException("材料进场记录不存在。");
@@ -213,6 +318,35 @@ public sealed class MaterialService
             item.FileType.Contains("质保", StringComparison.OrdinalIgnoreCase) ||
             item.FileType.Contains("质量", StringComparison.OrdinalIgnoreCase));
     }
+
+    private static bool IsBlankLedgerRow(MaterialLedgerSaveRow row)
+    {
+        return string.IsNullOrWhiteSpace(row.Id) &&
+               string.IsNullOrWhiteSpace(row.MaterialName) &&
+               string.IsNullOrWhiteSpace(row.SpecificationModel) &&
+               string.IsNullOrWhiteSpace(row.Unit) &&
+               row.Quantity is null &&
+               row.EntryDate is null &&
+               string.IsNullOrWhiteSpace(row.Supplier) &&
+               string.IsNullOrWhiteSpace(row.Manufacturer) &&
+               string.IsNullOrWhiteSpace(row.UsePart) &&
+               string.IsNullOrWhiteSpace(row.BatchNo) &&
+               string.IsNullOrWhiteSpace(row.CertificateNo) &&
+               string.IsNullOrWhiteSpace(row.FactoryReportNo) &&
+               string.IsNullOrWhiteSpace(row.InspectionAgency) &&
+               string.IsNullOrWhiteSpace(row.ReportNo) &&
+               string.IsNullOrWhiteSpace(row.Result) &&
+               string.IsNullOrWhiteSpace(row.Remark);
+    }
+
+    private static bool ShouldSaveTest(MaterialLedgerSaveRow row)
+    {
+        return row.IsRequired is not null ||
+               row.SentTime is not null ||
+               !string.IsNullOrWhiteSpace(row.InspectionAgency) ||
+               !string.IsNullOrWhiteSpace(row.ReportNo) ||
+               !string.IsNullOrWhiteSpace(row.Result);
+    }
 }
 
 public sealed class MaterialAttachmentService
@@ -329,7 +463,28 @@ public sealed class MaterialApprovalService
             materialEntryId,
             Path.GetRelativePath(_rootPath.FullName, templatePath),
             relativePath);
-        return new MaterialApprovalGenerateResult(true, approval, approval.FilePath, "材料进场报审资料已生成。");
+        return new MaterialApprovalGenerateResult(true, approval, approval.FilePath, outputPath, "材料进场报审资料已生成。");
+    }
+
+    public MaterialApprovalBatchGenerateResult GenerateBatch(MaterialApprovalBatchGenerateRequest request)
+    {
+        if (request.MaterialEntryIds is null || request.MaterialEntryIds.Count == 0)
+        {
+            throw new InvalidOperationException("请先选择需要报审的材料。");
+        }
+
+        var results = request.MaterialEntryIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(id => Generate(id, request.ProjectId))
+            .ToArray();
+
+        return new MaterialApprovalBatchGenerateResult(
+            true,
+            results,
+            results.FirstOrDefault()?.FilePath,
+            results.FirstOrDefault()?.AbsoluteFilePath,
+            $"已生成 {results.Length} 份材料进场报审资料。");
     }
 
     private static void FillWorkbook(string filePath, string projectName, MaterialEntryInfo material)
@@ -624,6 +779,7 @@ public sealed class MaterialLedgerService
         var result = _materialService.List(query);
         var rows = result.Items.Select((item, index) => new MaterialLedgerRow(
             index + 1,
+            item.Id,
             item.MaterialName,
             item.SpecificationModel,
             item.Unit,
@@ -643,16 +799,16 @@ public sealed class MaterialLedgerService
 
         if (!export)
         {
-            return new MaterialLedgerResult(true, query.ProjectId, rows.Length, rows, null, "材料台账查询成功。");
+            return new MaterialLedgerResult(true, query.ProjectId, rows.Length, rows, null, null, "材料台账查询成功。");
         }
 
         var project = _projectManager.ResolveProject(query.ProjectId);
-        var directory = Path.Combine(project.ProjectRootPath, "GeneratedForms", "Materials");
+        var directory = Path.Combine(project.ProjectRootPath, "ProjectFiles", "Materials", "Ledger");
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, $"材料台账-{DateTime.Now:yyyyMMddHHmmss}.xlsx");
         ExportLedger(path, rows);
         var relativePath = MaterialRepository.ToPortablePath(Path.GetRelativePath(project.ProjectRootPath, path));
-        return new MaterialLedgerResult(true, query.ProjectId, rows.Length, rows, relativePath, "材料台账已导出。");
+        return new MaterialLedgerResult(true, query.ProjectId, rows.Length, rows, relativePath, path, "材料台账已导出。");
     }
 
     private static void ExportLedger(string path, IReadOnlyList<MaterialLedgerRow> rows)

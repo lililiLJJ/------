@@ -8,6 +8,9 @@ let currentGeneratedForm = null;
 let lastRowHeightFitAdjustment = null;
 let materialItems = [];
 let selectedMaterial = null;
+let materialLedgerMode = "edit";
+let materialLedgerRows = [];
+const materialLedgerSelectedIds = new Set();
 let serviceAvailable = false;
 let lastExternalTabVersion = "";
 const collapsedTemplateNodeIds = new Set();
@@ -22,6 +25,28 @@ const tabSyncKeys = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+
+const materialLedgerColumns = [
+  { key: "materialName", label: "材料名称", required: true },
+  { key: "specificationModel", label: "规格型号" },
+  { key: "unit", label: "单位" },
+  { key: "quantity", label: "数量", type: "number" },
+  { key: "entryDate", label: "进场日期", type: "date" },
+  { key: "usePart", label: "使用部位" },
+  { key: "supplier", label: "供应商" },
+  { key: "manufacturer", label: "生产厂家" },
+  { key: "batchNo", label: "批号/炉批号" },
+  { key: "certificateNo", label: "合格证编号" },
+  { key: "factoryReportNo", label: "厂家检测报告编号" },
+  { key: "isRequired", label: "是否需要送检", type: "boolean" },
+  { key: "sentTime", label: "送检日期", type: "date" },
+  { key: "inspectionAgency", label: "第三方检测机构" },
+  { key: "reportNo", label: "第三方检测报告编号" },
+  { key: "result", label: "检测结果" },
+  { key: "approvalStatus", label: "报审状态", readOnly: true },
+  { key: "status", label: "状态", readOnly: true },
+  { key: "remark", label: "备注" }
+];
 
 function showResult(selector, data) {
   const target = $(selector);
@@ -289,7 +314,7 @@ async function api(path, options = {}) {
     const headers = options.body instanceof FormData
       ? (options.headers || {})
       : {
-          "Content-Type": "application/json",
+          "Content-Type": "application/json; charset=utf-8",
           ...(options.headers || {})
         };
     response = await fetch(`${serviceBaseUrl}${path}`, {
@@ -410,6 +435,7 @@ function setGenerateDisabled(disabled) {
   $("#runEnvironmentCheck").disabled = disabled;
   if ($("#refreshMaterials")) $("#refreshMaterials").disabled = disabled;
   if ($("#resetMaterialForm")) $("#resetMaterialForm").disabled = disabled;
+  if ($("#openMaterialLedgerDialog")) $("#openMaterialLedgerDialog").disabled = disabled;
   if ($("#exportMaterialLedger")) $("#exportMaterialLedger").disabled = disabled;
   updateMaterialActionState();
   updateTemplateToolbarState(disabled);
@@ -865,6 +891,26 @@ async function openSpreadsheetPath(form) {
   }
 
   await api(`/api/generated-forms/${encodeURIComponent(form.id)}/open`, { method: "POST" });
+}
+
+async function openLocalSpreadsheetFile(filePath) {
+  if (!filePath) {
+    throw new Error("生成成功，但服务未返回可打开的文件路径。");
+  }
+
+  try {
+    if (window.Application && window.Application.Workbooks && typeof window.Application.Workbooks.Open === "function") {
+      window.Application.Workbooks.Open(filePath);
+      return;
+    }
+  } catch {
+    // Fallback to local service if WPS object model is unavailable or rejects the path.
+  }
+
+  await api("/api/files/open", {
+    method: "POST",
+    body: JSON.stringify({ filePath })
+  });
 }
 
 function renderSpreadsheetPlaceholder() {
@@ -2044,6 +2090,352 @@ function renderMaterialApproval() {
     : "尚未生成材料进场报审资料。";
 }
 
+function getMaterialCertificateNo(item, keyword) {
+  const attachment = (item.certificates || []).find((cert) => (cert.fileType || "").includes(keyword));
+  return attachment?.certificateNo || "";
+}
+
+function materialItemToLedgerRow(item = {}) {
+  return {
+    id: item.id || "",
+    materialName: item.materialName || "",
+    specificationModel: item.specificationModel || "",
+    unit: item.unit || "",
+    quantity: item.quantity ?? "",
+    entryDate: item.entryDate || new Date().toISOString().slice(0, 10),
+    usePart: item.usePart || "",
+    supplier: item.supplier || "",
+    manufacturer: item.manufacturer || "",
+    batchNo: item.batchNo || "",
+    certificateNo: getMaterialCertificateNo(item, "合格证"),
+    factoryReportNo: getMaterialCertificateNo(item, "厂家检测报告"),
+    isRequired: !!item.test?.isRequired,
+    sentTime: toDateOnly(item.test?.sentTime),
+    inspectionAgency: item.test?.inspectionAgency || "",
+    reportNo: item.test?.reportNo || "",
+    result: item.test?.result || "",
+    approvalStatus: item.approvalStatus || "未报审",
+    status: item.status || "",
+    remark: item.remark || "",
+    statusOverride: item.statusOverride || "",
+    _dirty: false,
+    _isNew: !item.id,
+    _deleted: false
+  };
+}
+
+function toDateOnly(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value).slice(0, 10);
+  }
+
+  return date.toISOString().slice(0, 10);
+}
+
+async function openMaterialLedgerDialog(mode = "edit") {
+  materialLedgerMode = mode;
+  showResult("#materialResult", "正在加载材料台账...");
+  const result = await api(`/api/materials?projectId=${encodeURIComponent(activeProjectId)}`);
+  materialItems = result.items || [];
+  materialLedgerRows = materialItems.map(materialItemToLedgerRow);
+  materialLedgerSelectedIds.clear();
+  if (mode === "approval-select" && selectedMaterial?.id) {
+    materialLedgerSelectedIds.add(selectedMaterial.id);
+  }
+
+  $("#materialLedgerDialog").classList.remove("hidden");
+  $("#materialLedgerDialogTitle").textContent = mode === "approval-select" ? "选择报审材料" : "材料台账管理";
+  $("#materialLedgerDialogSummary").textContent = mode === "approval-select"
+    ? "勾选本次需要报审的材料，确认后按模板生成材料进场报审资料。"
+    : "可直接编辑、粘贴 Excel/WPS 表格内容并批量保存。";
+  $("#materialLedgerAddRow").classList.toggle("hidden", mode !== "edit");
+  $("#materialLedgerDeleteRows").classList.toggle("hidden", mode !== "edit");
+  $("#materialLedgerSave").classList.toggle("hidden", mode !== "edit");
+  $("#materialLedgerConfirmApproval").classList.toggle("hidden", mode !== "approval-select");
+  renderMaterialLedgerGrid();
+}
+
+function closeMaterialLedgerDialog() {
+  $("#materialLedgerDialog").classList.add("hidden");
+}
+
+function renderMaterialLedgerGrid() {
+  const head = $("#materialLedgerHead");
+  const body = $("#materialLedgerBody");
+  if (!head || !body) {
+    return;
+  }
+
+  const showSelect = materialLedgerMode === "approval-select";
+  head.innerHTML = `
+    <tr>
+      <th class="ledgerSelectCell">选择</th>
+      ${materialLedgerColumns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}
+    </tr>`;
+
+  const filter = ($("#materialLedgerQuickFilter")?.value || "").trim().toLowerCase();
+  const rows = materialLedgerRows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => !row._deleted)
+    .filter(({ row }) => !filter || materialLedgerColumns.some((column) => String(row[column.key] ?? "").toLowerCase().includes(filter)));
+
+  body.innerHTML = "";
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="${materialLedgerColumns.length + 1}" class="emptyText">暂无材料台账数据。</td></tr>`;
+  } else {
+    for (const { row, index } of rows) {
+      const tr = document.createElement("tr");
+      tr.className = row._dirty || row._isNew ? "ledgerDirtyRow" : "";
+      const selectCell = showSelect
+        ? `<td class="ledgerSelectCell"><input type="checkbox" data-ledger-select="${index}" ${materialLedgerSelectedIds.has(row.id) ? "checked" : ""} ${row.id ? "" : "disabled"}></td>`
+        : `<td class="ledgerSelectCell"><input type="checkbox" data-ledger-row-check="${index}"></td>`;
+      tr.innerHTML = selectCell + materialLedgerColumns.map((column) => renderMaterialLedgerCell(row, index, column)).join("");
+      body.appendChild(tr);
+    }
+  }
+
+  $("#materialLedgerStatusText").textContent = materialLedgerMode === "approval-select"
+    ? `已加载 ${rows.length} 条材料，已选择 ${materialLedgerSelectedIds.size} 条。`
+    : `已加载 ${rows.length} 条材料，可从 Excel/WPS 复制多行多列后粘贴。`;
+}
+
+function renderMaterialLedgerCell(row, rowIndex, column) {
+  const value = formatLedgerCellValue(row[column.key], column);
+  const readonly = column.readOnly || materialLedgerMode !== "edit";
+  const className = readonly ? "ledgerReadonlyCell" : "ledgerEditableCell";
+  const editable = readonly ? "false" : "true";
+  return `<td class="${className}" contenteditable="${editable}" data-ledger-row="${rowIndex}" data-ledger-field="${column.key}">${escapeHtml(value)}</td>`;
+}
+
+function formatLedgerCellValue(value, column) {
+  if (column.type === "boolean") {
+    return value ? "是" : "否";
+  }
+
+  return value ?? "";
+}
+
+function parseLedgerCellValue(value, column) {
+  const text = String(value ?? "").trim();
+  if (column.type === "boolean") {
+    return ["是", "true", "1", "yes", "y", "需要", "需送检"].includes(text.toLowerCase());
+  }
+
+  if (column.type === "number") {
+    return text === "" ? "" : Number(text);
+  }
+
+  return text;
+}
+
+function markLedgerRowDirty(rowIndex) {
+  const row = materialLedgerRows[rowIndex];
+  if (row) {
+    row._dirty = true;
+  }
+}
+
+function updateLedgerCellFromElement(cell) {
+  const rowIndex = Number(cell.dataset.ledgerRow);
+  const field = cell.dataset.ledgerField;
+  const column = materialLedgerColumns.find((item) => item.key === field);
+  const row = materialLedgerRows[rowIndex];
+  if (!row || !column || column.readOnly) {
+    return;
+  }
+
+  row[field] = parseLedgerCellValue(cell.textContent, column);
+  markLedgerRowDirty(rowIndex);
+}
+
+function addMaterialLedgerRow() {
+  materialLedgerRows.push(materialItemToLedgerRow());
+  renderMaterialLedgerGrid();
+}
+
+function deleteMaterialLedgerRows() {
+  const checked = $$("[data-ledger-row-check]:checked").map((item) => Number(item.dataset.ledgerRowCheck));
+  const active = checked.length ? checked : getActiveLedgerRowIndexes();
+  if (!active.length) {
+    showResult("#materialResult", "请先在材料台账窗口中选择要删除的行。");
+    return;
+  }
+
+  for (const index of [...active].sort((left, right) => right - left)) {
+    const row = materialLedgerRows[index];
+    if (!row) {
+      continue;
+    }
+
+    if (row.id) {
+      row._deleted = true;
+      row._dirty = true;
+    } else {
+      materialLedgerRows.splice(index, 1);
+    }
+  }
+
+  renderMaterialLedgerGrid();
+}
+
+function getActiveLedgerRowIndexes() {
+  const active = document.activeElement;
+  if (active?.dataset?.ledgerRow) {
+    return [Number(active.dataset.ledgerRow)];
+  }
+
+  return [];
+}
+
+function parseLedgerPasteText(text) {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .filter((line, index, lines) => line.length || index < lines.length - 1)
+    .map((line) => line.split("\t"));
+}
+
+function pasteIntoMaterialLedger(startRowIndex, startField, text) {
+  const rows = parseLedgerPasteText(text);
+  const editableColumns = materialLedgerColumns.filter((column) => !column.readOnly);
+  const startColumnIndex = editableColumns.findIndex((column) => column.key === startField);
+  if (startColumnIndex < 0 || !rows.length) {
+    return;
+  }
+
+  for (let rowOffset = 0; rowOffset < rows.length; rowOffset++) {
+    let rowIndex = startRowIndex + rowOffset;
+    while (!materialLedgerRows[rowIndex]) {
+      materialLedgerRows.push(materialItemToLedgerRow());
+    }
+
+    const row = materialLedgerRows[rowIndex];
+    for (let columnOffset = 0; columnOffset < rows[rowOffset].length; columnOffset++) {
+      const column = editableColumns[startColumnIndex + columnOffset];
+      if (!column) {
+        break;
+      }
+
+      row[column.key] = parseLedgerCellValue(rows[rowOffset][columnOffset], column);
+    }
+
+    row._dirty = true;
+  }
+
+  renderMaterialLedgerGrid();
+}
+
+function buildLedgerSaveRow(row) {
+  return {
+    id: row.id || null,
+    materialName: row.materialName || "",
+    specificationModel: row.specificationModel || "",
+    unit: row.unit || "",
+    quantity: row.quantity === "" || row.quantity === null || row.quantity === undefined ? null : Number(row.quantity),
+    entryDate: row.entryDate || null,
+    supplier: row.supplier || "",
+    manufacturer: row.manufacturer || "",
+    usePart: row.usePart || "",
+    batchNo: row.batchNo || "",
+    certificateNo: row.certificateNo || "",
+    factoryReportNo: row.factoryReportNo || "",
+    isRequired: !!row.isRequired,
+    sentTime: row.sentTime ? new Date(`${row.sentTime}T00:00:00`).toISOString() : null,
+    inspectionAgency: row.inspectionAgency || "",
+    reportNo: row.reportNo || "",
+    result: row.result || "",
+    remark: row.remark || "",
+    statusOverride: row.statusOverride || null,
+    delete: !!row._deleted
+  };
+}
+
+function validateLedgerRows() {
+  const errors = [];
+  materialLedgerRows.forEach((row, index) => {
+    if (row._deleted || (!row.id && !row.materialName && !row.specificationModel && !row.quantity)) {
+      return;
+    }
+
+    if (!row.materialName || !String(row.materialName).trim()) {
+      errors.push(`第 ${index + 1} 行缺少材料名称`);
+    }
+
+    if (row.quantity !== "" && row.quantity !== null && row.quantity !== undefined && Number.isNaN(Number(row.quantity))) {
+      errors.push(`第 ${index + 1} 行数量不是有效数字`);
+    }
+  });
+  return errors;
+}
+
+async function saveMaterialLedgerRows() {
+  const errors = validateLedgerRows();
+  if (errors.length) {
+    showResult("#materialResult", errors.join("\n"));
+    return;
+  }
+
+  showResult("#materialResult", "正在批量保存材料台账...");
+  try {
+    const result = await api("/api/materials/batch-save", {
+      method: "POST",
+      body: JSON.stringify({
+        projectId: activeProjectId,
+        rows: materialLedgerRows.map(buildLedgerSaveRow)
+      })
+    });
+    materialItems = result.items || [];
+    materialLedgerRows = materialItems.map(materialItemToLedgerRow);
+    selectedMaterial = selectedMaterial ? materialItems.find((item) => item.id === selectedMaterial.id) || null : null;
+    renderMaterialRows();
+    renderSelectedMaterial();
+    renderMaterialLedgerGrid();
+    showResult("#materialResult", result);
+  } catch (error) {
+    showResult("#materialResult", error);
+  }
+}
+
+async function confirmMaterialApprovalSelection() {
+  const ids = [...materialLedgerSelectedIds];
+  if (!ids.length) {
+    showResult("#materialResult", "请先勾选需要报审的材料。");
+    return;
+  }
+
+  showResult("#materialResult", "正在生成材料进场报审资料...");
+  try {
+    const result = await api("/api/materials/approval/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        projectId: activeProjectId,
+        materialEntryIds: ids
+      })
+    });
+    await loadMaterials();
+    closeMaterialLedgerDialog();
+    showResult("#materialResult", result);
+    const path = result.firstAbsoluteFilePath || result.firstFilePath;
+    try {
+      await openLocalSpreadsheetFile(path);
+    } catch (openError) {
+      showResult("#materialResult", {
+        success: true,
+        message: `${result.message} 但自动打开失败，请手动打开：${path || "未返回路径"}`,
+        openError: openError.message || openError
+      });
+    }
+  } catch (error) {
+    showResult("#materialResult", error);
+  }
+}
+
 function toDateTimeLocal(value) {
   if (!value) {
     return "";
@@ -2162,19 +2554,8 @@ async function saveMaterialTest(event) {
 }
 
 async function generateMaterialApproval() {
-  if (!selectedMaterial) {
-    showResult("#materialResult", "请先选择或保存一条材料进场记录。");
-    return;
-  }
-
-  showResult("#materialResult", "正在生成材料进场报审资料...");
   try {
-    const result = await api(`/api/materials/${encodeURIComponent(selectedMaterial.id)}/approval/generate?projectId=${encodeURIComponent(activeProjectId)}`, {
-      method: "POST"
-    });
-    showResult("#materialResult", result);
-    await loadMaterials();
-    selectMaterial(selectedMaterial.id);
+    await openMaterialLedgerDialog("approval-select");
   } catch (error) {
     showResult("#materialResult", error);
   }
@@ -2183,20 +2564,24 @@ async function generateMaterialApproval() {
 async function exportMaterialLedger() {
   showResult("#materialResult", "正在导出材料台账...");
   try {
-    const result = await api(`/api/materials/ledger?${getMaterialQuery(true)}`);
+    const result = await api("/api/materials/ledger/export", {
+      method: "POST",
+      body: JSON.stringify(getMaterialFilters())
+    });
     showResult("#materialResult", result);
+    const path = result.absoluteFilePath || result.filePath;
+    try {
+      await openLocalSpreadsheetFile(path);
+    } catch (openError) {
+      showResult("#materialResult", {
+        success: true,
+        message: `${result.message} 但自动打开失败，请手动打开：${path || "未返回路径"}`,
+        openError: openError.message || openError
+      });
+    }
   } catch (error) {
     showResult("#materialResult", error);
   }
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }
 
 async function openTemplateFolder() {
@@ -2729,6 +3114,13 @@ async function boot() {
   $("#openTemplateFolder").addEventListener("click", openTemplateFolder);
   $("#refreshMaterials").addEventListener("click", loadMaterials);
   $("#resetMaterialForm").addEventListener("click", resetMaterialForm);
+  $("#openMaterialLedgerDialog").addEventListener("click", async () => {
+    try {
+      await openMaterialLedgerDialog("edit");
+    } catch (error) {
+      showResult("#materialResult", error);
+    }
+  });
   $("#exportMaterialLedger").addEventListener("click", exportMaterialLedger);
   $("#materialFilterForm").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -2738,7 +3130,48 @@ async function boot() {
   $("#materialEntryForm").addEventListener("submit", saveMaterialEntry);
   $("#materialAttachmentForm").addEventListener("submit", uploadMaterialAttachment);
   $("#materialTestForm").addEventListener("submit", saveMaterialTest);
-  $("#generateMaterialApproval").addEventListener("click", generateMaterialApproval);
+  $("#generateMaterialApproval").addEventListener("click", generateMaterialApproval);  $("#materialLedgerClose").addEventListener("click", closeMaterialLedgerDialog);
+  $("#materialLedgerAddRow").addEventListener("click", addMaterialLedgerRow);
+  $("#materialLedgerDeleteRows").addEventListener("click", deleteMaterialLedgerRows);
+  $("#materialLedgerSave").addEventListener("click", saveMaterialLedgerRows);
+  $("#materialLedgerConfirmApproval").addEventListener("click", confirmMaterialApprovalSelection);
+  $("#materialLedgerQuickFilter").addEventListener("input", renderMaterialLedgerGrid);
+  $("#materialLedgerBody").addEventListener("input", (event) => {
+    if (event.target.matches("[data-ledger-field]")) {
+      updateLedgerCellFromElement(event.target);
+    }
+  });
+  $("#materialLedgerBody").addEventListener("change", (event) => {
+    const approvalSelect = event.target.closest("[data-ledger-select]");
+    if (approvalSelect) {
+      const row = materialLedgerRows[Number(approvalSelect.dataset.ledgerSelect)];
+      if (row?.id && approvalSelect.checked) {
+        materialLedgerSelectedIds.add(row.id);
+      } else if (row?.id) {
+        materialLedgerSelectedIds.delete(row.id);
+      }
+      renderMaterialLedgerGrid();
+    }
+  });
+  $("#materialLedgerBody").addEventListener("paste", (event) => {
+    const cell = event.target.closest("[data-ledger-field]");
+    if (!cell || materialLedgerMode !== "edit") {
+      return;
+    }
+
+    const text = event.clipboardData?.getData("text/plain") || "";
+    if (!text.includes("\t") && !text.includes("\n")) {
+      return;
+    }
+
+    event.preventDefault();
+    pasteIntoMaterialLedger(Number(cell.dataset.ledgerRow), cell.dataset.ledgerField, text);
+  });
+  $("#materialLedgerDialog").addEventListener("click", (event) => {
+    if (event.target.id === "materialLedgerDialog") {
+      closeMaterialLedgerDialog();
+    }
+  });
   $("#newGeneratedForm").addEventListener("click", openGeneratedFormModal);
   $("#saveSpreadsheet").addEventListener("click", saveSpreadsheet);
   $("#exportSpreadsheet").addEventListener("click", exportSpreadsheet);
@@ -2752,6 +3185,7 @@ async function boot() {
   $("#generatedFormModal").addEventListener("click", (event) => {
     if (event.target.id === "generatedFormModal") {
       closeGeneratedFormModal();
+      closeMaterialLedgerDialog();
     }
   });
   $("#closeTemplatePreview").addEventListener("click", closeTemplatePreviewModal);
@@ -2764,6 +3198,7 @@ async function boot() {
     if (event.key === "Escape") {
       closeTemplatePreviewModal();
       closeGeneratedFormModal();
+      closeMaterialLedgerDialog();
     }
   });
   $("#refreshKnowledge").addEventListener("click", loadKnowledgeItems);

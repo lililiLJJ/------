@@ -2396,9 +2396,8 @@ async function openMaterialLedgerDesktopWindow(mode = "edit") {
     return;
   }
 
-  const ledgerUrl = new URL(window.location.href);
-  ledgerUrl.hash = "";
-  ledgerUrl.searchParams.set("view", materialLedgerWindowHash);
+  const ledgerUrl = new URL("material-ledger.html", window.location.href);
+  ledgerUrl.searchParams.set("v", "20260525-ledger-entry");
   const url = ledgerUrl.toString();
   try {
     await api("/api/files/open-url", {

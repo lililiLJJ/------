@@ -58,6 +58,8 @@ builder.Services.AddSingleton<ModuleUpdateService>();
 builder.Services.AddSingleton<ProjectStorageService>();
 builder.Services.AddSingleton<ProjectManager>();
 builder.Services.AddSingleton<RecentProjectService>();
+builder.Services.AddSingleton<UnitProjectRepository>();
+builder.Services.AddSingleton<UnitProjectService>();
 builder.Services.AddSingleton<ProjectPathResolver>();
 builder.Services.AddSingleton<ProjectFolderDialogService>();
 builder.Services.AddSingleton<MaterialRepository>();
@@ -90,6 +92,8 @@ var templateCatalog = app.Services.GetRequiredService<TemplateCatalog>();
 var moduleManager = app.Services.GetRequiredService<ModuleManager>();
 var templateTreeRepository = app.Services.GetRequiredService<TemplateTreeRepository>();
 var projectManager = app.Services.GetRequiredService<ProjectManager>();
+var unitProjectRepository = app.Services.GetRequiredService<UnitProjectRepository>();
+var unitProjectService = app.Services.GetRequiredService<UnitProjectService>();
 var materialRepository = app.Services.GetRequiredService<MaterialRepository>();
 var batchPlanRepository = app.Services.GetRequiredService<BatchPlanRepository>();
 knowledgeRepository.EnsureCreated();
@@ -98,7 +102,8 @@ moduleManager.Scan();
 templateTreeRepository.EnsureCreated();
 materialRepository.EnsureCreated();
 batchPlanRepository.EnsureCreated();
-projectManager.GetCurrentProject();
+unitProjectRepository.EnsureCreated();
+unitProjectService.EnsureDefault(projectManager.GetCurrentProject());
 
 Log.Information("工程资料生成服务已启动。Root={RootPath}, Port={Port}", rootPath.FullName, config.Service.Port);
 
@@ -264,11 +269,12 @@ app.MapPost("/api/projects/current", (ProjectUpdateRequest request, ProjectManag
     }
 });
 
-app.MapPost("/api/projects/create", (ProjectCreateRequest request, ProjectManager manager, RecentProjectService recentProjects) =>
+app.MapPost("/api/projects/create", (ProjectCreateRequest request, ProjectManager manager, RecentProjectService recentProjects, UnitProjectService unitProjects) =>
 {
     try
     {
         var project = manager.CreateProject(request);
+        unitProjects.EnsureDefault(project);
         recentProjects.Upsert(project);
         return Results.Ok(new
         {
@@ -286,11 +292,12 @@ app.MapPost("/api/projects/create", (ProjectCreateRequest request, ProjectManage
     }
 });
 
-app.MapPost("/api/projects/open", (ProjectOpenRequest request, ProjectManager manager, RecentProjectService recentProjects) =>
+app.MapPost("/api/projects/open", (ProjectOpenRequest request, ProjectManager manager, RecentProjectService recentProjects, UnitProjectService unitProjects) =>
 {
     try
     {
         var project = manager.OpenProject(request);
+        unitProjects.EnsureDefault(project);
         recentProjects.Upsert(project);
         return Results.Ok(new
         {
@@ -334,8 +341,106 @@ app.MapDelete("/api/projects/recent/{projectId}", (string projectId, ProjectMana
     return Results.Ok(recentProjects.Remove(manager.GetCurrentProject(), projectId));
 });
 
+app.MapGet("/api/unit-projects", (string? projectId, UnitProjectService service) =>
+{
+    try
+    {
+        return Results.Ok(service.List(projectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/unit-projects", (UnitProjectSaveRequest request, UnitProjectService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Create(request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPut("/api/unit-projects/{id}", (string id, UnitProjectSaveRequest request, UnitProjectService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Update(id, request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapDelete("/api/unit-projects/{id}", (string id, string? projectId, UnitProjectService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Deactivate(projectId ?? "", id));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapGet("/api/unit-projects/current", (string? projectId, UnitProjectService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetCurrent(projectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/unit-projects/current", (UnitProjectCurrentRequest request, UnitProjectService service) =>
+{
+    try
+    {
+        return Results.Ok(service.SetCurrent(request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
 app.MapGet("/api/materials", (
     string? projectId,
+    string? unitProjectId,
+    string? materialScope,
     string? materialName,
     DateOnly? entryDateFrom,
     DateOnly? entryDateTo,
@@ -345,13 +450,17 @@ app.MapGet("/api/materials", (
     string? approvalStatus,
     string? status,
     ProjectManager manager,
-    MaterialService service) =>
+    MaterialService service,
+    UnitProjectService unitProjects) =>
 {
     try
     {
         var project = manager.ResolveProject(projectId);
+        var unitProject = unitProjects.ResolveUnitProject(project.ProjectId, unitProjectId);
         var query = new MaterialQuery(
             project.ProjectId,
+            unitProject.Id,
+            string.IsNullOrWhiteSpace(materialScope) ? "currentAndPublic" : materialScope,
             materialName,
             entryDateFrom,
             entryDateTo,
@@ -522,6 +631,8 @@ app.MapPost("/api/materials/approval/generate", (
 
 app.MapGet("/api/materials/ledger", (
     string? projectId,
+    string? unitProjectId,
+    string? materialScope,
     string? materialName,
     DateOnly? entryDateFrom,
     DateOnly? entryDateTo,
@@ -532,13 +643,17 @@ app.MapGet("/api/materials/ledger", (
     string? status,
     bool? export,
     ProjectManager manager,
-    MaterialLedgerService service) =>
+    MaterialLedgerService service,
+    UnitProjectService unitProjects) =>
 {
     try
     {
         var project = manager.ResolveProject(projectId);
+        var unitProject = unitProjects.ResolveUnitProject(project.ProjectId, unitProjectId);
         var query = new MaterialQuery(
             project.ProjectId,
+            unitProject.Id,
+            string.IsNullOrWhiteSpace(materialScope) ? "currentAndPublic" : materialScope,
             materialName,
             entryDateFrom,
             entryDateTo,
@@ -562,13 +677,17 @@ app.MapGet("/api/materials/ledger", (
 app.MapPost("/api/materials/ledger/export", (
     MaterialLedgerExportRequest request,
     ProjectManager manager,
-    MaterialLedgerService service) =>
+    MaterialLedgerService service,
+    UnitProjectService unitProjects) =>
 {
     try
     {
         var project = manager.ResolveProject(request.ProjectId);
+        var unitProject = unitProjects.ResolveUnitProject(project.ProjectId, request.UnitProjectId);
         var query = new MaterialQuery(
             project.ProjectId,
+            unitProject.Id,
+            string.IsNullOrWhiteSpace(request.MaterialScope) ? "currentAndPublic" : request.MaterialScope,
             request.MaterialName,
             request.EntryDateFrom,
             request.EntryDateTo,
@@ -655,9 +774,9 @@ app.MapPost("/api/files/open-url", (OpenUrlRequest request) =>
     }
 });
 
-app.MapGet("/api/template-library/tree", (string? projectId, TemplateTreeService service) =>
+app.MapGet("/api/template-library/tree", (string? projectId, string? unitProjectId, TemplateTreeService service) =>
 {
-    return Results.Ok(service.GetTree(projectId));
+    return Results.Ok(service.GetTree(projectId, unitProjectId));
 });
 
 app.MapGet("/api/templates/{templateNodeId}/rules", (string templateNodeId, RuleService service) =>
@@ -766,11 +885,11 @@ app.MapDelete("/api/generated-forms/{nodeId}", (string nodeId, GeneratedFormServ
     }
 });
 
-app.MapGet("/api/summary/tree", (string? projectId, SummaryService service) =>
+app.MapGet("/api/summary/tree", (string? projectId, string? unitProjectId, SummaryService service) =>
 {
     try
     {
-        return Results.Ok(service.GetTree(projectId));
+        return Results.Ok(service.GetTree(projectId, unitProjectId));
     }
     catch (Exception ex)
     {
@@ -782,11 +901,11 @@ app.MapGet("/api/summary/tree", (string? projectId, SummaryService service) =>
     }
 });
 
-app.MapGet("/api/summary/preview", (string? projectId, string type, string categoryId, SummaryService service) =>
+app.MapGet("/api/summary/preview", (string? projectId, string? unitProjectId, string type, string categoryId, SummaryService service) =>
 {
     try
     {
-        return Results.Ok(service.GetPreview(projectId, type, categoryId));
+        return Results.Ok(service.GetPreview(projectId, unitProjectId, type, categoryId));
     }
     catch (Exception ex)
     {
@@ -814,11 +933,11 @@ app.MapPost("/api/summary/generate", (GenerateSummaryRequest request, SummarySer
     }
 });
 
-app.MapGet("/api/batch-plans", (string? projectId, BatchPlanService service) =>
+app.MapGet("/api/batch-plans", (string? projectId, string? unitProjectId, BatchPlanService service) =>
 {
     try
     {
-        return Results.Ok(service.List(projectId));
+        return Results.Ok(service.List(projectId, unitProjectId));
     }
     catch (Exception ex)
     {

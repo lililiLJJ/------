@@ -10,33 +10,37 @@ public sealed class TemplateTreeService
     private readonly TemplateTreeRepository _repository;
     private readonly ModuleManager _moduleManager;
     private readonly ProjectManager _projectManager;
+    private readonly UnitProjectService _unitProjectService;
 
     public TemplateTreeService(
         TemplateTreeRepository repository,
         ModuleManager moduleManager,
-        ProjectManager projectManager)
+        ProjectManager projectManager,
+        UnitProjectService unitProjectService)
     {
         _repository = repository;
         _moduleManager = moduleManager;
         _projectManager = projectManager;
+        _unitProjectService = unitProjectService;
     }
 
-    public TemplateTreeResult GetTree(string? projectId)
+    public TemplateTreeResult GetTree(string? projectId, string? unitProjectId)
     {
-        var effectiveProjectId = string.IsNullOrWhiteSpace(projectId)
-            ? _projectManager.GetCurrentProject().ProjectId
-            : projectId.Trim();
+        var project = _projectManager.ResolveProject(projectId);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, unitProjectId);
 
-        _repository.EnsureProject(effectiveProjectId, null);
-        var moduleNodes = BuildModuleTree(effectiveProjectId);
+        _repository.EnsureProject(project.ProjectId, project.ProjectName);
+        var moduleNodes = BuildModuleTree(project.ProjectId, unitProject.Id);
         return new TemplateTreeResult(
             true,
-            effectiveProjectId,
-            _repository.GetProjectName(effectiveProjectId),
-            moduleNodes.Count > 0 ? moduleNodes : _repository.GetTree(effectiveProjectId));
+            project.ProjectId,
+            _repository.GetProjectName(project.ProjectId),
+            unitProject.Id,
+            unitProject.UnitProjectName,
+            moduleNodes.Count > 0 ? moduleNodes : _repository.GetTree(project.ProjectId));
     }
 
-    private IReadOnlyList<TemplateTreeNodeDto> BuildModuleTree(string projectId)
+    private IReadOnlyList<TemplateTreeNodeDto> BuildModuleTree(string projectId, string unitProjectId)
     {
         var modules = _moduleManager.GetValidModules();
         if (modules.Count == 0)
@@ -44,7 +48,7 @@ public sealed class TemplateTreeService
             return [];
         }
 
-        var documents = _repository.ListProjectDocuments(projectId)
+        var documents = _repository.ListProjectDocuments(projectId, unitProjectId)
             .GroupBy(document => $"{document.ModuleId}:{document.TemplateItemId}")
             .ToDictionary(group => group.Key, group => group.OrderBy(item => item.CreatedAt).ToArray());
 

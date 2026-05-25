@@ -28,6 +28,7 @@ public sealed class GeneratedFormService
     private readonly TemplateTreeRepository _repository;
     private readonly TemplateService _templateService;
     private readonly ProjectManager _projectManager;
+    private readonly UnitProjectService _unitProjectService;
     private readonly ProjectPathResolver _pathResolver;
     private readonly RowHeightBalanceService _rowHeightBalanceService;
 
@@ -35,12 +36,14 @@ public sealed class GeneratedFormService
         TemplateTreeRepository repository,
         TemplateService templateService,
         ProjectManager projectManager,
+        UnitProjectService unitProjectService,
         ProjectPathResolver pathResolver,
         RowHeightBalanceService rowHeightBalanceService)
     {
         _repository = repository;
         _templateService = templateService;
         _projectManager = projectManager;
+        _unitProjectService = unitProjectService;
         _pathResolver = pathResolver;
         _rowHeightBalanceService = rowHeightBalanceService;
     }
@@ -99,6 +102,7 @@ public sealed class GeneratedFormService
         }
 
         var project = _projectManager.ResolveProject(request.ProjectId);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, request.UnitProjectId);
         var template = _templateService.ResolveTemplate(request.TemplateNodeId);
         var templateCode = template.TemplateCode;
         var targetDirectory = project.IsDefault
@@ -132,6 +136,7 @@ public sealed class GeneratedFormService
                 targetPath)
             : _repository.InsertProjectDocument(
                 project.ProjectId,
+                unitProject.Id,
                 template.ModuleId,
                 template.TemplateItemId,
                 template.TemplateNodeId,

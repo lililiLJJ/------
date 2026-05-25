@@ -28,6 +28,7 @@ public sealed class BatchPlanRepository
             CREATE TABLE IF NOT EXISTS BatchPlan (
               Id TEXT PRIMARY KEY,
               ProjectId TEXT NOT NULL,
+              UnitProjectId TEXT NULL,
               Name TEXT NOT NULL,
               Remark TEXT NOT NULL DEFAULT '',
               CreatedAt TEXT NOT NULL,
@@ -37,11 +38,11 @@ public sealed class BatchPlanRepository
 
             CREATE INDEX IF NOT EXISTS idx_batch_plan_project
               ON BatchPlan(ProjectId, Status, UpdatedAt);
-
             CREATE TABLE IF NOT EXISTS BatchPlanItem (
               Id TEXT PRIMARY KEY,
               BatchPlanId TEXT NOT NULL,
               ProjectId TEXT NOT NULL,
+              UnitProjectId TEXT NULL,
               ModuleId TEXT NOT NULL,
               TemplateItemId INTEGER NOT NULL,
               TemplateName TEXT NOT NULL,
@@ -81,20 +82,24 @@ public sealed class BatchPlanRepository
               ON InspectionItemDeviceMapping(ModuleId, TemplateItemId, IsEnabled, SortOrder);
             """;
         command.ExecuteNonQuery();
+        EnsureColumn(connection, "BatchPlan", "UnitProjectId", "TEXT NULL");
+        EnsureColumn(connection, "BatchPlanItem", "UnitProjectId", "TEXT NULL");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS idx_batch_plan_unit_project ON BatchPlan(ProjectId, UnitProjectId, Status, UpdatedAt);");
     }
 
-    public IReadOnlyList<BatchPlanInfo> ListPlans(string projectId)
+    public IReadOnlyList<BatchPlanInfo> ListPlans(string projectId, string unitProjectId)
     {
         using var connection = OpenConnection();
         var plans = new List<BatchPlanInfo>();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, ProjectId, Name, Remark, Status, CreatedAt, UpdatedAt
+            SELECT Id, ProjectId, UnitProjectId, Name, Remark, Status, CreatedAt, UpdatedAt
             FROM BatchPlan
-            WHERE ProjectId = $projectId AND Status <> 'deleted'
+            WHERE ProjectId = $projectId AND UnitProjectId = $unitProjectId AND Status <> 'deleted'
             ORDER BY UpdatedAt DESC, CreatedAt DESC;
             """;
         command.Parameters.AddWithValue("$projectId", projectId);
+        command.Parameters.AddWithValue("$unitProjectId", unitProjectId);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
@@ -109,7 +114,7 @@ public sealed class BatchPlanRepository
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, ProjectId, Name, Remark, Status, CreatedAt, UpdatedAt
+            SELECT Id, ProjectId, UnitProjectId, Name, Remark, Status, CreatedAt, UpdatedAt
             FROM BatchPlan
             WHERE Id = $id AND Status <> 'deleted';
             """;
@@ -124,7 +129,7 @@ public sealed class BatchPlanRepository
         return plan with { Items = ListItems(plan.Id) };
     }
 
-    public BatchPlanInfo SavePlan(string? id, string projectId, BatchPlanSaveRequest request)
+    public BatchPlanInfo SavePlan(string? id, string projectId, string unitProjectId, BatchPlanSaveRequest request)
     {
         var planId = string.IsNullOrWhiteSpace(id) ? $"batch-plan:{Guid.NewGuid():N}" : id.Trim();
         var now = DateTimeOffset.Now;
@@ -138,10 +143,11 @@ public sealed class BatchPlanRepository
         {
             command.Transaction = transaction;
             command.CommandText = """
-                INSERT INTO BatchPlan (Id, ProjectId, Name, Remark, CreatedAt, UpdatedAt, Status)
-                VALUES ($id, $projectId, $name, $remark, $createdAt, $updatedAt, 'active')
+                INSERT INTO BatchPlan (Id, ProjectId, UnitProjectId, Name, Remark, CreatedAt, UpdatedAt, Status)
+                VALUES ($id, $projectId, $unitProjectId, $name, $remark, $createdAt, $updatedAt, 'active')
                 ON CONFLICT(Id) DO UPDATE SET
                   ProjectId = excluded.ProjectId,
+                  UnitProjectId = excluded.UnitProjectId,
                   Name = excluded.Name,
                   Remark = excluded.Remark,
                   UpdatedAt = excluded.UpdatedAt,
@@ -149,6 +155,7 @@ public sealed class BatchPlanRepository
                 """;
             command.Parameters.AddWithValue("$id", planId);
             command.Parameters.AddWithValue("$projectId", projectId);
+            command.Parameters.AddWithValue("$unitProjectId", unitProjectId);
             command.Parameters.AddWithValue("$name", planName);
             command.Parameters.AddWithValue("$remark", request.Remark?.Trim() ?? "");
             command.Parameters.AddWithValue("$createdAt", now.ToString("O"));
@@ -166,7 +173,7 @@ public sealed class BatchPlanRepository
 
             var itemId = string.IsNullOrWhiteSpace(item.Id) ? $"batch-item:{Guid.NewGuid():N}" : item.Id.Trim();
             keepIds.Add(itemId);
-            UpsertItem(connection, transaction, planId, projectId, itemId, item, now);
+            UpsertItem(connection, transaction, planId, projectId, unitProjectId, itemId, item, now);
         }
 
         using (var delete = connection.CreateCommand())
@@ -303,7 +310,7 @@ public sealed class BatchPlanRepository
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, BatchPlanId, ProjectId, ModuleId, TemplateItemId, TemplateName,
+            SELECT Id, BatchPlanId, ProjectId, UnitProjectId, ModuleId, TemplateItemId, TemplateName,
                    PartName, Capacity, QuantityUnit, ConstructionDate, DeviceQuantitiesJson,
                    GeneratedDocumentId, Status, ErrorMessage, CreatedAt, UpdatedAt
             FROM BatchPlanItem
@@ -326,6 +333,7 @@ public sealed class BatchPlanRepository
         SqliteTransaction transaction,
         string planId,
         string projectId,
+        string unitProjectId,
         string itemId,
         BatchPlanItemSaveRequest item,
         DateTimeOffset now)
@@ -334,17 +342,18 @@ public sealed class BatchPlanRepository
         command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO BatchPlanItem (
-                Id, BatchPlanId, ProjectId, ModuleId, TemplateItemId, TemplateName,
+                Id, BatchPlanId, ProjectId, UnitProjectId, ModuleId, TemplateItemId, TemplateName,
                 PartName, Capacity, QuantityUnit, ConstructionDate, DeviceQuantitiesJson,
                 GeneratedDocumentId, Status, ErrorMessage, CreatedAt, UpdatedAt
             )
             VALUES (
-                $id, $batchPlanId, $projectId, $moduleId, $templateItemId, $templateName,
+                $id, $batchPlanId, $projectId, $unitProjectId, $moduleId, $templateItemId, $templateName,
                 $partName, $capacity, $quantityUnit, $constructionDate, $deviceQuantitiesJson,
                 NULL, $status, $errorMessage, $createdAt, $updatedAt
             )
             ON CONFLICT(Id) DO UPDATE SET
                 ModuleId = excluded.ModuleId,
+                UnitProjectId = excluded.UnitProjectId,
                 TemplateItemId = excluded.TemplateItemId,
                 TemplateName = excluded.TemplateName,
                 PartName = excluded.PartName,
@@ -362,6 +371,7 @@ public sealed class BatchPlanRepository
         command.Parameters.AddWithValue("$id", itemId);
         command.Parameters.AddWithValue("$batchPlanId", planId);
         command.Parameters.AddWithValue("$projectId", projectId);
+        command.Parameters.AddWithValue("$unitProjectId", unitProjectId);
         command.Parameters.AddWithValue("$moduleId", item.ModuleId?.Trim() ?? "");
         command.Parameters.AddWithValue("$templateItemId", item.TemplateItemId ?? 0);
         command.Parameters.AddWithValue("$templateName", item.TemplateName?.Trim() ?? "");
@@ -386,16 +396,44 @@ public sealed class BatchPlanRepository
         return connection;
     }
 
+    private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string definition)
+    {
+        using (var check = connection.CreateCommand())
+        {
+            check.CommandText = $"PRAGMA table_info({tableName});";
+            using var reader = check.ExecuteReader();
+            while (reader.Read())
+            {
+                if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+        }
+
+        using var command = connection.CreateCommand();
+        command.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {definition};";
+        command.ExecuteNonQuery();
+    }
+
+    private static void ExecuteNonQuery(SqliteConnection connection, string sql)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
+
     private static BatchPlanInfo ReadPlan(SqliteDataReader reader, IReadOnlyList<BatchPlanItemInfo> items)
     {
         return new BatchPlanInfo(
             reader.GetString(0),
             reader.GetString(1),
-            reader.GetString(2),
+            reader.IsDBNull(2) ? "" : reader.GetString(2),
             reader.GetString(3),
             reader.GetString(4),
-            DateTimeOffset.Parse(reader.GetString(5)),
+            reader.GetString(5),
             DateTimeOffset.Parse(reader.GetString(6)),
+            DateTimeOffset.Parse(reader.GetString(7)),
             items);
     }
 
@@ -405,19 +443,20 @@ public sealed class BatchPlanRepository
             reader.GetString(0),
             reader.GetString(1),
             reader.GetString(2),
-            reader.GetString(3),
-            reader.GetInt64(4),
-            reader.GetString(5),
+            reader.IsDBNull(3) ? "" : reader.GetString(3),
+            reader.GetString(4),
+            reader.GetInt64(5),
             reader.GetString(6),
             reader.GetString(7),
             reader.GetString(8),
             reader.GetString(9),
-            ParseDeviceQuantities(reader.GetString(10)),
-            reader.IsDBNull(11) ? null : reader.GetString(11),
-            reader.GetString(12),
+            reader.GetString(10),
+            ParseDeviceQuantities(reader.GetString(11)),
+            reader.IsDBNull(12) ? null : reader.GetString(12),
             reader.GetString(13),
-            DateTimeOffset.Parse(reader.GetString(14)),
-            DateTimeOffset.Parse(reader.GetString(15)));
+            reader.GetString(14),
+            DateTimeOffset.Parse(reader.GetString(15)),
+            DateTimeOffset.Parse(reader.GetString(16)));
     }
 
     private static DeviceMappingInfo ReadMapping(SqliteDataReader reader)

@@ -24,10 +24,13 @@ public sealed record TemplateTreeResult(
     bool Success,
     string ProjectId,
     string ProjectName,
+    string UnitProjectId,
+    string UnitProjectName,
     IReadOnlyList<TemplateTreeNodeDto> Nodes);
 
 public sealed record CreateGeneratedFormRequest(
     string ProjectId,
+    string? UnitProjectId,
     string TemplateNodeId,
     string FormName,
     IReadOnlyDictionary<string, string>? Fields);
@@ -62,6 +65,7 @@ public sealed record GeneratedFormBackupResult(
 public sealed record ProjectDocumentInfo(
     string Id,
     string ProjectId,
+    string? UnitProjectId,
     string ModuleId,
     long TemplateItemId,
     string DocumentName,
@@ -76,6 +80,8 @@ public sealed record SummaryTreeResult(
     bool Success,
     string ProjectId,
     string ProjectName,
+    string UnitProjectId,
+    string UnitProjectName,
     IReadOnlyList<SummaryTreeNodeDto> Nodes,
     IReadOnlyList<string> Warnings);
 
@@ -98,6 +104,7 @@ public sealed record SummaryTreeNodeDto(
 public sealed record SummaryPreviewResult(
     bool Success,
     string ProjectId,
+    string UnitProjectId,
     string SummaryType,
     string CategoryId,
     string Title,
@@ -125,6 +132,7 @@ public sealed record SummaryPreviewTotals(
 
 public sealed record GenerateSummaryRequest(
     string ProjectId,
+    string? UnitProjectId,
     string Type,
     string CategoryId);
 
@@ -138,6 +146,7 @@ public sealed record GenerateSummaryResult(
 public sealed record SummaryDocumentInfo(
     string Id,
     string ProjectId,
+    string? UnitProjectId,
     string ModuleId,
     string SummaryType,
     string DivisionName,

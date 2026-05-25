@@ -31,6 +31,7 @@ public sealed class BatchPlanService
     private readonly TemplateTreeRepository _templateTreeRepository;
     private readonly TemplateService _templateService;
     private readonly ProjectManager _projectManager;
+    private readonly UnitProjectService _unitProjectService;
     private readonly RowHeightBalanceService _rowHeightBalanceService;
 
     public BatchPlanService(
@@ -38,25 +39,29 @@ public sealed class BatchPlanService
         TemplateTreeRepository templateTreeRepository,
         TemplateService templateService,
         ProjectManager projectManager,
+        UnitProjectService unitProjectService,
         RowHeightBalanceService rowHeightBalanceService)
     {
         _repository = repository;
         _templateTreeRepository = templateTreeRepository;
         _templateService = templateService;
         _projectManager = projectManager;
+        _unitProjectService = unitProjectService;
         _rowHeightBalanceService = rowHeightBalanceService;
     }
 
-    public BatchPlanListResult List(string? projectId)
+    public BatchPlanListResult List(string? projectId, string? unitProjectId)
     {
         var project = _projectManager.ResolveProject(projectId);
-        return new BatchPlanListResult(true, project.ProjectId, _repository.ListPlans(project.ProjectId));
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, unitProjectId);
+        return new BatchPlanListResult(true, project.ProjectId, unitProject.Id, _repository.ListPlans(project.ProjectId, unitProject.Id));
     }
 
     public BatchPlanSaveResult Create(BatchPlanSaveRequest request)
     {
         var project = _projectManager.ResolveProject(request.ProjectId);
-        var plan = _repository.SavePlan(null, project.ProjectId, request);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, request.UnitProjectId);
+        var plan = _repository.SavePlan(null, project.ProjectId, unitProject.Id, request);
         return new BatchPlanSaveResult(true, plan, "检验批划分计划已创建。");
     }
 
@@ -64,7 +69,8 @@ public sealed class BatchPlanService
     {
         var existing = _repository.GetPlan(id) ?? throw new InvalidOperationException("检验批划分计划不存在。");
         var project = _projectManager.ResolveProject(request.ProjectId ?? existing.ProjectId);
-        var plan = _repository.SavePlan(id, project.ProjectId, request);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, request.UnitProjectId ?? existing.UnitProjectId);
+        var plan = _repository.SavePlan(id, project.ProjectId, unitProject.Id, request);
         return new BatchPlanSaveResult(true, plan, "检验批划分计划已保存。");
     }
 
@@ -76,6 +82,7 @@ public sealed class BatchPlanService
         return new BatchPlanPreviewResult(
             true,
             plan.ProjectId,
+            plan.UnitProjectId,
             plan.Id,
             rows.Length,
             rows.Count(row => row.CanGenerate),
@@ -89,6 +96,7 @@ public sealed class BatchPlanService
         var plan = _repository.GetPlan(id) ?? throw new InvalidOperationException("检验批划分计划不存在。");
         var previewRows = BuildPreviewRows(plan).ToArray();
         var project = _projectManager.ResolveProject(plan.ProjectId);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, plan.UnitProjectId);
         var itemsById = plan.Items.ToDictionary(item => item.Id, StringComparer.OrdinalIgnoreCase);
         var results = new List<BatchPlanGenerateRowResult>();
 
@@ -110,7 +118,7 @@ public sealed class BatchPlanService
 
             try
             {
-                var result = GenerateOne(project, plan, item, row, request?.Fields ?? new Dictionary<string, string>());
+                var result = GenerateOne(project, unitProject, plan, item, row, request?.Fields ?? new Dictionary<string, string>());
                 _repository.MarkItemGenerated(item.Id, result.Node.Id);
                 results.Add(new BatchPlanGenerateRowResult(row.RowIndex, item.Id, true, false, result.Node.Id, result.GeneratedFilePath, "生成成功。"));
             }
@@ -127,6 +135,7 @@ public sealed class BatchPlanService
         return new BatchPlanGenerateResult(
             failedCount == 0 && successCount > 0,
             plan.ProjectId,
+            unitProject.Id,
             plan.Id,
             successCount,
             failedCount,
@@ -299,6 +308,7 @@ public sealed class BatchPlanService
 
     private GeneratedFormCreateResult GenerateOne(
         ProjectContext project,
+        UnitProjectInfo unitProject,
         BatchPlanInfo plan,
         BatchPlanItemInfo item,
         BatchPlanPreviewRow preview,
@@ -306,7 +316,7 @@ public sealed class BatchPlanService
     {
         var templateNodeId = BuildTemplateNodeId(item.ModuleId, item.TemplateItemId);
         var template = _templateService.ResolveTemplate(templateNodeId);
-        var targetDirectory = Path.Combine(project.GeneratedFormsPath, "BatchPlans", SanitizePathSegment(plan.Name));
+        var targetDirectory = Path.Combine(project.GeneratedFormsPath, SanitizePathSegment(unitProject.UnitProjectName), "BatchPlans", SanitizePathSegment(plan.Name));
         Directory.CreateDirectory(targetDirectory);
 
         var extension = Path.GetExtension(template.TemplatePath);
@@ -331,6 +341,7 @@ public sealed class BatchPlanService
         var documentName = preview.OutputName;
         var node = _templateTreeRepository.InsertProjectDocument(
             project.ProjectId,
+            unitProject.Id,
             template.ModuleId,
             template.TemplateItemId,
             template.TemplateNodeId,

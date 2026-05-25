@@ -25,40 +25,47 @@ public sealed class SummaryService
     private readonly TemplateTreeRepository _repository;
     private readonly ModuleManager _moduleManager;
     private readonly ProjectManager _projectManager;
+    private readonly UnitProjectService _unitProjectService;
 
     public SummaryService(
         DirectoryInfo rootPath,
         TemplateTreeRepository repository,
         ModuleManager moduleManager,
-        ProjectManager projectManager)
+        ProjectManager projectManager,
+        UnitProjectService unitProjectService)
     {
         _rootPath = rootPath;
         _repository = repository;
         _moduleManager = moduleManager;
         _projectManager = projectManager;
+        _unitProjectService = unitProjectService;
     }
 
-    public SummaryTreeResult GetTree(string? projectId)
+    public SummaryTreeResult GetTree(string? projectId, string? unitProjectId)
     {
-        var effectiveProjectId = ResolveProjectId(projectId);
+        var project = _projectManager.ResolveProject(projectId);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, unitProjectId);
         var warnings = new List<string>();
-        var documents = LoadDocuments(effectiveProjectId, warnings);
+        var documents = LoadDocuments(project.ProjectId, unitProject.Id, warnings);
         var nodes = BuildTree(documents);
         return new SummaryTreeResult(
             true,
-            effectiveProjectId,
-            _repository.GetProjectName(effectiveProjectId),
+            project.ProjectId,
+            _repository.GetProjectName(project.ProjectId),
+            unitProject.Id,
+            unitProject.UnitProjectName,
             nodes,
             warnings);
     }
 
-    public SummaryPreviewResult GetPreview(string? projectId, string type, string categoryId)
+    public SummaryPreviewResult GetPreview(string? projectId, string? unitProjectId, string type, string categoryId)
     {
-        var effectiveProjectId = ResolveProjectId(projectId);
+        var project = _projectManager.ResolveProject(projectId);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, unitProjectId);
         var summaryType = NormalizeSummaryType(type);
         var target = ParseCategoryNodeId(categoryId);
         var warnings = new List<string>();
-        var documents = LoadDocuments(effectiveProjectId, warnings)
+        var documents = LoadDocuments(project.ProjectId, unitProject.Id, warnings)
             .Where(item => MatchesCategory(item.Path, summaryType, target.ModuleId, target.CategoryId))
             .ToArray();
 
@@ -89,7 +96,8 @@ public sealed class SummaryService
 
         return new SummaryPreviewResult(
             true,
-            effectiveProjectId,
+            project.ProjectId,
+            unitProject.Id,
             summaryType,
             categoryId,
             title,
@@ -103,7 +111,7 @@ public sealed class SummaryService
 
     public GenerateSummaryResult Generate(GenerateSummaryRequest request)
     {
-        var preview = GetPreview(request.ProjectId, request.Type, request.CategoryId);
+        var preview = GetPreview(request.ProjectId, request.UnitProjectId, request.Type, request.CategoryId);
         if (preview.Rows.Count == 0)
         {
             throw new InvalidOperationException("当前汇总对象没有可生成的有效资料。");
@@ -111,7 +119,8 @@ public sealed class SummaryService
 
         var templatePath = ResolveSummaryTemplate(preview.SummaryType);
         var project = _projectManager.ResolveProject(preview.ProjectId);
-        var outputDirectory = Path.Combine(project.GeneratedFormsPath, "Summary", preview.SummaryType);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, preview.UnitProjectId);
+        var outputDirectory = Path.Combine(project.GeneratedFormsPath, "Summary", SanitizePathSegment(unitProject.UnitProjectName), preview.SummaryType);
         Directory.CreateDirectory(outputDirectory);
 
         var outputName = SanitizeFileName($"{preview.Title}-{DateTime.Now:yyyyMMddHHmmss}.xlsx");
@@ -122,6 +131,7 @@ public sealed class SummaryService
         var target = ParseCategoryNodeId(preview.CategoryId);
         var summaryDocument = _repository.InsertSummaryDocument(
             preview.ProjectId,
+            preview.UnitProjectId,
             target.ModuleId,
             preview.SummaryType,
             preview.DivisionName,
@@ -139,16 +149,9 @@ public sealed class SummaryService
             preview.Warnings);
     }
 
-    private string ResolveProjectId(string? projectId)
+    private IReadOnlyList<SummarySourceDocument> LoadDocuments(string projectId, string unitProjectId, List<string> warnings)
     {
-        return string.IsNullOrWhiteSpace(projectId)
-            ? _projectManager.GetCurrentProject().ProjectId
-            : projectId.Trim();
-    }
-
-    private IReadOnlyList<SummarySourceDocument> LoadDocuments(string projectId, List<string> warnings)
-    {
-        var documents = _repository.ListProjectDocuments(projectId)
+        var documents = _repository.ListProjectDocuments(projectId, unitProjectId)
             .Where(document =>
                 !string.Equals(document.Status, "Deleted", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(document.Status, "Invalid", StringComparison.OrdinalIgnoreCase))
@@ -815,6 +818,17 @@ public sealed class SummaryService
         return sanitized.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)
             ? sanitized
             : $"{sanitized}.xlsx";
+    }
+
+    private static string SanitizePathSegment(string value)
+    {
+        var sanitized = string.IsNullOrWhiteSpace(value) ? "默认单位工程" : value.Trim();
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+        {
+            sanitized = sanitized.Replace(invalid, '_');
+        }
+
+        return sanitized;
     }
 
     private static string JoinNames(params string[] values)

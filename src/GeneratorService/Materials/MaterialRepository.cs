@@ -21,6 +21,7 @@ public sealed class MaterialRepository
             CREATE TABLE IF NOT EXISTS MaterialEntry (
               Id TEXT PRIMARY KEY,
               ProjectId TEXT NOT NULL,
+              UnitProjectId TEXT NULL,
               MaterialName TEXT NOT NULL,
               SpecificationModel TEXT NOT NULL,
               Unit TEXT NOT NULL,
@@ -39,7 +40,6 @@ public sealed class MaterialRepository
 
             CREATE INDEX IF NOT EXISTS idx_material_entry_project
               ON MaterialEntry(ProjectId, EntryDate, MaterialName);
-
             CREATE TABLE IF NOT EXISTS MaterialCertificate (
               Id TEXT PRIMARY KEY,
               ProjectId TEXT NOT NULL,
@@ -94,14 +94,17 @@ public sealed class MaterialRepository
             """;
         command.ExecuteNonQuery();
         EnsureColumn(connection, "MaterialEntry", "DeletedAt", "TEXT NULL");
+        EnsureColumn(connection, "MaterialEntry", "UnitProjectId", "TEXT NULL");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS idx_material_entry_unit_project ON MaterialEntry(ProjectId, UnitProjectId, EntryDate, MaterialName);");
     }
 
-    public MaterialEntryRecord InsertEntry(string projectId, MaterialEntryCreateRequest request)
+    public MaterialEntryRecord InsertEntry(string projectId, string? unitProjectId, MaterialEntryCreateRequest request)
     {
         var now = DateTimeOffset.Now;
         var entry = new MaterialEntryRecord(
             $"material:{Guid.NewGuid():N}",
             projectId,
+            NormalizeUnitProjectId(unitProjectId),
             CleanRequired(request.MaterialName, "材料名称不能为空。"),
             Clean(request.SpecificationModel),
             Clean(request.Unit),
@@ -121,12 +124,12 @@ public sealed class MaterialRepository
         using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO MaterialEntry (
-                Id, ProjectId, MaterialName, SpecificationModel, Unit, Quantity,
+                Id, ProjectId, UnitProjectId, MaterialName, SpecificationModel, Unit, Quantity,
                 EntryDate, Supplier, Manufacturer, UsePart, BatchNo, Remark,
                 StatusOverride, DeletedAt, CreatedAt, UpdatedAt
             )
             VALUES (
-                $id, $projectId, $materialName, $specificationModel, $unit, $quantity,
+                $id, $projectId, $unitProjectId, $materialName, $specificationModel, $unit, $quantity,
                 $entryDate, $supplier, $manufacturer, $usePart, $batchNo, $remark,
                 $statusOverride, $deletedAt, $createdAt, $updatedAt
             );
@@ -141,6 +144,7 @@ public sealed class MaterialRepository
         var current = GetEntry(projectId, id) ?? throw new InvalidOperationException("材料进场记录不存在。");
         var entry = current with
         {
+            UnitProjectId = request.UnitProjectId is null ? current.UnitProjectId : NormalizeUnitProjectId(request.UnitProjectId),
             MaterialName = CleanRequired(request.MaterialName, "材料名称不能为空。"),
             SpecificationModel = Clean(request.SpecificationModel),
             Unit = Clean(request.Unit),
@@ -159,7 +163,8 @@ public sealed class MaterialRepository
         using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE MaterialEntry
-            SET MaterialName = $materialName,
+            SET UnitProjectId = $unitProjectId,
+                MaterialName = $materialName,
                 SpecificationModel = $specificationModel,
                 Unit = $unit,
                 Quantity = $quantity,
@@ -191,6 +196,7 @@ public sealed class MaterialRepository
         AddLike(command, where, "MaterialName", "$materialName", query.MaterialName);
         AddLike(command, where, "UsePart", "$usePart", query.UsePart);
         AddLike(command, where, "Supplier", "$supplier", query.Supplier);
+        AddMaterialScope(command, where, query.UnitProjectId, query.MaterialScope);
         if (query.EntryDateFrom is not null)
         {
             where.Add("EntryDate >= $entryDateFrom");
@@ -204,7 +210,7 @@ public sealed class MaterialRepository
         }
 
         command.CommandText = $"""
-            SELECT Id, ProjectId, MaterialName, SpecificationModel, Unit, Quantity,
+            SELECT Id, ProjectId, UnitProjectId, MaterialName, SpecificationModel, Unit, Quantity,
                    EntryDate, Supplier, Manufacturer, UsePart, BatchNo, Remark,
                    StatusOverride, DeletedAt, CreatedAt, UpdatedAt
             FROM MaterialEntry
@@ -228,7 +234,7 @@ public sealed class MaterialRepository
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, ProjectId, MaterialName, SpecificationModel, Unit, Quantity,
+            SELECT Id, ProjectId, UnitProjectId, MaterialName, SpecificationModel, Unit, Quantity,
                    EntryDate, Supplier, Manufacturer, UsePart, BatchNo, Remark,
                    StatusOverride, DeletedAt, CreatedAt, UpdatedAt
             FROM MaterialEntry
@@ -600,10 +606,18 @@ public sealed class MaterialRepository
         alterCommand.ExecuteNonQuery();
     }
 
+    private static void ExecuteNonQuery(SqliteConnection connection, string sql)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
+
     private static void BindEntry(SqliteCommand command, MaterialEntryRecord entry)
     {
         command.Parameters.AddWithValue("$id", entry.Id);
         command.Parameters.AddWithValue("$projectId", entry.ProjectId);
+        command.Parameters.AddWithValue("$unitProjectId", (object?)entry.UnitProjectId ?? DBNull.Value);
         command.Parameters.AddWithValue("$materialName", entry.MaterialName);
         command.Parameters.AddWithValue("$specificationModel", entry.SpecificationModel);
         command.Parameters.AddWithValue("$unit", entry.Unit);
@@ -656,20 +670,21 @@ public sealed class MaterialRepository
         return new MaterialEntryRecord(
             reader.GetString(0),
             reader.GetString(1),
-            reader.GetString(2),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
             reader.GetString(3),
             reader.GetString(4),
-            decimal.Parse(reader.GetString(5), System.Globalization.CultureInfo.InvariantCulture),
-            DateOnly.Parse(reader.GetString(6)),
-            reader.GetString(7),
+            reader.GetString(5),
+            decimal.Parse(reader.GetString(6), System.Globalization.CultureInfo.InvariantCulture),
+            DateOnly.Parse(reader.GetString(7)),
             reader.GetString(8),
             reader.GetString(9),
             reader.GetString(10),
             reader.GetString(11),
-            reader.IsDBNull(12) ? null : reader.GetString(12),
+            reader.GetString(12),
             reader.IsDBNull(13) ? null : reader.GetString(13),
-            DateTimeOffset.Parse(reader.GetString(14)),
-            DateTimeOffset.Parse(reader.GetString(15)));
+            reader.IsDBNull(14) ? null : reader.GetString(14),
+            DateTimeOffset.Parse(reader.GetString(15)),
+            DateTimeOffset.Parse(reader.GetString(16)));
     }
 
     private static IReadOnlyList<MaterialCertificateInfo> ReadCertificates(SqliteCommand command)
@@ -741,6 +756,41 @@ public sealed class MaterialRepository
         command.Parameters.AddWithValue(parameter, $"%{value.Trim()}%");
     }
 
+    private static void AddMaterialScope(
+        SqliteCommand command,
+        List<string> where,
+        string? unitProjectId,
+        string materialScope)
+    {
+        var scope = string.IsNullOrWhiteSpace(materialScope) ? "currentAndPublic" : materialScope.Trim();
+        if (scope.Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (scope.Equals("public", StringComparison.OrdinalIgnoreCase))
+        {
+            where.Add("(UnitProjectId IS NULL OR TRIM(UnitProjectId) = '')");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(unitProjectId))
+        {
+            where.Add("(UnitProjectId IS NULL OR TRIM(UnitProjectId) = '')");
+            return;
+        }
+
+        command.Parameters.AddWithValue("$unitProjectId", unitProjectId.Trim());
+        if (scope.Equals("current", StringComparison.OrdinalIgnoreCase) ||
+            scope.Equals("unit", StringComparison.OrdinalIgnoreCase))
+        {
+            where.Add("UnitProjectId = $unitProjectId");
+            return;
+        }
+
+        where.Add("(UnitProjectId = $unitProjectId OR UnitProjectId IS NULL OR TRIM(UnitProjectId) = '')");
+    }
+
     private static string AddInParameters(SqliteCommand command, string prefix, IReadOnlyList<string> values)
     {
         var names = new List<string>();
@@ -786,6 +836,11 @@ public sealed class MaterialRepository
         return cleaned;
     }
 
+    private static string? NormalizeUnitProjectId(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
     public static string ToPortablePath(string path)
     {
         return path.Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/');
@@ -795,6 +850,7 @@ public sealed class MaterialRepository
 public sealed record MaterialEntryRecord(
     string Id,
     string ProjectId,
+    string? UnitProjectId,
     string MaterialName,
     string SpecificationModel,
     string Unit,

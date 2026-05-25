@@ -3,11 +3,13 @@ namespace GeneratorService.Models;
 public sealed record BatchPlanListResult(
     bool Success,
     string ProjectId,
+    string UnitProjectId,
     IReadOnlyList<BatchPlanInfo> Plans);
 
 public sealed record BatchPlanInfo(
     string Id,
     string ProjectId,
+    string UnitProjectId,
     string Name,
     string Remark,
     string Status,
@@ -19,6 +21,7 @@ public sealed record BatchPlanItemInfo(
     string Id,
     string BatchPlanId,
     string ProjectId,
+    string UnitProjectId,
     string ModuleId,
     long TemplateItemId,
     string TemplateName,
@@ -35,6 +38,7 @@ public sealed record BatchPlanItemInfo(
 
 public sealed record BatchPlanSaveRequest(
     string? ProjectId,
+    string? UnitProjectId,
     string? Name,
     string? Remark,
     IReadOnlyList<BatchPlanItemSaveRequest>? Items);
@@ -60,6 +64,7 @@ public sealed record BatchPlanSaveResult(
 public sealed record BatchPlanPreviewResult(
     bool Success,
     string ProjectId,
+    string UnitProjectId,
     string BatchPlanId,
     int TotalCount,
     int GeneratableCount,
@@ -97,6 +102,7 @@ public sealed record DeviceMappingPreview(
 public sealed record BatchPlanGenerateResult(
     bool Success,
     string ProjectId,
+    string UnitProjectId,
     string BatchPlanId,
     int SuccessCount,
     int FailedCount,

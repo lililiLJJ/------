@@ -26,6 +26,7 @@ public static class MaterialStatuses
 
 public sealed record MaterialEntryCreateRequest(
     string? ProjectId,
+    string? UnitProjectId,
     string MaterialName,
     string? SpecificationModel,
     string? Unit,
@@ -39,6 +40,7 @@ public sealed record MaterialEntryCreateRequest(
     string? StatusOverride);
 
 public sealed record MaterialEntryUpdateRequest(
+    string? UnitProjectId,
     string MaterialName,
     string? SpecificationModel,
     string? Unit,
@@ -64,6 +66,8 @@ public sealed record MaterialTestUpsertRequest(
 
 public sealed record MaterialQuery(
     string ProjectId,
+    string? UnitProjectId,
+    string MaterialScope,
     string? MaterialName,
     DateOnly? EntryDateFrom,
     DateOnly? EntryDateTo,
@@ -76,6 +80,7 @@ public sealed record MaterialQuery(
 public sealed record MaterialEntryInfo(
     string Id,
     string ProjectId,
+    string? UnitProjectId,
     string MaterialName,
     string SpecificationModel,
     string Unit,
@@ -136,6 +141,8 @@ public sealed record MaterialApprovalInfo(
 public sealed record MaterialListResult(
     bool Success,
     string ProjectId,
+    string? UnitProjectId,
+    string MaterialScope,
     int Total,
     IReadOnlyList<MaterialEntryInfo> Items);
 
@@ -185,6 +192,8 @@ public sealed record MaterialLedgerRow(
 public sealed record MaterialLedgerResult(
     bool Success,
     string ProjectId,
+    string? UnitProjectId,
+    string MaterialScope,
     int Total,
     IReadOnlyList<MaterialLedgerRow> Rows,
     string? FilePath,
@@ -193,6 +202,7 @@ public sealed record MaterialLedgerResult(
 
 public sealed record MaterialLedgerSaveRow(
     string? Id,
+    string? UnitProjectId,
     string MaterialName,
     string? SpecificationModel,
     string? Unit,
@@ -215,10 +225,13 @@ public sealed record MaterialLedgerSaveRow(
 
 public sealed record MaterialBatchSaveRequest(
     string? ProjectId,
+    string? UnitProjectId,
     IReadOnlyList<MaterialLedgerSaveRow> Rows);
 
 public sealed record MaterialLedgerExportRequest(
     string? ProjectId,
+    string? UnitProjectId,
+    string? MaterialScope,
     string? MaterialName,
     DateOnly? EntryDateFrom,
     DateOnly? EntryDateTo,

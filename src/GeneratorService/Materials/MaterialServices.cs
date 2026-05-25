@@ -10,11 +10,13 @@ namespace GeneratorService.Materials;
 public sealed class MaterialService
 {
     private readonly ProjectManager _projectManager;
+    private readonly UnitProjectService _unitProjectService;
     private readonly MaterialRepository _repository;
 
-    public MaterialService(ProjectManager projectManager, MaterialRepository repository)
+    public MaterialService(ProjectManager projectManager, UnitProjectService unitProjectService, MaterialRepository repository)
     {
         _projectManager = projectManager;
+        _unitProjectService = unitProjectService;
         _repository = repository;
     }
 
@@ -24,13 +26,14 @@ public sealed class MaterialService
         var infos = BuildInfos(query.ProjectId, entries)
             .Where(item => MatchesComputedFilters(item, query))
             .ToArray();
-        return new MaterialListResult(true, query.ProjectId, infos.Length, infos);
+        return new MaterialListResult(true, query.ProjectId, query.UnitProjectId, query.MaterialScope, infos.Length, infos);
     }
 
     public MaterialEntryInfo Create(MaterialEntryCreateRequest request)
     {
         var project = _projectManager.ResolveProject(request.ProjectId);
-        var entry = _repository.InsertEntry(project.ProjectId, request);
+        var unitProjectId = ResolveMaterialUnitProjectId(project.ProjectId, request.UnitProjectId);
+        var entry = _repository.InsertEntry(project.ProjectId, unitProjectId, request);
         return Get(project.ProjectId, entry.Id);
     }
 
@@ -44,6 +47,7 @@ public sealed class MaterialService
     public MaterialBatchSaveResult BatchSave(MaterialBatchSaveRequest request)
     {
         var project = _projectManager.ResolveProject(request.ProjectId);
+        var effectiveUnitProjectId = ResolveMaterialUnitProjectId(project.ProjectId, request.UnitProjectId);
         var results = new List<MaterialBatchSaveRowResult>();
         var savedIds = new List<string>();
         var rowsToSave = request.Rows ?? Array.Empty<MaterialLedgerSaveRow>();
@@ -76,9 +80,11 @@ public sealed class MaterialService
 
                 var entryDate = row.EntryDate ?? DateOnly.FromDateTime(DateTime.Today);
                 var quantity = row.Quantity ?? 0;
+                var rowUnitProjectId = ResolveMaterialUnitProjectId(project.ProjectId, row.UnitProjectId ?? effectiveUnitProjectId);
                 var entry = string.IsNullOrWhiteSpace(row.Id)
-                    ? _repository.InsertEntry(project.ProjectId, new MaterialEntryCreateRequest(
+                    ? _repository.InsertEntry(project.ProjectId, rowUnitProjectId, new MaterialEntryCreateRequest(
                         project.ProjectId,
+                        rowUnitProjectId,
                         row.MaterialName,
                         row.SpecificationModel,
                         row.Unit,
@@ -91,6 +97,7 @@ public sealed class MaterialService
                         row.Remark,
                         row.StatusOverride))
                     : _repository.UpdateEntry(project.ProjectId, row.Id, new MaterialEntryUpdateRequest(
+                        rowUnitProjectId,
                         row.MaterialName,
                         row.SpecificationModel,
                         row.Unit,
@@ -129,7 +136,7 @@ public sealed class MaterialService
             }
         }
 
-        var items = List(new MaterialQuery(project.ProjectId, null, null, null, null, null, null, null, null)).Items;
+        var items = List(new MaterialQuery(project.ProjectId, effectiveUnitProjectId, "currentAndPublic", null, null, null, null, null, null, null, null)).Items;
         var success = results.All(item => item.Success);
         return new MaterialBatchSaveResult(
             success,
@@ -185,6 +192,7 @@ public sealed class MaterialService
         return new MaterialEntryInfo(
             entry.Id,
             entry.ProjectId,
+            entry.UnitProjectId,
             entry.MaterialName,
             entry.SpecificationModel,
             entry.Unit,
@@ -226,6 +234,17 @@ public sealed class MaterialService
         return Matches(query.Status, item.Status) &&
                Matches(query.TestStatus, item.TestStatus) &&
                Matches(query.ApprovalStatus, item.ApprovalStatus);
+    }
+
+    private string? ResolveMaterialUnitProjectId(string projectId, string? unitProjectId)
+    {
+        if (string.Equals(unitProjectId, "public", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(unitProjectId, "__public", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return _unitProjectService.ResolveUnitProject(projectId, unitProjectId).Id;
     }
 
     private static bool Matches(string? expected, string actual)
@@ -799,7 +818,7 @@ public sealed class MaterialLedgerService
 
         if (!export)
         {
-            return new MaterialLedgerResult(true, query.ProjectId, rows.Length, rows, null, null, "材料台账查询成功。");
+            return new MaterialLedgerResult(true, query.ProjectId, query.UnitProjectId, query.MaterialScope, rows.Length, rows, null, null, "材料台账查询成功。");
         }
 
         var project = _projectManager.ResolveProject(query.ProjectId);
@@ -808,7 +827,7 @@ public sealed class MaterialLedgerService
         var path = Path.Combine(directory, $"材料台账-{DateTime.Now:yyyyMMddHHmmss}.xlsx");
         ExportLedger(path, rows);
         var relativePath = MaterialRepository.ToPortablePath(Path.GetRelativePath(project.ProjectRootPath, path));
-        return new MaterialLedgerResult(true, query.ProjectId, rows.Length, rows, relativePath, path, "材料台账已导出。");
+        return new MaterialLedgerResult(true, query.ProjectId, query.UnitProjectId, query.MaterialScope, rows.Length, rows, relativePath, path, "材料台账已导出。");
     }
 
     private static void ExportLedger(string path, IReadOnlyList<MaterialLedgerRow> rows)

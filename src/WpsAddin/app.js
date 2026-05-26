@@ -31,6 +31,8 @@ const materialLedgerWindowState = {
 let serviceAvailable = false;
 let lastExternalTabVersion = "";
 const collapsedTemplateNodeIds = new Set();
+let templateTreeClickTimer = null;
+let directGeneratedFormCreating = false;
 let activeProjectId = "project-default";
 let currentProject = null;
 let recentProjects = [];
@@ -989,15 +991,11 @@ function createSpecTreeNode(node) {
     ? [node.templateCode || "检验批模板", node.moduleName || ""].filter(Boolean).join("｜")
     : "已创建资料表";
   button.append(title, meta);
-  button.addEventListener("click", async () => {
-    if (node.nodeType === "template" && node.children?.length > 0) {
-      toggleTemplateNode(node.id);
-      await selectTemplateTreeNode(node);
-      renderTemplateTreeView();
-      return;
-    }
-
-    await selectTemplateTreeNode(node);
+  button.addEventListener("click", (event) => {
+    handleSpecTreeNodeClick(event, node);
+  });
+  button.addEventListener("dblclick", (event) => {
+    handleSpecTreeNodeDoubleClick(event, node);
   });
 
   if (!node.children || node.children.length === 0) {
@@ -1025,6 +1023,38 @@ function createSpecTreeNode(node) {
   return branch;
 }
 
+function handleSpecTreeNodeClick(event, node) {
+  window.clearTimeout(templateTreeClickTimer);
+  if (node.nodeType === "template") {
+    templateTreeClickTimer = window.setTimeout(async () => {
+      if (node.children?.length > 0) {
+        toggleTemplateNode(node.id);
+        await selectTemplateTreeNode(node);
+        renderTemplateTreeView();
+        return;
+      }
+
+      await selectTemplateTreeNode(node);
+    }, 220);
+    return;
+  }
+
+  selectTemplateTreeNode(node);
+}
+
+function handleSpecTreeNodeDoubleClick(event, node) {
+  event.preventDefault();
+  event.stopPropagation();
+  window.clearTimeout(templateTreeClickTimer);
+
+  if (node.nodeType !== "template") {
+    selectTemplateTreeNode(node);
+    return;
+  }
+
+  createGeneratedFormDirectly(node);
+}
+
 function toggleTemplateNode(nodeId) {
   if (collapsedTemplateNodeIds.has(nodeId)) {
     collapsedTemplateNodeIds.delete(nodeId);
@@ -1035,12 +1065,27 @@ function toggleTemplateNode(nodeId) {
 }
 
 function resolveFolderLevelLabel(folderLevel) {
+  const normalized = String(folderLevel || "").trim();
   return {
     discipline: "专业",
-    division: "分部工程",
-    sub_division: "子分部工程",
-    sub_item: "分项工程"
-  }[folderLevel] || "分类";
+    division: "分部",
+    sub_division: "子分部",
+    sub_item: "分项",
+    inspection_batch: "检验批",
+    category: "分类",
+    "1": "分部",
+    "2": "子分部",
+    "3": "分项",
+    "4": "检验批",
+    "专业": "专业",
+    "分部": "分部",
+    "分部工程": "分部",
+    "子分部": "子分部",
+    "子分部工程": "子分部",
+    "分项": "分项",
+    "分项工程": "分项",
+    "检验批": "检验批"
+  }[normalized] || "分类";
 }
 
 function resolveFolderMeta(node) {
@@ -1675,6 +1720,42 @@ async function createGeneratedForm(event) {
     await openGeneratedForm(result.node);
   } catch (error) {
     showResult("#templateResult", error);
+  }
+}
+
+async function createGeneratedFormDirectly(node) {
+  if (!node || node.nodeType !== "template" || directGeneratedFormCreating) {
+    return;
+  }
+
+  directGeneratedFormCreating = true;
+  selectedTemplateNode = node;
+  for (const item of $$(".specTreeNode")) {
+    item.classList.toggle("selected", item.dataset.nodeId === node.id);
+  }
+
+  const form = $("#generatedFormForm");
+  const data = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  data.formName = node.name;
+
+  try {
+    showResult("#templateResult", `正在创建资料：${node.name}`);
+    const result = await api("/api/generated-forms", {
+      method: "POST",
+      body: JSON.stringify({
+        projectId: activeProjectId,
+        templateNodeId: node.id,
+        formName: data.formName,
+        fields: buildGeneratedFormFields(data)
+      })
+    });
+    await loadTemplateLibraryTree();
+    await loadSummaryTree();
+    await openGeneratedForm(result.node);
+  } catch (error) {
+    showResult("#templateResult", error);
+  } finally {
+    directGeneratedFormCreating = false;
   }
 }
 

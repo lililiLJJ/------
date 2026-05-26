@@ -140,6 +140,8 @@ public sealed class TemplateTreeService
         while (reader.Read())
         {
             var categoryId = reader.GetInt64(0);
+            var level = reader.GetInt32(3);
+            var categoryType = reader.IsDBNull(5) ? null : reader.GetString(5);
             var parentId = reader.IsDBNull(1)
                 ? $"module:{module.Manifest!.ModuleId}"
                 : $"module:{module.Manifest!.ModuleId}:category:{reader.GetInt64(1)}";
@@ -150,7 +152,7 @@ public sealed class TemplateTreeService
                 null,
                 reader.GetString(2),
                 "folder",
-                reader.IsDBNull(5) ? reader.GetInt32(3).ToString() : reader.GetString(5),
+                ResolveFolderLevel(categoryType, level),
                 null,
                 null,
                 null,
@@ -166,6 +168,46 @@ public sealed class TemplateTreeService
         }
 
         return nodes;
+    }
+
+    private static string ResolveFolderLevel(string? categoryType, int level)
+    {
+        if (!string.IsNullOrWhiteSpace(categoryType))
+        {
+            if (categoryType.Contains("专业", StringComparison.Ordinal))
+            {
+                return "discipline";
+            }
+
+            if (categoryType.Contains("子分部", StringComparison.Ordinal))
+            {
+                return "sub_division";
+            }
+
+            if (categoryType.Contains("分项", StringComparison.Ordinal))
+            {
+                return "sub_item";
+            }
+
+            if (categoryType.Contains("分部", StringComparison.Ordinal))
+            {
+                return "division";
+            }
+
+            if (categoryType.Contains("检验批", StringComparison.Ordinal))
+            {
+                return "inspection_batch";
+            }
+        }
+
+        return level switch
+        {
+            1 => "division",
+            2 => "sub_division",
+            3 => "sub_item",
+            4 => "inspection_batch",
+            _ => "category"
+        };
     }
 
     private static IReadOnlyList<TemplateTreeNodeDto> QueryTemplates(

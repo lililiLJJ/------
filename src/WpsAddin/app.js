@@ -1,4 +1,5 @@
 const serviceBaseUrl = "http://127.0.0.1:5188";
+const addinVersion = "0.1.0";
 const serviceStartCommand = '正式安装包：重新运行 Client\\1-Install-Client.cmd；开发调试：cd "D:\\YY\\编程\\工程资料制作"; dotnet run --project "src/GeneratorService"';
 let templates = [];
 let modules = [];
@@ -640,7 +641,7 @@ function setServiceChecking() {
 function setServiceOnline(data) {
   serviceAvailable = true;
   const status = $("#serviceStatus");
-  status.textContent = `服务正常｜版本 ${data.version}｜AI ${data.aiEnabled ? "已启用" : "未启用"}`;
+  status.textContent = `服务正常｜服务 ${data.version}｜插件 ${addinVersion}｜AI ${data.aiEnabled ? "已启用" : "未启用"}`;
   status.className = "statusText online";
   $("#serviceGuide").classList.add("hidden");
   setGenerateDisabled(false);

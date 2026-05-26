@@ -43,6 +43,16 @@ tools/1-启动开发模式.cmd
 
 该脚本会自动停止旧的 `GeneratorService`，从源码启动 `src/GeneratorService`，再从 `src/WpsAddin` 启动 `wpsjs debug`。以后查看前端新功能一般只需要刷新或重开 WPS 任务窗格；后端接口变更只需要重新运行开发模式脚本，不需要重新安装发布包。
 
+如果使用的是已经安装到 WPS 的加载项目录，而不是 `wpsjs debug` 调试窗口，修改 `src/WpsAddin` 后需要同步一次插件文件。推荐直接双击：
+
+```text
+tools/2-同步WPS加载项.cmd
+```
+
+该脚本会把 `src/WpsAddin` 同步到 `%APPDATA%/kingsoft/wps/jsaddons/engineering-docs-wps-addin_0.1.0`，并输出插件版本和关键文件哈希。脚本不会自动关闭 WPS，避免未保存表格丢失；同步完成后请刷新任务窗格，或完全退出 WPS 后重新打开。
+
+注意：`dotnet build` 只构建本地 C# 服务，不会自动更新 WPS 已安装的加载项目录。WPS 已经打开时也可能缓存旧的 JavaScript，所以前端改动同步后仍需要刷新或重启 WPS 加载项页面。
+
 开发时先启动本地生成服务：
 
 ```powershell

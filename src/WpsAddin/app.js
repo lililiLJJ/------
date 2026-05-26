@@ -43,6 +43,7 @@ const tabSyncKeys = {
 };
 
 const materialLedgerWindowHash = "materials-ledger-window";
+const workbookManager = createWorkbookManager();
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -1168,8 +1169,7 @@ async function openGeneratedForm(node) {
 
 async function openSpreadsheetPath(form) {
   try {
-    if (window.Application && window.Application.Workbooks && typeof window.Application.Workbooks.Open === "function") {
-      window.Application.Workbooks.Open(form.generatedFilePath);
+    if (workbookManager.openOrActivate(form.generatedFilePath)) {
       return;
     }
   } catch {
@@ -1185,8 +1185,7 @@ async function openLocalSpreadsheetFile(filePath) {
   }
 
   try {
-    if (window.Application && window.Application.Workbooks && typeof window.Application.Workbooks.Open === "function") {
-      window.Application.Workbooks.Open(filePath);
+    if (workbookManager.openOrActivate(filePath)) {
       return;
     }
   } catch {
@@ -1197,6 +1196,169 @@ async function openLocalSpreadsheetFile(filePath) {
     method: "POST",
     body: JSON.stringify({ filePath })
   });
+}
+
+function createWorkbookManager() {
+  const cache = new Map();
+
+  function openOrActivate(filePath) {
+    if (!filePath) {
+      return false;
+    }
+
+    const app = window.Application;
+    const workbooks = app?.Workbooks;
+    if (!workbooks || typeof workbooks.Open !== "function") {
+      return false;
+    }
+
+    const openedWorkbook = getOpenedWorkbook(filePath);
+    if (openedWorkbook) {
+      activateWorkbook(openedWorkbook);
+      return true;
+    }
+
+    const workbook = workbooks.Open(filePath);
+    const key = normalizeWorkbookPath(filePath);
+    const opened = workbook || app.ActiveWorkbook;
+    if (isWorkbookMatch(opened, key)) {
+      cache.set(key, opened);
+      activateWorkbook(opened);
+    }
+
+    return true;
+  }
+
+  function getOpenedWorkbook(filePath) {
+    const key = normalizeWorkbookPath(filePath);
+    if (!key) {
+      return null;
+    }
+
+    const cached = cache.get(key);
+    if (isWorkbookMatch(cached, key)) {
+      return cached;
+    }
+
+    cache.delete(key);
+    const workbook = findOpenedWorkbook(key);
+    if (workbook) {
+      cache.set(key, workbook);
+    }
+
+    return workbook;
+  }
+
+  function findOpenedWorkbook(key) {
+    const workbooks = window.Application?.Workbooks;
+    const count = getWorkbookCount(workbooks);
+    const targetName = getPathFileName(key);
+
+    for (let index = 1; index <= count; index += 1) {
+      const workbook = getWorkbookByIndex(workbooks, index);
+      if (isWorkbookMatch(workbook, key, targetName)) {
+        return workbook;
+      }
+    }
+
+    return null;
+  }
+
+  function activateWorkbook(workbook) {
+    if (!workbook) {
+      return false;
+    }
+
+    try {
+      workbook.Activate?.();
+    } catch {
+      // Continue with sheet activation fallback.
+    }
+
+    try {
+      workbook.ActiveSheet?.Activate?.();
+    } catch {
+      // Some WPS versions do not expose ActiveSheet on workbook.
+    }
+
+    try {
+      const firstSheet = workbook.Worksheets?.Item?.(1) || workbook.Sheets?.Item?.(1);
+      firstSheet?.Activate?.();
+    } catch {
+      // Best effort only; workbook activation is enough for switching.
+    }
+
+    return true;
+  }
+
+  function forgetWorkbook(filePath) {
+    cache.delete(normalizeWorkbookPath(filePath));
+  }
+
+  function normalizeWorkbookPath(filePath) {
+    let value = String(filePath || "").trim();
+    try {
+      value = decodeURIComponent(value);
+    } catch {
+      // Keep the original value if it is not URL-encoded.
+    }
+
+    return normalizeLocalPath(value);
+  }
+
+  function isWorkbookMatch(workbook, key, targetName = getPathFileName(key)) {
+    if (!workbook || !key) {
+      return false;
+    }
+
+    const workbookPath = normalizeWorkbookPath(getWorkbookPath(workbook));
+    if (!workbookPath) {
+      return false;
+    }
+
+    if (workbookPath === key) {
+      return true;
+    }
+
+    return targetName && getPathFileName(workbookPath) === targetName;
+  }
+
+  function getWorkbookCount(workbooks) {
+    try {
+      const count = typeof workbooks?.Count === "function" ? workbooks.Count() : workbooks?.Count;
+      return Number(count) || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function getWorkbookByIndex(workbooks, index) {
+    try {
+      if (typeof workbooks?.Item === "function") {
+        return workbooks.Item(index);
+      }
+    } catch {
+      // Try the alternate COM collection call shape below.
+    }
+
+    try {
+      return typeof workbooks === "function" ? workbooks(index) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getPathFileName(path) {
+    return String(path || "").split("/").filter(Boolean).pop() || "";
+  }
+
+  return {
+    openOrActivate,
+    getOpenedWorkbook,
+    activateWorkbook,
+    forgetWorkbook,
+    normalizeWorkbookPath
+  };
 }
 
 function renderSpreadsheetPlaceholder() {
@@ -1396,7 +1558,7 @@ async function generateSummary() {
     });
     showResult("#summaryResult", result);
     if (result.filePath || result.summaryDocument?.filePath) {
-      openSummarySpreadsheet(result.filePath || result.summaryDocument.filePath);
+      await openSummarySpreadsheet(result.filePath || result.summaryDocument.filePath);
     }
     await loadSummaryTree();
   } catch (error) {
@@ -1406,14 +1568,15 @@ async function generateSummary() {
   }
 }
 
-function openSummarySpreadsheet(filePath) {
+async function openSummarySpreadsheet(filePath) {
   try {
-    if (window.Application && window.Application.Workbooks && typeof window.Application.Workbooks.Open === "function") {
-      window.Application.Workbooks.Open(filePath);
+    if (workbookManager.openOrActivate(filePath)) {
+      return;
     }
   } catch {
     // 浏览器预览环境无法直接打开本地 WPS 文件，生成结果中会显示完整路径。
   }
+  await openLocalSpreadsheetFile(filePath);
 }
 
 const rowHeightBalanceOptions = {

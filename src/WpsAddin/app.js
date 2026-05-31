@@ -40,6 +40,8 @@ const materialLedgerWindowState = {
 };
 let serviceAvailable = false;
 let lastExternalTabVersion = "";
+let templateManagementWindowRef = null;
+let lastTemplateManagementFocusVersion = "";
 const collapsedTemplateNodeIds = new Set();
 let templateTreeClickTimer = null;
 let directGeneratedFormCreating = false;
@@ -73,8 +75,17 @@ const tabSyncKeys = {
   tabSignal: "engineering_docs_tab_signal"
 };
 
+const templateManagementSyncKeys = {
+  state: "engineering_docs_template_management_state",
+  focusSignal: "engineering_docs_template_management_focus_signal",
+  focusSignalVersion: "engineering_docs_template_management_focus_signal_version",
+  openLock: "engineering_docs_template_management_open_lock"
+};
+
 const materialLedgerWindowHash = "materials-ledger-window";
 const templateManagementWindowHash = "template-management-window";
+const templateManagementWindowName = "template-management-window";
+const templateManagementWindowId = `template-management-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const workbookManager = createWorkbookManager();
 
 const $ = (selector) => document.querySelector(selector);
@@ -5259,6 +5270,7 @@ async function bootTemplateManagementStandaloneWindow() {
     legacyHost.classList.remove("hidden");
   }
   activateTab("templates");
+  publishTemplateManagementWindowState();
 }
 
 function buildTemplateManagementWindowUrl() {
@@ -5267,26 +5279,297 @@ function buildTemplateManagementWindowUrl() {
   return url.toString();
 }
 
-function openTemplateManagementEntryPage() {
+function safeParseJson(value) {
+  try {
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberTemplateManagementWindowRef(popup) {
+  if (!popup || popup.closed) {
+    return false;
+  }
+  templateManagementWindowRef = popup;
+  return true;
+}
+
+function readTemplateManagementStateFromPluginStorage() {
+  try {
+    if (!window.Application || !window.Application.PluginStorage) {
+      return null;
+    }
+
+    return safeParseJson(window.Application.PluginStorage.getItem(templateManagementSyncKeys.state));
+  } catch {
+    return null;
+  }
+}
+
+function readTemplateManagementWindowState() {
+  const candidates = [];
+  try {
+    candidates.push(safeParseJson(window.localStorage.getItem(templateManagementSyncKeys.state)));
+  } catch {
+    // Some WPS WebViews disable localStorage.
+  }
+
+  candidates.push(readTemplateManagementStateFromPluginStorage());
+  return candidates
+    .filter((item) => item && item.windowId && Number.isFinite(Number(item.timestamp)))
+    .sort((left, right) => Number(right.timestamp) - Number(left.timestamp))[0] || null;
+}
+
+function hasActiveTemplateManagementCenter() {
+  const state = readTemplateManagementWindowState();
+  return !!state && Date.now() - Number(state.timestamp || 0) <= 4000;
+}
+
+function publishTemplateManagementWindowState() {
+  if (!isTemplateManagementStandaloneWindow()) {
+    return;
+  }
+
+  const payload = JSON.stringify({
+    windowId: templateManagementWindowId,
+    timestamp: Date.now(),
+    hash: window.location.hash || `#${templateManagementWindowHash}`,
+    url: buildTemplateManagementWindowUrl()
+  });
+
+  try {
+    window.localStorage.setItem(templateManagementSyncKeys.state, payload);
+  } catch {
+    // Some WPS WebViews disable localStorage.
+  }
+
+  try {
+    if (window.Application?.PluginStorage) {
+      window.Application.PluginStorage.setItem(templateManagementSyncKeys.state, payload);
+    }
+  } catch {
+    // Plain browser previews do not expose WPS PluginStorage.
+  }
+}
+
+function publishTemplateManagementOpenLock() {
+  const payload = JSON.stringify({
+    windowId: templateManagementWindowId,
+    timestamp: Date.now()
+  });
+
+  try {
+    window.localStorage.setItem(templateManagementSyncKeys.openLock, payload);
+  } catch {
+    // Some WPS WebViews disable localStorage.
+  }
+
+  try {
+    if (window.Application?.PluginStorage) {
+      window.Application.PluginStorage.setItem(templateManagementSyncKeys.openLock, payload);
+    }
+  } catch {
+    // Plain browser previews do not expose WPS PluginStorage.
+  }
+}
+
+function hasFreshTemplateManagementOpenLock() {
+  const candidates = [];
+  try {
+    candidates.push(safeParseJson(window.localStorage.getItem(templateManagementSyncKeys.openLock)));
+  } catch {
+    // Some WPS WebViews disable localStorage.
+  }
+
+  try {
+    if (window.Application?.PluginStorage) {
+      candidates.push(safeParseJson(window.Application.PluginStorage.getItem(templateManagementSyncKeys.openLock)));
+    }
+  } catch {
+    // Plain browser previews do not expose WPS PluginStorage.
+  }
+
+  return candidates
+    .filter((item) => item && Number.isFinite(Number(item.timestamp)))
+    .some((item) => Date.now() - Number(item.timestamp || 0) <= 4000);
+}
+
+function applyTemplateManagementFocusSignal(message) {
+  if (!message || message.type !== "engineering-docs-template-management-focus") {
+    return;
+  }
+
+  const version = String(message.version || "");
+  if (version && version === lastTemplateManagementFocusVersion) {
+    return;
+  }
+
+  if (isTemplateManagementStandaloneWindow()) {
+    publishTemplateManagementWindowState();
+    try {
+      window.focus();
+    } catch {
+      // Some WPS WebViews do not allow focusing standalone windows.
+    }
+  }
+
+  if (version) {
+    lastTemplateManagementFocusVersion = version;
+  }
+}
+
+function readTemplateManagementFocusSignalFromPluginStorage() {
+  try {
+    if (!window.Application || !window.Application.PluginStorage) {
+      return;
+    }
+
+    const version = window.Application.PluginStorage.getItem(templateManagementSyncKeys.focusSignalVersion);
+    if (!version || version === lastTemplateManagementFocusVersion) {
+      return;
+    }
+
+    applyTemplateManagementFocusSignal(safeParseJson(window.Application.PluginStorage.getItem(templateManagementSyncKeys.focusSignal)));
+  } catch {
+    // Plain browser previews do not expose WPS PluginStorage.
+  }
+}
+
+function focusTemplateManagementCenter() {
+  if (templateManagementWindowRef && !templateManagementWindowRef.closed) {
+    try {
+      templateManagementWindowRef.focus();
+      return true;
+    } catch {
+      // Some WPS WebViews do not allow focusing popup windows.
+    }
+  }
+
+  const version = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const payload = {
+    type: "engineering-docs-template-management-focus",
+    version,
+    requestedAt: Date.now(),
+    requestedBy: templateManagementWindowId
+  };
+
+  try {
+    if (typeof BroadcastChannel === "function") {
+      const channel = new BroadcastChannel(templateManagementSyncKeys.focusSignal);
+      channel.postMessage(payload);
+      channel.close();
+    }
+  } catch {
+    // Some WPS WebViews disable BroadcastChannel.
+  }
+
+  try {
+    window.localStorage.setItem(templateManagementSyncKeys.focusSignal, JSON.stringify(payload));
+  } catch {
+    // Some WPS WebViews disable localStorage.
+  }
+
+  try {
+    if (window.Application?.PluginStorage) {
+      window.Application.PluginStorage.setItem(templateManagementSyncKeys.focusSignalVersion, version);
+      window.Application.PluginStorage.setItem(templateManagementSyncKeys.focusSignal, JSON.stringify(payload));
+    }
+  } catch {
+    // Plain browser previews do not expose WPS PluginStorage.
+  }
+
+  lastTemplateManagementFocusVersion = version;
+  return hasActiveTemplateManagementCenter();
+}
+
+async function openTemplateManagementCenter() {
+  if (isTemplateManagementStandaloneWindow()) {
+    publishTemplateManagementWindowState();
+    focusTemplateManagementCenter();
+    return;
+  }
+
+  if ((templateManagementWindowRef && !templateManagementWindowRef.closed) || hasActiveTemplateManagementCenter()) {
+    focusTemplateManagementCenter();
+    showResult("#templateResult", "已定位到现有模板管理中心窗口。");
+    return;
+  }
+
+  if (hasFreshTemplateManagementOpenLock()) {
+    focusTemplateManagementCenter();
+    showResult("#templateResult", "模板管理中心正在打开，请稍候。");
+    return;
+  }
+
+  publishTemplateManagementOpenLock();
   const url = buildTemplateManagementWindowUrl();
+  try {
+    await api("/api/files/open-url", {
+      method: "POST",
+      body: JSON.stringify({ url })
+    });
+    window.setTimeout(focusTemplateManagementCenter, 900);
+    showResult("#templateResult", "已打开独立模板管理中心窗口。");
+    return;
+  } catch (error) {
+    console.warn("Failed to open template management center in system window.", error);
+  }
+
   let popup = null;
   try {
-    popup = window.open(url, "_blank", "popup=yes,width=1440,height=900,resizable=yes,scrollbars=yes");
+    popup = window.open(url, templateManagementWindowName, "popup=yes,width=1440,height=900,resizable=yes,scrollbars=yes");
   } catch {
     popup = null;
   }
 
   if (popup) {
-    try {
-      popup.focus();
-    } catch {
-      // Some WPS WebViews do not allow focusing external windows.
-    }
-    showResult("#templateResult", "已打开模板管理中心入口页。");
+    rememberTemplateManagementWindowRef(popup);
+    focusTemplateManagementCenter();
+    showResult("#templateResult", "已打开独立模板管理中心窗口。");
     return;
   }
 
-  window.location.assign(url);
+  showResult("#templateResult", "当前 WPS 环境暂时无法打开独立模板管理中心。页面内回退窗体将在下一阶段接入。");
+}
+
+function bindTemplateManagementWindowSync() {
+  try {
+    if (typeof BroadcastChannel === "function") {
+      const channel = new BroadcastChannel(templateManagementSyncKeys.focusSignal);
+      channel.onmessage = (event) => applyTemplateManagementFocusSignal(event.data);
+    }
+  } catch {
+    // Some WPS WebViews disable BroadcastChannel.
+  }
+
+  window.addEventListener("storage", (event) => {
+    if (event.key !== templateManagementSyncKeys.focusSignal || !event.newValue) {
+      return;
+    }
+
+    applyTemplateManagementFocusSignal(safeParseJson(event.newValue));
+  });
+
+  window.addEventListener("focus", () => {
+    if (isTemplateManagementStandaloneWindow()) {
+      publishTemplateManagementWindowState();
+    }
+    readTemplateManagementFocusSignalFromPluginStorage();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && isTemplateManagementStandaloneWindow()) {
+      publishTemplateManagementWindowState();
+    }
+  });
+
+  window.setInterval(() => {
+    if (isTemplateManagementStandaloneWindow()) {
+      publishTemplateManagementWindowState();
+    }
+    readTemplateManagementFocusSignalFromPluginStorage();
+  }, 1000);
 }
 
 function applyExternalTabSignal(message) {
@@ -5370,6 +5653,7 @@ function bindExternalTabSwitching() {
 async function boot() {
   bindTabs();
   bindExternalTabSwitching();
+  bindTemplateManagementWindowSync();
   activateTabFromHash();
   if (isTemplateManagementStandaloneWindow()) {
     await bootTemplateManagementStandaloneWindow();
@@ -5455,7 +5739,7 @@ async function boot() {
   $("#reloadTemplates").addEventListener("click", loadTemplates);
   $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);
   $("#openTemplateFolder").addEventListener("click", openTemplateFolder);
-  $("#openTemplateManagementCenter")?.addEventListener("click", openTemplateManagementEntryPage);
+  $("#openTemplateManagementCenter")?.addEventListener("click", () => openTemplateManagementCenter().catch((error) => showResult("#templateResult", error)));
   $("#refreshSummary").addEventListener("click", loadSummaryTree);
   $("#generateSummary").addEventListener("click", generateSummary);
   $("#refreshBatchPlans").addEventListener("click", () => loadBatchPlans().catch((error) => showResult("#batchPlanResult", error)));

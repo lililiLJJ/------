@@ -38,6 +38,10 @@ let activeProjectId = "project-default";
 let currentProject = null;
 let recentProjects = [];
 let selectedRecentProjectId = "";
+let unitProjects = [];
+let activeUnitProjectId = "";
+let selectedUnitProjectId = "";
+let editingUnitProjectId = "";
 
 const tabSyncKeys = {
   targetTab: "engineering_docs_target_tab",
@@ -202,6 +206,30 @@ function renderCurrentProject(project) {
   }
 }
 
+function getActiveUnitProject() {
+  return unitProjects.find((item) => item.id === activeUnitProjectId) || null;
+}
+
+function getSelectedUnitProject() {
+  return unitProjects.find((item) => item.id === selectedUnitProjectId) || null;
+}
+
+function appendProjectContext(query) {
+  query.set("projectId", activeProjectId);
+  if (activeUnitProjectId) {
+    query.set("unitProjectId", activeUnitProjectId);
+  }
+  return query;
+}
+
+function withProjectContext(payload = {}) {
+  return {
+    ...payload,
+    projectId: activeProjectId,
+    unitProjectId: activeUnitProjectId || null
+  };
+}
+
 async function loadCurrentProject() {
   try {
     showResult("#projectManagerResult", "正在刷新当前工程...");
@@ -213,6 +241,213 @@ async function loadCurrentProject() {
     showResult("#projectManagerResult", error);
     throw error;
   }
+}
+
+async function loadUnitProjects(resultSelector = "#unitProjectResult") {
+  if (!serviceAvailable || !activeProjectId) {
+    return null;
+  }
+
+  const query = new URLSearchParams({ projectId: activeProjectId });
+  const result = await api(`/api/unit-projects?${query.toString()}`);
+  unitProjects = result.items || [];
+  activeUnitProjectId = result.currentUnitProjectId || unitProjects[0]?.id || "";
+  if (!unitProjects.some((item) => item.id === selectedUnitProjectId)) {
+    selectedUnitProjectId = activeUnitProjectId || unitProjects[0]?.id || "";
+  }
+  renderUnitProjectSelector();
+  renderUnitProjectDialog();
+  showResult(resultSelector, result);
+  return result;
+}
+
+function renderUnitProjectSelector() {
+  const select = $("#unitProjectSelect");
+  const summary = $("#currentUnitProjectSummary");
+  const active = getActiveUnitProject();
+  if (select) {
+    select.innerHTML = unitProjects.length
+      ? unitProjects.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.unitProjectName || "未命名单位工程")}</option>`).join("")
+      : '<option value="">暂无单位工程</option>';
+    select.value = activeUnitProjectId || "";
+  }
+  if (summary) {
+    summary.textContent = active
+      ? `当前单位工程：${active.unitProjectName || "未命名单位工程"}｜资料 ${active.documentCount ?? 0}｜材料 ${active.materialCount ?? 0}`
+      : "当前单位工程：尚未加载。";
+  }
+}
+
+function renderUnitProjectDialog() {
+  const body = $("#unitProjectRows");
+  if (body) {
+    body.innerHTML = unitProjects.length
+      ? unitProjects.map((item) => `
+          <tr class="${item.id === selectedUnitProjectId ? "selectedRow" : ""} ${item.id === activeUnitProjectId ? "currentProjectRow" : ""}" data-unit-project-id="${escapeHtml(item.id)}">
+            <td>${escapeHtml(item.unitProjectName || "未命名单位工程")}</td>
+            <td>${escapeHtml(item.unitProjectCode || "-")}</td>
+            <td>${escapeHtml(item.defaultModule || "-")}</td>
+            <td>${escapeHtml(item.documentCount ?? 0)}</td>
+            <td>${escapeHtml(item.materialCount ?? 0)}</td>
+            <td><span class="projectStatusBadge ${item.status === "active" ? "ok" : "warning"}">${escapeHtml(item.status || "")}</span></td>
+          </tr>`).join("")
+      : '<tr><td colspan="6" class="emptyText">暂无单位工程。</td></tr>';
+  }
+
+  const selected = getSelectedUnitProject();
+  const form = $("#unitProjectForm");
+  $("#unitProjectFormTitle").textContent = selected ? "编辑单位工程" : "新增单位工程";
+  $("#selectedUnitProjectSummary").textContent = selected
+    ? `${selected.unitProjectName || ""}｜资料 ${selected.documentCount ?? 0}｜材料 ${selected.materialCount ?? 0}`
+    : "尚未选择单位工程。";
+  if (form && selected && editingUnitProjectId === selected.id) {
+    fillUnitProjectForm(selected);
+  }
+  if ($("#setCurrentUnitProject")) $("#setCurrentUnitProject").disabled = !selected || selected.id === activeUnitProjectId;
+  if ($("#deactivateUnitProject")) $("#deactivateUnitProject").disabled = !selected || selected.id === activeUnitProjectId;
+}
+
+function fillUnitProjectForm(unit = {}) {
+  const form = $("#unitProjectForm");
+  if (!form) {
+    return;
+  }
+  form.elements.unitProjectName.value = unit.unitProjectName || "";
+  form.elements.unitProjectCode.value = unit.unitProjectCode || "";
+  form.elements.constructionUnit.value = unit.constructionUnit || "";
+  form.elements.supervisionUnit.value = unit.supervisionUnit || "";
+  form.elements.designUnit.value = unit.designUnit || "";
+  form.elements.surveyUnit.value = unit.surveyUnit || "";
+  form.elements.buildingArea.value = unit.buildingArea || "";
+  form.elements.structureType.value = unit.structureType || "";
+  form.elements.floors.value = unit.floors || "";
+  form.elements.startDate.value = unit.startDate || "";
+  form.elements.completionDate.value = unit.completionDate || "";
+  form.elements.defaultModule.value = unit.defaultModule || "";
+  form.elements.templateVersion.value = unit.templateVersion || "";
+}
+
+function resetUnitProjectForm() {
+  editingUnitProjectId = "";
+  selectedUnitProjectId = "";
+  const form = $("#unitProjectForm");
+  form?.reset();
+  const projectForm = $("#projectManagerForm");
+  if (form && projectForm) {
+    form.elements.defaultModule.value = projectForm.elements.moduleName.value || "";
+    form.elements.templateVersion.value = projectForm.elements.templateVersion.value || "";
+  }
+  renderUnitProjectDialog();
+}
+
+async function openUnitProjectDialog() {
+  $("#unitProjectDialog").classList.remove("hidden");
+  selectedUnitProjectId = activeUnitProjectId || selectedUnitProjectId;
+  editingUnitProjectId = selectedUnitProjectId;
+  await loadUnitProjects();
+  const selected = getSelectedUnitProject();
+  if (selected) {
+    fillUnitProjectForm(selected);
+  }
+}
+
+function closeUnitProjectDialog() {
+  $("#unitProjectDialog").classList.add("hidden");
+}
+
+async function refreshUnitProjectWorkspace(resultSelector = "#unitProjectResult") {
+  selectedTemplateNode = null;
+  currentGeneratedForm = null;
+  selectedSummaryNode = null;
+  currentSummaryPreview = null;
+  currentBatchPlan = null;
+  currentBatchPreview = null;
+  selectedMaterial = null;
+  materialItems = [];
+  materialLedgerRows = [];
+  materialLedgerSelectedIds.clear();
+  materialLedgerColumnFilters.clear();
+  await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+  await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
+  await loadBatchPlans().catch((error) => showResult("#batchPlanResult", error));
+  await loadMaterials().catch((error) => showResult("#materialResult", error));
+  renderUnitProjectSelector();
+  showResult(resultSelector, `已切换到单位工程：${getActiveUnitProject()?.unitProjectName || ""}`);
+}
+
+async function switchCurrentUnitProject(unitProjectId, resultSelector = "#unitProjectResult") {
+  if (!unitProjectId) {
+    showResult(resultSelector, "请先选择单位工程。");
+    return;
+  }
+  if (!canSwitchProject()) {
+    return;
+  }
+
+  const result = await api("/api/unit-projects/current", {
+    method: "POST",
+    body: JSON.stringify({ projectId: activeProjectId, unitProjectId })
+  });
+  activeUnitProjectId = result.unitProject?.id || unitProjectId;
+  selectedUnitProjectId = activeUnitProjectId;
+  editingUnitProjectId = activeUnitProjectId;
+  await loadUnitProjects(resultSelector);
+  await refreshUnitProjectWorkspace(resultSelector);
+}
+
+function getUnitProjectFormPayload() {
+  const data = Object.fromEntries(new FormData($("#unitProjectForm")).entries());
+  return withProjectContext({
+    id: editingUnitProjectId || null,
+    unitProjectName: data.unitProjectName || "",
+    unitProjectCode: data.unitProjectCode || "",
+    constructionUnit: data.constructionUnit || "",
+    supervisionUnit: data.supervisionUnit || "",
+    designUnit: data.designUnit || "",
+    surveyUnit: data.surveyUnit || "",
+    buildingArea: data.buildingArea || "",
+    structureType: data.structureType || "",
+    floors: data.floors || "",
+    startDate: data.startDate || null,
+    completionDate: data.completionDate || null,
+    defaultModule: data.defaultModule || "",
+    templateVersion: data.templateVersion || "",
+    copyFromUnitProjectId: null
+  });
+}
+
+async function saveUnitProject(event) {
+  event.preventDefault();
+  const payload = getUnitProjectFormPayload();
+  const isUpdate = Boolean(editingUnitProjectId);
+  const result = await api(isUpdate ? `/api/unit-projects/${encodeURIComponent(editingUnitProjectId)}` : "/api/unit-projects", {
+    method: isUpdate ? "PUT" : "POST",
+    body: JSON.stringify(payload)
+  });
+  selectedUnitProjectId = result.unitProject?.id || selectedUnitProjectId;
+  editingUnitProjectId = selectedUnitProjectId;
+  await loadUnitProjects();
+  fillUnitProjectForm(getSelectedUnitProject() || {});
+  showResult("#unitProjectResult", result);
+}
+
+async function deactivateSelectedUnitProject() {
+  const selected = getSelectedUnitProject();
+  if (!selected) {
+    showResult("#unitProjectResult", "请先选择要停用的单位工程。");
+    return;
+  }
+  if (!window.confirm(`确定停用单位工程“${selected.unitProjectName}”吗？`)) {
+    return;
+  }
+  const query = new URLSearchParams({ projectId: activeProjectId });
+  const result = await api(`/api/unit-projects/${encodeURIComponent(selected.id)}?${query.toString()}`, { method: "DELETE" });
+  activeUnitProjectId = result.currentUnitProjectId || activeUnitProjectId;
+  selectedUnitProjectId = activeUnitProjectId;
+  editingUnitProjectId = activeUnitProjectId;
+  await loadUnitProjects();
+  await refreshUnitProjectWorkspace("#unitProjectResult");
+  showResult("#unitProjectResult", result);
 }
 
 function hasUnsavedProjectSwitchChanges() {
@@ -245,6 +480,7 @@ async function refreshProjectWorkspace(project, resultSelector = "#projectManage
   batchPlanRows = [];
   currentBatchPreview = null;
 
+  await loadUnitProjects(resultSelector).catch((error) => showResult("#unitProjectResult", error));
   await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
   await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
   await loadBatchPlans().catch((error) => showResult("#batchPlanResult", error));
@@ -695,6 +931,7 @@ async function retryServiceStatus() {
   await loadTemplates().catch((error) => showResult("#generateResult", error));
   await loadModules().catch((error) => showResult("#templateResult", error));
   await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
+  await loadUnitProjects().catch((error) => showResult("#unitProjectResult", error));
   await loadRecentProjects().catch((error) => showResult("#projectSelectionResult", error));
   await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
   await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
@@ -708,6 +945,9 @@ async function retryServiceStatus() {
 
 function setGenerateDisabled(disabled) {
   if ($("#openProjectSelection")) $("#openProjectSelection").disabled = disabled;
+  if ($("#unitProjectSelect")) $("#unitProjectSelect").disabled = disabled;
+  if ($("#switchUnitProject")) $("#switchUnitProject").disabled = disabled;
+  if ($("#openUnitProjectManager")) $("#openUnitProjectManager").disabled = disabled;
   $("#generateCurrent").disabled = disabled;
   $("#generateBatch").disabled = disabled;
   $("#reloadTemplates").disabled = disabled;
@@ -902,12 +1142,12 @@ function appendModuleMeta(container, label, value) {
 }
 
 async function loadTemplateLibraryTree() {
-  const result = await api(`/api/template-library/tree?projectId=${encodeURIComponent(activeProjectId)}`);
+  const result = await api(`/api/template-library/tree?${appendProjectContext(new URLSearchParams()).toString()}`);
   templateTreeNodes = result.nodes || [];
   selectedTemplateNode = null;
   currentGeneratedForm = null;
   lastRowHeightFitAdjustment = null;
-  $("#templateSummary").textContent = `${result.projectName}｜已加载工程资料规范层级树。`;
+  $("#templateSummary").textContent = `${result.projectName}｜${result.unitProjectName || getActiveUnitProject()?.unitProjectName || "当前单位工程"}｜已加载工程资料规范层级树。`;
   renderTemplateTreeView();
   renderSpreadsheetPlaceholder();
   updateTemplateToolbarState(false);
@@ -1438,12 +1678,12 @@ async function loadSummaryTree() {
   selectedSummaryNode = null;
   currentSummaryPreview = null;
   $("#summarySummary").textContent = "正在读取分部分项汇总...";
-  const result = await api(`/api/summary/tree?projectId=${encodeURIComponent(activeProjectId)}`);
+  const result = await api(`/api/summary/tree?${appendProjectContext(new URLSearchParams()).toString()}`);
   summaryTreeNodes = result.nodes || [];
   renderSummaryTree();
   renderSummaryPlaceholder(result.warnings || []);
   $("#summarySummary").textContent = summaryTreeNodes.length === 0
-    ? "当前工程还没有可汇总的已创建检验批资料。"
+    ? "当前单位工程还没有可汇总的已创建检验批资料。"
     : `已读取 ${summaryTreeNodes.length} 个分部汇总节点。`;
   showResult("#summaryResult", result);
   return result;
@@ -1525,6 +1765,9 @@ async function selectSummaryNode(node) {
       type: node.summaryType,
       categoryId: node.categoryId
     });
+    if (activeUnitProjectId) {
+      query.set("unitProjectId", activeUnitProjectId);
+    }
     const preview = await api(`/api/summary/preview?${query.toString()}`);
     currentSummaryPreview = preview;
     renderSummaryPreview(preview);
@@ -1598,6 +1841,7 @@ async function generateSummary() {
       method: "POST",
       body: JSON.stringify({
         projectId: activeProjectId,
+        unitProjectId: activeUnitProjectId || null,
         type: selectedSummaryNode.summaryType,
         categoryId: selectedSummaryNode.categoryId
       })
@@ -1710,6 +1954,7 @@ async function createGeneratedForm(event) {
       method: "POST",
       body: JSON.stringify({
         projectId: activeProjectId,
+        unitProjectId: activeUnitProjectId || null,
         templateNodeId: selectedTemplateNode.id,
         formName: data.formName,
         fields: buildGeneratedFormFields(data)
@@ -1745,6 +1990,7 @@ async function createGeneratedFormDirectly(node) {
       method: "POST",
       body: JSON.stringify({
         projectId: activeProjectId,
+        unitProjectId: activeUnitProjectId || null,
         templateNodeId: node.id,
         formName: data.formName,
         fields: buildGeneratedFormFields(data)
@@ -2627,6 +2873,7 @@ function getMaterialFilters() {
 
   return {
     projectId: activeProjectId,
+    unitProjectId: activeUnitProjectId || "",
     ...Object.fromEntries(new FormData(form).entries())
   };
 }
@@ -2660,7 +2907,7 @@ async function loadMaterials() {
   renderMaterialRows();
   renderSelectedMaterial();
   $("#materialSummary").textContent = materialItems.length
-    ? `当前工程共 ${materialItems.length} 条材料进场记录。`
+    ? `当前范围共 ${materialItems.length} 条材料进场记录。`
     : "当前筛选条件下暂无材料进场记录。";
   showResult("#materialResult", result);
 }
@@ -2833,6 +3080,7 @@ function getMaterialCertificateNo(item, keyword) {
 function materialItemToLedgerRow(item = {}) {
   return {
     id: item.id || "",
+    unitProjectId: item.unitProjectId || null,
     materialName: item.materialName || "",
     specificationModel: item.specificationModel || "",
     unit: item.unit || "",
@@ -2875,7 +3123,9 @@ function toDateOnly(value) {
 async function openMaterialLedgerDialog(mode = "edit") {
   materialLedgerMode = mode;
   showResult("#materialResult", "正在加载材料台账...");
-  const result = await api(`/api/materials?projectId=${encodeURIComponent(activeProjectId)}`);
+  const ledgerQuery = appendProjectContext(new URLSearchParams());
+  ledgerQuery.set("materialScope", "currentAndPublic");
+  const result = await api(`/api/materials?${ledgerQuery.toString()}`);
   materialItems = result.items || [];
   materialLedgerRows = materialItems.map(materialItemToLedgerRow);
   materialLedgerSelectedIds.clear();
@@ -3403,6 +3653,7 @@ function pasteIntoMaterialLedger(startRowIndex, startField, text) {
 function buildLedgerSaveRow(row) {
   return {
     id: row.id || null,
+    unitProjectId: row._isNew ? (activeUnitProjectId || null) : (row.unitProjectId || null),
     materialName: row.materialName || "",
     specificationModel: row.specificationModel || "",
     unit: row.unit || "",
@@ -3456,6 +3707,7 @@ async function saveMaterialLedgerRows() {
       method: "POST",
       body: JSON.stringify({
         projectId: activeProjectId,
+        unitProjectId: activeUnitProjectId || null,
         rows: materialLedgerRows.map(buildLedgerSaveRow)
       })
     });
@@ -3489,6 +3741,7 @@ async function uploadMaterialLedgerAttachment(event) {
   }
 
   formData.set("projectId", activeProjectId);
+  formData.set("unitProjectId", activeUnitProjectId || "");
   const fileType = String(formData.get("fileType") || "");
   const certificateNo = String(formData.get("certificateNo") || "").trim();
   showResult("#materialResult", `正在上传 ${fileType || "材料附件"}...`);
@@ -3588,6 +3841,7 @@ function getMaterialEntryPayload() {
   const data = Object.fromEntries(new FormData($("#materialEntryForm")).entries());
   return {
     projectId: activeProjectId,
+    unitProjectId: activeUnitProjectId || null,
     materialName: data.materialName || "",
     specificationModel: data.specificationModel || "",
     unit: data.unit || "",
@@ -3634,6 +3888,7 @@ async function uploadMaterialAttachment(event) {
 
   const formData = new FormData($("#materialAttachmentForm"));
   formData.set("projectId", activeProjectId);
+  formData.set("unitProjectId", activeUnitProjectId || "");
   showResult("#materialResult", "正在上传材料附件...");
   try {
     const result = await api(`/api/materials/${encodeURIComponent(selectedMaterial.id)}/attachments`, {
@@ -4062,7 +4317,7 @@ async function loadBatchPlans() {
 
   $("#batchPlanSummary").textContent = "正在读取批量创建计划...";
   await loadBatchDeviceFields();
-  const result = await api(`/api/batch-plans?projectId=${encodeURIComponent(activeProjectId)}`);
+  const result = await api(`/api/batch-plans?${appendProjectContext(new URLSearchParams()).toString()}`);
   batchPlans = result.plans || [];
   currentBatchPlan = batchPlans[0] || null;
   if (currentBatchPlan) {
@@ -4079,7 +4334,7 @@ async function loadBatchPlans() {
   renderBatchPlanPreview(null);
   $("#batchPlanSummary").textContent = currentBatchPlan
     ? `已加载计划：${currentBatchPlan.name}，共 ${batchPlanRows.length} 行。`
-    : "当前工程暂无批量计划，已创建一张空白划分表。";
+    : "当前单位工程暂无批量计划，已创建一张空白划分表。";
   showResult("#batchPlanResult", result);
 }
 
@@ -4231,6 +4486,7 @@ function applyBatchPlanBulk(field, value) {
 function buildBatchPlanSaveRequest() {
   return {
     projectId: activeProjectId,
+    unitProjectId: activeUnitProjectId || null,
     name: $("#batchPlanName").value.trim() || "检验批划分计划",
     remark: $("#batchPlanRemark").value.trim(),
     items: batchPlanRows.map((row) => ({
@@ -4622,7 +4878,48 @@ async function boot() {
   $("#retryServiceStatus").addEventListener("click", retryServiceStatus);
   $("#copyStartCommand").addEventListener("click", copyStartCommand);
   $("#openProjectSelection").addEventListener("click", () => openProjectSelectionDialog().catch((error) => showResult("#projectSelectionResult", error)));
-  $("#refreshCurrentProject").addEventListener("click", loadCurrentProject);
+  $("#refreshCurrentProject").addEventListener("click", async () => {
+    await loadCurrentProject();
+    await loadUnitProjects();
+  });
+  $("#unitProjectSelect").addEventListener("change", (event) => {
+    selectedUnitProjectId = event.target.value || "";
+    renderUnitProjectDialog();
+  });
+  $("#switchUnitProject").addEventListener("click", () => switchCurrentUnitProject($("#unitProjectSelect").value, "#projectManagerResult").catch((error) => showResult("#projectManagerResult", error)));
+  $("#openUnitProjectManager").addEventListener("click", () => openUnitProjectDialog().catch((error) => showResult("#unitProjectResult", error)));
+  $("#closeUnitProjectDialog").addEventListener("click", closeUnitProjectDialog);
+  $("#refreshUnitProjects").addEventListener("click", () => loadUnitProjects().catch((error) => showResult("#unitProjectResult", error)));
+  $("#newUnitProject").addEventListener("click", resetUnitProjectForm);
+  $("#unitProjectForm").addEventListener("submit", saveUnitProject);
+  $("#setCurrentUnitProject").addEventListener("click", () => switchCurrentUnitProject(selectedUnitProjectId).catch((error) => showResult("#unitProjectResult", error)));
+  $("#deactivateUnitProject").addEventListener("click", () => deactivateSelectedUnitProject().catch((error) => showResult("#unitProjectResult", error)));
+  $("#unitProjectRows").addEventListener("click", (event) => {
+    const row = event.target.closest("[data-unit-project-id]");
+    if (!row) {
+      return;
+    }
+    selectedUnitProjectId = row.dataset.unitProjectId || "";
+    editingUnitProjectId = selectedUnitProjectId;
+    const selected = getSelectedUnitProject();
+    if (selected) {
+      fillUnitProjectForm(selected);
+    }
+    renderUnitProjectDialog();
+  });
+  $("#unitProjectRows").addEventListener("dblclick", (event) => {
+    const row = event.target.closest("[data-unit-project-id]");
+    if (!row) {
+      return;
+    }
+    selectedUnitProjectId = row.dataset.unitProjectId || "";
+    switchCurrentUnitProject(selectedUnitProjectId).catch((error) => showResult("#unitProjectResult", error));
+  });
+  $("#unitProjectDialog").addEventListener("click", (event) => {
+    if (event.target.id === "unitProjectDialog") {
+      closeUnitProjectDialog();
+    }
+  });
   $("#createProject").addEventListener("click", createProject);
   $("#saveProject").addEventListener("click", saveProject);
   $("#openProject").addEventListener("click", openProject);
@@ -4856,6 +5153,7 @@ async function boot() {
     if (event.key === "Escape") {
       closeTemplatePreviewModal();
       closeGeneratedFormModal();
+      closeUnitProjectDialog();
       requestCloseMaterialLedgerDialog();
     }
   });
@@ -4898,6 +5196,7 @@ async function boot() {
     await loadTemplates().catch((error) => showResult("#generateResult", error));
     await loadModules().catch((error) => showResult("#templateResult", error));
     await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
+    await loadUnitProjects().catch((error) => showResult("#unitProjectResult", error));
     await loadRecentProjects().catch((error) => showResult("#projectSelectionResult", error));
     await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
     await loadSummaryTree().catch((error) => showResult("#summaryResult", error));

@@ -37,11 +37,19 @@
           <div>
             <h2>工程管理</h2>
             <p id="currentProjectSummary">正在读取当前工程...</p>
+            <p id="currentUnitProjectSummary" class="subtleSummary">当前单位工程：正在读取...</p>
           </div>
           <div class="actions compactActions">
             <button id="openProjectSelection" type="button" class="primary">工程选择</button>
             <button id="refreshCurrentProject" type="button">刷新工程</button>
           </div>
+        </div>
+        <div class="unitProjectBar">
+          <label>当前单位工程
+            <select id="unitProjectSelect"></select>
+          </label>
+          <button id="switchUnitProject" type="button" class="primary">切换</button>
+          <button id="openUnitProjectManager" type="button">单位工程管理</button>
         </div>
         <form id="projectManagerForm" class="formGrid">
           <label>工程名称<input name="projectName" value="GD-C3-5182" required></label>
@@ -298,6 +306,14 @@
             <option value="未报审">未报审</option>
             <option value="已报审">已报审</option>
             <option value="已归档">已归档</option>
+          </select>
+        </label>
+        <label>材料范围
+          <select name="materialScope">
+            <option value="currentAndPublic">当前单位工程+公共材料</option>
+            <option value="current">仅当前单位工程</option>
+            <option value="public">仅公共材料</option>
+            <option value="all">全项目</option>
           </select>
         </label>
         <label>综合状态
@@ -628,6 +644,77 @@
       <pre id="logsResult" class="resultBox"></pre>
     </section>
   </main>
+
+  <div id="unitProjectDialog" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="unitProjectDialogTitle">
+    <div class="modalPanel unitProjectPanel">
+      <div class="modalHeader">
+        <div>
+          <h2 id="unitProjectDialogTitle">单位工程管理</h2>
+          <p id="unitProjectDialogSummary">新增、编辑、停用和切换当前单位工程。</p>
+        </div>
+        <button id="closeUnitProjectDialog" class="iconButton" title="关闭">×</button>
+      </div>
+      <div class="unitProjectContent">
+        <section class="projectSelectionCard">
+          <div class="sectionHeader compactSectionHeader">
+            <div>
+              <h3>单位工程列表</h3>
+              <p>切换后资料树、汇总、批量计划和材料会按当前单位工程刷新。</p>
+            </div>
+            <div class="actions compactActions">
+              <button id="newUnitProject" type="button">新增</button>
+              <button id="refreshUnitProjects" type="button">刷新</button>
+            </div>
+          </div>
+          <div class="unitProjectTableWrap">
+            <table class="unitProjectTable">
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>编号</th>
+                  <th>默认模块</th>
+                  <th>资料</th>
+                  <th>材料</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody id="unitProjectRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <form id="unitProjectForm" class="projectSelectionCard unitProjectForm">
+          <div class="sectionHeader compactSectionHeader">
+            <div>
+              <h3 id="unitProjectFormTitle">新增单位工程</h3>
+              <p id="selectedUnitProjectSummary">尚未选择单位工程。</p>
+            </div>
+            <div class="actions compactActions">
+              <button id="saveUnitProject" type="submit" class="primary">保存</button>
+              <button id="setCurrentUnitProject" type="button">设为当前</button>
+              <button id="deactivateUnitProject" type="button">停用</button>
+            </div>
+          </div>
+          <div class="formGrid">
+            <label>单位工程名称<input name="unitProjectName" required></label>
+            <label>单位工程编号<input name="unitProjectCode"></label>
+            <label>施工单位<input name="constructionUnit"></label>
+            <label>监理单位<input name="supervisionUnit"></label>
+            <label>设计单位<input name="designUnit"></label>
+            <label>勘察单位<input name="surveyUnit"></label>
+            <label>建筑面积<input name="buildingArea"></label>
+            <label>结构类型<input name="structureType"></label>
+            <label>层数<input name="floors"></label>
+            <label>开工日期<input name="startDate" type="date"></label>
+            <label>竣工日期<input name="completionDate" type="date"></label>
+            <label>默认模块<input name="defaultModule"></label>
+            <label>模板版本<input name="templateVersion"></label>
+          </div>
+        </form>
+        <pre id="unitProjectResult" class="resultBox compactResult"></pre>
+      </div>
+    </div>
+  </div>
 
   <div id="projectSelectionDialog" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="projectSelectionTitle">
     <div class="modalPanel projectSelectionPanel">

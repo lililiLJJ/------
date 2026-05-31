@@ -788,8 +788,21 @@ textarea {
   width: min(1120px, calc(100vw - 36px));
 }
 
+.unitProjectPanel {
+  width: min(1180px, calc(100vw - 36px));
+}
+
 .projectSelectionContent {
   display: grid;
+  gap: 14px;
+  min-height: 0;
+  padding: 14px 16px;
+  overflow: auto;
+}
+
+.unitProjectContent {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(360px, 0.9fr);
   gap: 14px;
   min-height: 0;
   padding: 14px 16px;
@@ -801,6 +814,69 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #fff;
+}
+
+.unitProjectBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.unitProjectBar label {
+  display: grid;
+  gap: 5px;
+  min-width: min(320px, 100%);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.unitProjectBar select {
+  min-height: 34px;
+}
+
+.subtleSummary {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.unitProjectTableWrap {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.unitProjectTable {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+}
+
+.unitProjectTable th,
+.unitProjectTable td {
+  padding: 8px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.unitProjectTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--muted);
+  background: #eef3f8;
+}
+
+.unitProjectTable tbody tr {
+  cursor: pointer;
+}
+
+.unitProjectForm {
+  align-self: start;
 }
 
 .projectSelectionCard h3 {
@@ -1662,6 +1738,10 @@ textarea {
   }
 
   .materialDetailGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .unitProjectContent {
     grid-template-columns: 1fr;
   }
 

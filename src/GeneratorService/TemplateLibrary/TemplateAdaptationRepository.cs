@@ -79,8 +79,6 @@ public sealed class TemplateAdaptationRepository
 
             CREATE INDEX IF NOT EXISTS idx_template_profile_status
               ON TemplateProfile(ModuleId, ModuleVersion, Status, UpdatedAt);
-            CREATE INDEX IF NOT EXISTS idx_template_mapping_sort
-              ON TemplateFieldMapping(ModuleId, ModuleVersion, TemplateItemId, SortOrder, FieldKey);
             CREATE INDEX IF NOT EXISTS idx_template_test_record_template
               ON TemplateTestRecord(ModuleId, ModuleVersion, TemplateItemId, CreatedAt);
             """;
@@ -92,6 +90,14 @@ public sealed class TemplateAdaptationRepository
         EnsureColumnExists(connection, "TemplateFieldMapping", "SortOrder INTEGER NOT NULL DEFAULT 0");
         EnsureColumnExists(connection, "TemplateFieldMapping", "IsSystemField INTEGER NOT NULL DEFAULT 0");
         EnsureColumnExists(connection, "TemplateFieldMapping", "Description TEXT NULL");
+
+        using var indexCommand = connection.CreateCommand();
+        indexCommand.CommandText = """
+            CREATE INDEX IF NOT EXISTS idx_template_mapping_sort
+              ON TemplateFieldMapping(ModuleId, ModuleVersion, TemplateItemId, SortOrder, FieldKey);
+            """;
+        indexCommand.ExecuteNonQuery();
+
         BackfillMappingMetadata(connection);
     }
 

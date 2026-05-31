@@ -132,18 +132,25 @@ public sealed class ModuleManager
             return null;
         }
 
+        var manifest = module.Manifest;
+        if (manifest is null)
+        {
+            return null;
+        }
+
         var templateFile = reader.IsDBNull(3) ? "" : reader.GetString(3);
         var templatePath = Path.GetFullPath(Path.Combine(module.TemplateRootPath, templateFile));
-        if (!File.Exists(templatePath) && module.Manifest is not null)
+        if (!File.Exists(templatePath))
         {
             var cacheRoot = _config.GetModuleCachePath(_rootPath);
-            var cachePath = _reader.EnsureExtracted(module.PackagePath, cacheRoot, module.Manifest, forceRefresh: true);
-            var templateRootPath = Path.Combine(cachePath, module.Manifest.TemplateRoot);
+            var cachePath = _reader.EnsureExtracted(module.PackagePath, cacheRoot, manifest, forceRefresh: true);
+            var templateRootPath = Path.Combine(cachePath, manifest.TemplateRoot);
             templatePath = Path.GetFullPath(Path.Combine(templateRootPath, templateFile));
         }
 
         return new ModuleTemplateRef(
             moduleId,
+            manifest.Version,
             reader.GetInt64(0),
             reader.GetString(1),
             reader.IsDBNull(2) ? "" : reader.GetString(2),

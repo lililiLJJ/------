@@ -26,10 +26,12 @@ public sealed class TemplateService
             return new TemplateResolution(
                 templateNodeId,
                 moduleTemplate.ModuleId,
+                moduleTemplate.ModuleVersion,
                 moduleTemplate.TemplateItemId,
                 moduleTemplate.TemplateName,
                 string.IsNullOrWhiteSpace(moduleTemplate.TemplateCode) ? "template" : moduleTemplate.TemplateCode,
                 moduleTemplate.TemplateType,
+                moduleTemplate.TemplateFile,
                 moduleTemplate.TemplatePath);
         }
 
@@ -49,10 +51,12 @@ public sealed class TemplateService
         return new TemplateResolution(
             templateNodeId,
             legacyNode.ModuleId ?? "legacy",
+            "",
             legacyNode.TemplateItemId ?? 0,
             legacyNode.Name,
             string.IsNullOrWhiteSpace(legacyNode.TemplateCode) ? "template" : legacyNode.TemplateCode,
             legacyNode.FolderLevel ?? "检验批",
+            legacyNode.TemplateFilePath ?? "",
             templatePath);
     }
 }
@@ -60,8 +64,10 @@ public sealed class TemplateService
 public sealed record TemplateResolution(
     string TemplateNodeId,
     string ModuleId,
+    string ModuleVersion,
     long TemplateItemId,
     string TemplateName,
     string TemplateCode,
     string TemplateType,
+    string TemplateFile,
     string TemplatePath);

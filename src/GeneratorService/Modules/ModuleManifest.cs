@@ -38,6 +38,7 @@ public sealed record ModuleSummary(
 
 public sealed record ModuleTemplateRef(
     string ModuleId,
+    string ModuleVersion,
     long TemplateItemId,
     string TemplateName,
     string TemplateCode,

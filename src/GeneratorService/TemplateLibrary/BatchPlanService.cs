@@ -33,6 +33,8 @@ public sealed class BatchPlanService
     private readonly ProjectManager _projectManager;
     private readonly UnitProjectService _unitProjectService;
     private readonly RowHeightBalanceService _rowHeightBalanceService;
+    private readonly TemplateMappingService _templateMappingService;
+    private readonly TemplateValidationService _templateValidationService;
 
     public BatchPlanService(
         BatchPlanRepository repository,
@@ -40,7 +42,9 @@ public sealed class BatchPlanService
         TemplateService templateService,
         ProjectManager projectManager,
         UnitProjectService unitProjectService,
-        RowHeightBalanceService rowHeightBalanceService)
+        RowHeightBalanceService rowHeightBalanceService,
+        TemplateMappingService templateMappingService,
+        TemplateValidationService templateValidationService)
     {
         _repository = repository;
         _templateTreeRepository = templateTreeRepository;
@@ -48,6 +52,8 @@ public sealed class BatchPlanService
         _projectManager = projectManager;
         _unitProjectService = unitProjectService;
         _rowHeightBalanceService = rowHeightBalanceService;
+        _templateMappingService = templateMappingService;
+        _templateValidationService = templateValidationService;
     }
 
     public BatchPlanListResult List(string? projectId, string? unitProjectId)
@@ -239,7 +245,15 @@ public sealed class BatchPlanService
             var templateNodeId = BuildTemplateNodeId(item.ModuleId, item.TemplateItemId);
             try
             {
-                _templateService.ResolveTemplate(templateNodeId);
+                var template = _templateService.ResolveTemplate(templateNodeId);
+                if (_templateMappingService.ShouldUseAdaptation(template))
+                {
+                    var validation = _templateValidationService.Validate(template);
+                    if (!validation.CanGenerate)
+                    {
+                        errors.AddRange(validation.MissingFields.Select(fieldKey => $"缺少字段映射：{TemplateAdaptationFields.GetDisplayName(fieldKey)}"));
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -330,13 +344,35 @@ public sealed class BatchPlanService
 
         var fields = BuildFields(project, item, requestFields);
         var baseline = _rowHeightBalanceService.CaptureBaseline(outputPath);
-        GeneratedFormService.ApplyFields(outputPath, item.PartName, fields);
+        TemplateLayoutSnapshot? layoutBaseline = null;
+        if (_templateMappingService.ShouldUseAdaptation(template))
+        {
+            layoutBaseline = TemplateWorkbookHelper.CaptureLayoutSnapshot(outputPath);
+            _templateMappingService.Apply(outputPath, template, fields);
+        }
+        else
+        {
+            GeneratedFormService.ApplyFields(outputPath, item.PartName, fields);
+        }
+
         var deviceMappings = _repository
             .ListMappings(item.ModuleId, item.TemplateItemId)
             .Where(mapping => mapping.IsEnabled)
             .ToArray();
         ApplyDeviceValues(outputPath, item, deviceMappings);
         _rowHeightBalanceService.ApplyLight(outputPath, item.PartName, fields, baseline);
+        if (layoutBaseline is not null)
+        {
+            var layoutResult = TemplateWorkbookHelper.CompareLayout(layoutBaseline, outputPath);
+            if (!layoutResult.Success)
+            {
+                throw new TemplateAdaptationException(
+                    $"模板“{template.TemplateName}”写入后版式保护校验失败：{string.Join("；", layoutResult.Differences)}",
+                    template.TemplateNodeId,
+                    template.TemplateName,
+                    adaptationStatus: "layout_changed");
+            }
+        }
 
         var documentName = preview.OutputName;
         var node = _templateTreeRepository.InsertProjectDocument(

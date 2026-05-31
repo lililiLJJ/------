@@ -12,17 +12,17 @@ public sealed class GeneratedFormService
     private static readonly Regex PlaceholderRegex = new(@"\{\{(?<type>[^:}]+):(?<name>[^}]+)\}\}", RegexOptions.Compiled);
     private static readonly IReadOnlyDictionary<string, string[]> FieldAliases = new Dictionary<string, string[]>
     {
-        ["projectName"] = ["\u5de5\u7a0b\u540d\u79f0", "\u9879\u76ee\u540d\u79f0"],
-        ["developerUnitName"] = ["\u5efa\u8bbe\u5355\u4f4d"],
-        ["constructorUnitName"] = ["\u65bd\u5de5\u5355\u4f4d", "\u627f\u5305\u5355\u4f4d"],
-        ["designUnitName"] = ["\u8bbe\u8ba1\u5355\u4f4d"],
-        ["supervisorUnitName"] = ["\u76d1\u7406\u5355\u4f4d"],
-        ["professionalSubcontractorUnitName"] = ["\u4e13\u4e1a\u5206\u5305\u5355\u4f4d"],
-        ["thirdPartyInspectionUnitName"] = ["\u7b2c\u4e09\u65b9\u68c0\u6d4b\u5355\u4f4d", "\u68c0\u6d4b\u5355\u4f4d"],
-        ["partName"] = ["\u90e8\u4f4d\u540d\u79f0", "\u68c0\u9a8c\u6279\u90e8\u4f4d", "\u65bd\u5de5\u90e8\u4f4d"],
-        ["capacity"] = ["\u68c0\u9a8c\u6279\u5bb9\u91cf"],
-        ["constructionDate"] = ["\u65bd\u5de5\u65e5\u671f"],
-        ["acceptanceDate"] = ["\u9a8c\u6536\u65e5\u671f"]
+        ["projectName"] = ["工程名称", "项目名称"],
+        ["developerUnitName"] = ["建设单位"],
+        ["constructorUnitName"] = ["施工单位", "承包单位"],
+        ["designUnitName"] = ["设计单位"],
+        ["supervisorUnitName"] = ["监理单位"],
+        ["professionalSubcontractorUnitName"] = ["专业分包单位"],
+        ["thirdPartyInspectionUnitName"] = ["第三方检测单位", "检测单位"],
+        ["partName"] = ["部位名称", "检验批部位", "施工部位"],
+        ["capacity"] = ["检验批容量"],
+        ["constructionDate"] = ["施工日期"],
+        ["acceptanceDate"] = ["验收日期"]
     };
 
     private readonly TemplateTreeRepository _repository;
@@ -31,6 +31,7 @@ public sealed class GeneratedFormService
     private readonly UnitProjectService _unitProjectService;
     private readonly ProjectPathResolver _pathResolver;
     private readonly RowHeightBalanceService _rowHeightBalanceService;
+    private readonly TemplateMappingService _templateMappingService;
 
     public GeneratedFormService(
         TemplateTreeRepository repository,
@@ -38,7 +39,8 @@ public sealed class GeneratedFormService
         ProjectManager projectManager,
         UnitProjectService unitProjectService,
         ProjectPathResolver pathResolver,
-        RowHeightBalanceService rowHeightBalanceService)
+        RowHeightBalanceService rowHeightBalanceService,
+        TemplateMappingService templateMappingService)
     {
         _repository = repository;
         _templateService = templateService;
@@ -46,6 +48,7 @@ public sealed class GeneratedFormService
         _unitProjectService = unitProjectService;
         _pathResolver = pathResolver;
         _rowHeightBalanceService = rowHeightBalanceService;
+        _templateMappingService = templateMappingService;
     }
 
     public GeneratedFormInfo GetGeneratedForm(string nodeId)
@@ -124,8 +127,26 @@ public sealed class GeneratedFormService
         var targetPath = ResolveUniquePath(targetDirectory, $"{SanitizePathSegment(request.FormName)}{templateExtension}");
         File.Copy(template.TemplatePath, targetPath);
         var rowHeightBaseline = _rowHeightBalanceService.CaptureBaseline(targetPath);
-        ApplyFields(targetPath, request.FormName, fields);
-        _rowHeightBalanceService.ApplyLight(targetPath, request.FormName, fields, rowHeightBaseline);
+        if (_templateMappingService.ShouldUseAdaptation(template))
+        {
+            var layoutBaseline = TemplateWorkbookHelper.CaptureLayoutSnapshot(targetPath);
+            _templateMappingService.Apply(targetPath, template, fields);
+            _rowHeightBalanceService.ApplyLight(targetPath, request.FormName, fields, rowHeightBaseline);
+            var layoutResult = TemplateWorkbookHelper.CompareLayout(layoutBaseline, targetPath);
+            if (!layoutResult.Success)
+            {
+                throw new TemplateAdaptationException(
+                    $"模板“{template.TemplateName}”写入后版式保护校验失败：{string.Join("；", layoutResult.Differences)}",
+                    template.TemplateNodeId,
+                    template.TemplateName,
+                    adaptationStatus: "layout_changed");
+            }
+        }
+        else
+        {
+            ApplyFields(targetPath, request.FormName, fields);
+            _rowHeightBalanceService.ApplyLight(targetPath, request.FormName, fields, rowHeightBaseline);
+        }
 
         var node = template.ModuleId == "legacy"
             ? _repository.InsertGeneratedForm(
@@ -142,7 +163,7 @@ public sealed class GeneratedFormService
                 template.TemplateNodeId,
                 request.FormName.Trim(),
                 request.FormName.Trim(),
-                GetField(fields, "capacity", "妫€楠屾壒瀹归噺"),
+                GetField(fields, "capacity", "检验批容量"),
                 templateCode,
                 targetPath);
 
@@ -237,7 +258,7 @@ public sealed class GeneratedFormService
         }
 
         using var document = SpreadsheetDocument.Open(filePath, true);
-        var workbookPart = document.WorkbookPart ?? throw new InvalidOperationException("模板缺少WorkbookPart。");
+        var workbookPart = document.WorkbookPart ?? throw new InvalidOperationException("模板缺少 WorkbookPart。");
 
         if (workbookPart.SharedStringTablePart?.SharedStringTable is { } sharedStringTable)
         {
@@ -462,7 +483,7 @@ public sealed class GeneratedFormService
     {
         return value
             .Replace(":", "", StringComparison.Ordinal)
-            .Replace("\uff1a", "", StringComparison.Ordinal)
+            .Replace("：", "", StringComparison.Ordinal)
             .Replace(" ", "", StringComparison.Ordinal)
             .Trim();
     }

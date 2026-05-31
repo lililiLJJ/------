@@ -69,9 +69,14 @@ builder.Services.AddSingleton<MaterialApprovalService>();
 builder.Services.AddSingleton<MaterialLedgerService>();
 builder.Services.AddSingleton<TemplateTreeRepository>();
 builder.Services.AddSingleton<BatchPlanRepository>();
+builder.Services.AddSingleton<TemplateAdaptationRepository>();
 builder.Services.AddSingleton<TemplateTreeService>();
 builder.Services.AddSingleton<TemplateService>();
 builder.Services.AddSingleton<RuleService>();
+builder.Services.AddSingleton<TemplateValidationService>();
+builder.Services.AddSingleton<TemplateMappingService>();
+builder.Services.AddSingleton<TemplateTestHarness>();
+builder.Services.AddSingleton<TemplateAdaptationService>();
 builder.Services.AddSingleton<RowHeightBalanceService>();
 builder.Services.AddSingleton<GeneratedFormService>();
 builder.Services.AddSingleton<SummaryService>();
@@ -96,12 +101,15 @@ var unitProjectRepository = app.Services.GetRequiredService<UnitProjectRepositor
 var unitProjectService = app.Services.GetRequiredService<UnitProjectService>();
 var materialRepository = app.Services.GetRequiredService<MaterialRepository>();
 var batchPlanRepository = app.Services.GetRequiredService<BatchPlanRepository>();
+var templateAdaptationRepository = app.Services.GetRequiredService<TemplateAdaptationRepository>();
 knowledgeRepository.EnsureCreated();
 templateCatalog.EnsureSampleTemplates();
 moduleManager.Scan();
 templateTreeRepository.EnsureCreated();
 materialRepository.EnsureCreated();
 batchPlanRepository.EnsureCreated();
+templateAdaptationRepository.EnsureCreated();
+templateAdaptationRepository.EnsureBootstrapProfiles(moduleManager);
 unitProjectRepository.EnsureCreated();
 unitProjectService.EnsureDefault(projectManager.GetCurrentProject());
 
@@ -795,6 +803,92 @@ app.MapGet("/api/templates/{templateNodeId}/rules", (string templateNodeId, Rule
     }
 });
 
+app.MapGet("/api/template-adaptations/{templateNodeId}", (string templateNodeId, TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetDetail(templateNodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPut("/api/template-adaptations/{templateNodeId}", (string templateNodeId, TemplateAdaptationSaveRequest request, TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Save(templateNodeId, request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/template-adaptations/{templateNodeId}/validate", (string templateNodeId, TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Validate(templateNodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/template-adaptations/{templateNodeId}/test", (string templateNodeId, TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Test(templateNodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/template-adaptations/batch-test", async (HttpRequest httpRequest, TemplateAdaptationService service) =>
+{
+    try
+    {
+        TemplateBatchTestRequest? request = null;
+        if (httpRequest.ContentLength is > 0)
+        {
+            request = await httpRequest.ReadFromJsonAsync<TemplateBatchTestRequest>();
+        }
+
+        return Results.Ok(service.BatchTest(request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
 app.MapGet("/api/generated-forms/{nodeId}", (string nodeId, GeneratedFormService service) =>
 {
     try
@@ -819,6 +913,19 @@ app.MapPost("/api/generated-forms", (CreateGeneratedFormRequest request, Generat
     }
     catch (Exception ex)
     {
+        if (ex is TemplateAdaptationException adaptationEx)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = adaptationEx.Message,
+                missingFields = adaptationEx.MissingFields,
+                templateNodeId = adaptationEx.TemplateNodeId,
+                adaptationStatus = adaptationEx.AdaptationStatus,
+                canOpenAdaptationPanel = adaptationEx.CanOpenAdaptationPanel
+            });
+        }
+
         return Results.BadRequest(new
         {
             success = false,

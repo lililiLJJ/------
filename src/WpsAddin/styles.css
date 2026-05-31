@@ -447,6 +447,112 @@ textarea {
   word-break: break-all;
 }
 
+.templateInfoPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.templateInfoGrid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: start;
+}
+
+.templateInfoGrid span {
+  color: var(--muted);
+}
+
+.templateInfoGrid strong {
+  word-break: break-all;
+}
+
+.templateRulesPanel,
+.templateAdaptationPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.templateAdaptationSection {
+  display: grid;
+  gap: 12px;
+}
+
+.templateAdaptationSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.templateAdaptationToolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.templateAdaptationToolbar .wideLabel {
+  min-width: 180px;
+  max-width: 240px;
+}
+
+.templateAdaptationFieldList {
+  display: grid;
+  gap: 12px;
+}
+
+.templateAdaptationFieldCard {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.templateAdaptationFieldCard.ok {
+  border-color: #b8d8cf;
+  background: #f7fcfa;
+}
+
+.templateAdaptationFieldCard.warning {
+  border-color: #f0d28a;
+  background: #fffdf7;
+}
+
+.templateAdaptationFieldHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.templateAdaptationToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.templateAdaptationToggle input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+}
+
+.templateAdaptationFieldGrid {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 10px 12px;
+}
+
+.templateAdaptationHint {
+  margin: 0;
+  font-size: 12px;
+}
+
 .summaryWorkbench {
   display: grid;
   grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
@@ -1723,6 +1829,11 @@ textarea {
   .formGrid,
   .unitGrid,
   .batchPlanHeaderGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .templateAdaptationSummaryGrid,
+  .templateAdaptationFieldGrid {
     grid-template-columns: 1fr;
   }
 

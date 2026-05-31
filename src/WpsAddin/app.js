@@ -5,6 +5,9 @@ let templates = [];
 let modules = [];
 let templateTreeNodes = [];
 let selectedTemplateNode = null;
+let currentTemplateAdaptation = null;
+let currentTemplateAdaptationValidation = null;
+let currentTemplateAdaptationTest = null;
 let currentGeneratedForm = null;
 let lastRowHeightFitAdjustment = null;
 let summaryTreeNodes = [];
@@ -42,6 +45,21 @@ let unitProjects = [];
 let activeUnitProjectId = "";
 let selectedUnitProjectId = "";
 let editingUnitProjectId = "";
+
+const templateAdaptationManagedModuleId = "gd_installation_2024";
+const templateAdaptationFieldMeta = [
+  { key: "ProjectName", label: "\u5de5\u7a0b\u540d\u79f0" },
+  { key: "ConstructionUnit", label: "\u65bd\u5de5\u5355\u4f4d" },
+  { key: "SupervisionUnit", label: "\u76d1\u7406\u5355\u4f4d" },
+  { key: "PartName", label: "\u68c0\u9a8c\u6279\u90e8\u4f4d" },
+  { key: "Capacity", label: "\u68c0\u9a8c\u6279\u5bb9\u91cf" },
+  { key: "ConstructionDate", label: "\u65bd\u5de5\u65e5\u671f" }
+];
+const templateAdaptationModeOptions = [
+  { value: "Cell", label: "\u5355\u5143\u683c\u6620\u5c04" },
+  { value: "Placeholder", label: "\u5360\u4f4d\u7b26" },
+  { value: "Hybrid", label: "\u6df7\u5408" }
+];
 
 const tabSyncKeys = {
   targetTab: "engineering_docs_target_tab",
@@ -1337,6 +1355,427 @@ function resolveFolderMeta(node) {
   return resolveFolderLevelLabel(node.folderLevel);
 }
 
+function supportsTemplateAdaptation(node) {
+  return node?.moduleId === templateAdaptationManagedModuleId;
+}
+
+function findTemplateTreeNodeById(nodeId, nodes = templateTreeNodes) {
+  for (const node of nodes || []) {
+    if (node.id === nodeId) {
+      return node;
+    }
+
+    const nested = findTemplateTreeNodeById(nodeId, node.children || []);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function getTemplateAdaptationFieldLabel(fieldKey) {
+  return templateAdaptationFieldMeta.find((item) => item.key === fieldKey)?.label || fieldKey;
+}
+
+function formatDateTimeText(value) {
+  if (!value) {
+    return "\u672a\u8bb0\u5f55";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function resolveTemplateAdaptationFieldMode(mapping) {
+  return mapping?.mode || currentTemplateAdaptation?.profile?.mappingMode || "Cell";
+}
+
+function formatTemplateAdaptationTargets(targets) {
+  return (targets || [])
+    .map((target) => {
+      const worksheet = String(target.worksheetName || "").trim();
+      const cell = String(target.cellReference || "").trim().toUpperCase();
+      return worksheet ? `${worksheet}!${cell}` : cell;
+    })
+    .join("\n");
+}
+
+function parseTemplateAdaptationTargets(value) {
+  return String(value || "")
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const normalized = item.replace(/\$/g, "");
+      const parts = normalized.split("!");
+      if (parts.length > 1) {
+        const worksheetName = parts.slice(0, -1).join("!").trim();
+        const cellReference = parts[parts.length - 1].trim().toUpperCase();
+        return {
+          worksheetName: worksheetName || null,
+          cellReference
+        };
+      }
+
+      return {
+        worksheetName: null,
+        cellReference: normalized.trim().toUpperCase()
+      };
+    });
+}
+
+function getTemplateAdaptationCoverage(mapping) {
+  if (!mapping || !mapping.isEnabled) {
+    return false;
+  }
+
+  const mode = resolveTemplateAdaptationFieldMode(mapping);
+  const hasPlaceholders = (mapping.placeholderTokens || []).length > 0;
+  const hasTargets = (mapping.targets || []).length > 0;
+  if (mode === "Placeholder") {
+    return hasPlaceholders;
+  }
+  if (mode === "Hybrid") {
+    return hasPlaceholders || hasTargets;
+  }
+  return hasTargets;
+}
+
+function resolveTemplateAdaptationTone(detail, validationResult = currentTemplateAdaptationValidation, testResult = currentTemplateAdaptationTest) {
+  const mappings = detail?.mappings || [];
+  const requiredFields = detail?.requiredFields || [];
+  const missingFields = requiredFields.filter((fieldKey) => !getTemplateAdaptationCoverage(mappings.find((item) => item.fieldKey === fieldKey)));
+  if (missingFields.length > 0 || validationResult?.missingFields?.length > 0 || testResult?.success === false) {
+    return "error";
+  }
+
+  if (validationResult?.success && detail?.profile?.lastTestStatus === "PASS") {
+    return "ok";
+  }
+
+  return "warning";
+}
+
+function buildTemplateAdaptationSaveRequest() {
+  const panel = $("#templateAdaptationPanel");
+  if (!panel) {
+    return {
+      mappingMode: "Cell",
+      mappings: []
+    };
+  }
+
+  return {
+    mappingMode: $("#templateAdaptationMappingMode")?.value || "Cell",
+    mappings: templateAdaptationFieldMeta.map((field) => {
+      const section = panel.querySelector(`[data-template-adapt-field="${field.key}"]`);
+      if (!section) {
+        return {
+          fieldKey: field.key,
+          mode: "Cell",
+          placeholderTokens: [],
+          targets: [],
+          isRequired: true,
+          isEnabled: false
+        };
+      }
+
+      const mode = section.querySelector("[data-template-adapt-mode]")?.value || "Cell";
+      const placeholderValue = section.querySelector("[data-template-adapt-placeholders]")?.value || "";
+      const placeholders = placeholderValue
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const targets = parseTemplateAdaptationTargets(section.querySelector("[data-template-adapt-targets]")?.value || "");
+      return {
+        fieldKey: field.key,
+        mode,
+        placeholderTokens: placeholders,
+        targets,
+        isRequired: true,
+        isEnabled: !!section.querySelector("[data-template-adapt-enabled]")?.checked
+      };
+    })
+  };
+}
+
+function renderTemplateAdaptationActionResult(detail, validationResult = currentTemplateAdaptationValidation, testResult = currentTemplateAdaptationTest) {
+  const lines = [];
+  if (validationResult) {
+    lines.push(`\u6821\u9a8c\uff1a${validationResult.success ? "PASS" : "FAIL"}`);
+    if (validationResult.missingFields?.length) {
+      lines.push(`\u7f3a\u5c11\u5b57\u6bb5\uff1a${validationResult.missingFields.map(getTemplateAdaptationFieldLabel).join("\u3001")}`);
+    }
+    if (validationResult.issues?.length) {
+      lines.push(...validationResult.issues.slice(0, 6).map((issue) => `- ${issue.message}`));
+    }
+  }
+
+  if (testResult) {
+    lines.push(`\u6d4b\u8bd5\uff1a${testResult.result || (testResult.success ? "PASS" : "FAIL")}`);
+    const failedFields = (testResult.fields || []).filter((field) => !field.success);
+    if (failedFields.length > 0) {
+      lines.push(...failedFields.map((field) => `- ${getTemplateAdaptationFieldLabel(field.fieldKey)}: ${field.message}`));
+    }
+    if (testResult.layout?.differences?.length) {
+      lines.push(...testResult.layout.differences.slice(0, 6).map((item) => `- ${item}`));
+    }
+  }
+
+  if (lines.length === 0) {
+    const mappedCount = (detail?.mappings || []).filter(getTemplateAdaptationCoverage).length;
+    return `\u5df2\u914d\u5b57\u6bb5\uff1a${mappedCount}/${templateAdaptationFieldMeta.length}\n\u652f\u6301\u4fdd\u5b58\u3001\u751f\u6210\u524d\u6821\u9a8c\u3001\u5f53\u524d\u6a21\u677f\u6d4b\u8bd5\u548c\u6279\u91cf\u62bd\u6d4b\u3002`;
+  }
+
+  return lines.join("\n");
+}
+
+function renderTemplateAdaptationPanel(node, detail) {
+  const panel = $("#templateAdaptationPanel");
+  if (!panel) {
+    return;
+  }
+
+  currentTemplateAdaptation = detail;
+  const mappings = detail?.mappings || [];
+  const requiredFields = detail?.requiredFields || templateAdaptationFieldMeta.map((item) => item.key);
+  const missingFields = requiredFields.filter((fieldKey) => !getTemplateAdaptationCoverage(mappings.find((item) => item.fieldKey === fieldKey)));
+  const tone = resolveTemplateAdaptationTone(detail);
+  const placeholderReady = mappings.some((item) => (item.placeholderTokens || []).length > 0);
+  const mappedCount = requiredFields.length - missingFields.length;
+  const statusText = tone === "ok"
+    ? "\u5df2\u5b8c\u6210"
+    : tone === "error"
+      ? "\u65e0\u6cd5\u751f\u6210"
+      : "\u5f85\u8865\u5168";
+  const readOnly = !supportsTemplateAdaptation(node);
+
+  panel.innerHTML = `
+    <section class="templateAdaptationSection">
+      <div class="diagnosticHeader">
+        <div>
+          <h3>\u6a21\u677f\u9002\u914d\u7ba1\u7406</h3>
+          <p>\u9996\u7248\u63a5\u7ba1 ${escapeHtml(templateAdaptationManagedModuleId)} \u6a21\u5757\u6a21\u677f\uff0c\u5199\u5165\u4ec5\u5141\u8bb8\u5360\u4f4d\u7b26\u6216\u663e\u5f0f\u6620\u5c04\u3002</p>
+        </div>
+        <span class="diagnosticBadge ${tone}">${statusText}</span>
+      </div>
+      <div class="templateAdaptationSummaryGrid">
+        <article class="diagnosticCard ${tone}">
+          <div class="diagnosticHeader">
+            <h3>\u6620\u5c04\u72b6\u6001</h3>
+            <span class="diagnosticBadge ${tone}">${mappedCount}/${requiredFields.length}</span>
+          </div>
+          <p>\u6620\u5c04\u6a21\u5f0f\uff1a${escapeHtml(detail.profile.mappingMode || "Cell")}</p>
+          <p>\u5360\u4f4d\u7b26\u72b6\u6001\uff1a${placeholderReady ? "\u5df2\u53d1\u73b0" : "\u672a\u53d1\u73b0"}</p>
+          <p>\u6700\u540e\u6821\u9a8c\uff1a${escapeHtml(formatDateTimeText(detail.profile.lastValidatedAt))}</p>
+          <p>\u6700\u540e\u6d4b\u8bd5\uff1a${escapeHtml(formatDateTimeText(detail.profile.lastTestedAt))}</p>
+        </article>
+        <article class="diagnosticCard ${missingFields.length === 0 ? "ok" : "warning"}">
+          <div class="diagnosticHeader">
+            <h3>\u5b57\u6bb5\u5b8c\u6574\u6027</h3>
+            <span class="diagnosticBadge ${missingFields.length === 0 ? "ok" : "warning"}">${missingFields.length === 0 ? "\u5b8c\u6574" : "\u7f3a\u5c11"}</span>
+          </div>
+          <p>${missingFields.length === 0
+            ? "\u516d\u4e2a\u5fc5\u586b\u5b57\u6bb5\u5747\u5df2\u5efa\u7acb\u53ef\u7528\u6620\u5c04\u3002"
+            : `\u5f85\u8865\u5b57\u6bb5\uff1a${escapeHtml(missingFields.map(getTemplateAdaptationFieldLabel).join("\u3001"))}`}</p>
+          <p>\u6a21\u677f\u7248\u672c\uff1a${escapeHtml(detail.profile.moduleVersion || "-")}</p>
+          <p>\u6700\u540e\u6d4b\u8bd5\u7ed3\u679c\uff1a${escapeHtml(detail.profile.lastTestStatus || "\u672a\u6d4b\u8bd5")}</p>
+        </article>
+      </div>
+      <div class="templateAdaptationToolbar">
+        <label class="wideLabel">\u6620\u5c04\u6a21\u5f0f
+          <select id="templateAdaptationMappingMode" ${readOnly ? "disabled" : ""}>
+            ${templateAdaptationModeOptions.map((option) => `
+              <option value="${option.value}" ${detail.profile.mappingMode === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
+          </select>
+        </label>
+        <div class="actions compactActions">
+          <button type="button" data-template-adapt-action="save" ${readOnly ? "disabled" : ""}>\u4fdd\u5b58\u6620\u5c04</button>
+          <button type="button" data-template-adapt-action="validate">\u6821\u9a8c\u6a21\u677f</button>
+          <button type="button" data-template-adapt-action="test">\u6d4b\u8bd5\u5f53\u524d\u6a21\u677f</button>
+          <button type="button" data-template-adapt-action="batch">\u6279\u91cf\u6d4b\u8bd5\u6a21\u677f</button>
+        </div>
+      </div>
+      ${readOnly ? `<p class="emptyText">\u9996\u7248\u6a21\u677f\u9002\u914d\u53ea\u63a5\u7ba1 ${escapeHtml(templateAdaptationManagedModuleId)}\u3002\u5f53\u524d\u6a21\u677f\u4fdd\u6301\u65e7\u94fe\u8def\u3002</p>` : ""}
+      <div class="templateAdaptationFieldList">
+        ${templateAdaptationFieldMeta.map((field) => {
+          const mapping = mappings.find((item) => item.fieldKey === field.key) || {};
+          const fieldTone = getTemplateAdaptationCoverage(mapping) ? "ok" : "warning";
+          return `
+            <section class="templateAdaptationFieldCard ${fieldTone}" data-template-adapt-field="${field.key}">
+              <div class="templateAdaptationFieldHeader">
+                <label class="templateAdaptationToggle">
+                  <input type="checkbox" data-template-adapt-enabled ${mapping.isEnabled ? "checked" : ""} ${readOnly ? "disabled" : ""}>
+                  <span>${field.label}</span>
+                </label>
+                <span class="diagnosticBadge ${fieldTone}">${getTemplateAdaptationCoverage(mapping) ? "\u5df2\u914d" : "\u5f85\u914d"}</span>
+              </div>
+              <div class="templateAdaptationFieldGrid">
+                <label>\u6620\u5c04\u65b9\u5f0f
+                  <select data-template-adapt-mode ${readOnly ? "disabled" : ""}>
+                    ${templateAdaptationModeOptions.map((option) => `
+                      <option value="${option.value}" ${resolveTemplateAdaptationFieldMode(mapping) === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
+                  </select>
+                </label>
+                <label>\u5360\u4f4d\u7b26
+                  <input type="text" data-template-adapt-placeholders value="${escapeHtml((mapping.placeholderTokens || []).join(", "))}" placeholder="{{ProjectName}}, {{ConstructionUnit}}" ${readOnly ? "disabled" : ""}>
+                </label>
+              </div>
+              <label>\u76ee\u6807\u5355\u5143\u683c
+                <textarea rows="3" data-template-adapt-targets placeholder="Sheet1!B2&#10;F2" ${readOnly ? "disabled" : ""}>${escapeHtml(formatTemplateAdaptationTargets(mapping.targets || []))}</textarea>
+              </label>
+              <p class="templateAdaptationHint">\u652f\u6301\u591a\u4e2a\u76ee\u6807\uff0c\u6bcf\u884c\u4e00\u4e2a\uff0c\u5de5\u4f5c\u8868\u540d\u53ef\u9009\u3002</p>
+            </section>`;
+        }).join("")}
+      </div>
+      <pre id="templateAdaptationResult" class="resultBox compactResult">${escapeHtml(renderTemplateAdaptationActionResult(detail))}</pre>
+    </section>`;
+}
+
+async function loadTemplateAdaptation(node, options = {}) {
+  let panel = $("#templateAdaptationPanel");
+  if (!panel) {
+    const container = $("#spreadsheetPreview .templateInfoPanel");
+    if (container) {
+      panel = document.createElement("div");
+      panel.id = "templateAdaptationPanel";
+      panel.className = "templateAdaptationPanel";
+      container.appendChild(panel);
+    }
+  }
+
+  if (!panel) {
+    return null;
+  }
+
+  currentTemplateAdaptation = null;
+  if (!options.preserveResults) {
+    currentTemplateAdaptationValidation = null;
+    currentTemplateAdaptationTest = null;
+  }
+
+  if (!node || node.nodeType !== "template") {
+    panel.innerHTML = '<p class="emptyText">\u8bf7\u5148\u9009\u62e9\u6a21\u677f\u3002</p>';
+    return null;
+  }
+
+  panel.innerHTML = '<p class="emptyText">\u6b63\u5728\u8bfb\u53d6\u6a21\u677f\u9002\u914d...</p>';
+  try {
+    const detail = await api(`/api/template-adaptations/${encodeURIComponent(node.id)}`);
+    renderTemplateAdaptationPanel(node, detail);
+    if (options.message) {
+      const resultBox = $("#templateAdaptationResult");
+      if (resultBox) {
+        resultBox.textContent = options.message;
+      }
+    }
+    return detail;
+  } catch (error) {
+    panel.innerHTML = `<p class="emptyText">${escapeHtml(error.message || "\u6a21\u677f\u9002\u914d\u8bfb\u53d6\u5931\u8d25\u3002")}</p>`;
+    throw error;
+  }
+}
+
+async function openTemplateAdaptationFromError(error) {
+  if (!error?.canOpenAdaptationPanel || !error.templateNodeId) {
+    return false;
+  }
+
+  activateTab("templates");
+  const node = findTemplateTreeNodeById(error.templateNodeId);
+  if (!node) {
+    return false;
+  }
+
+  await selectTemplateTreeNode(node);
+  const missingFields = (error.missingFields || []).map(getTemplateAdaptationFieldLabel);
+  const message = [
+    error.message || "\u6a21\u677f\u9002\u914d\u672a\u5b8c\u6210\u3002",
+    missingFields.length > 0 ? `\u7f3a\u5c11\u5b57\u6bb5\uff1a${missingFields.join("\u3001")}` : ""
+  ].filter(Boolean).join("\n");
+  const resultBox = $("#templateAdaptationResult");
+  if (resultBox) {
+    resultBox.textContent = message;
+  }
+  return true;
+}
+
+async function saveTemplateAdaptation() {
+  if (!selectedTemplateNode || selectedTemplateNode.nodeType !== "template") {
+    return;
+  }
+
+  showResult("#templateResult", "\u6b63\u5728\u4fdd\u5b58\u6a21\u677f\u9002\u914d...");
+  const detail = await api(`/api/template-adaptations/${encodeURIComponent(selectedTemplateNode.id)}`, {
+    method: "PUT",
+    body: JSON.stringify(buildTemplateAdaptationSaveRequest())
+  });
+  currentTemplateAdaptationValidation = null;
+  currentTemplateAdaptationTest = null;
+  renderTemplateAdaptationPanel(selectedTemplateNode, detail);
+  showResult("#templateResult", detail);
+}
+
+async function validateTemplateAdaptation() {
+  if (!selectedTemplateNode || selectedTemplateNode.nodeType !== "template") {
+    return;
+  }
+
+  showResult("#templateResult", "\u6b63\u5728\u6821\u9a8c\u6a21\u677f\u9002\u914d...");
+  currentTemplateAdaptationValidation = await api(`/api/template-adaptations/${encodeURIComponent(selectedTemplateNode.id)}/validate`, {
+    method: "POST"
+  });
+  showResult("#templateResult", currentTemplateAdaptationValidation);
+  await loadTemplateAdaptation(selectedTemplateNode, { preserveResults: true });
+  const resultBox = $("#templateAdaptationResult");
+  if (resultBox && currentTemplateAdaptation) {
+    resultBox.textContent = renderTemplateAdaptationActionResult(currentTemplateAdaptation, currentTemplateAdaptationValidation, currentTemplateAdaptationTest);
+  }
+}
+
+async function testTemplateAdaptation() {
+  if (!selectedTemplateNode || selectedTemplateNode.nodeType !== "template") {
+    return;
+  }
+
+  showResult("#templateResult", "\u6b63\u5728\u6d4b\u8bd5\u5f53\u524d\u6a21\u677f...");
+  currentTemplateAdaptationTest = await api(`/api/template-adaptations/${encodeURIComponent(selectedTemplateNode.id)}/test`, {
+    method: "POST"
+  });
+  showResult("#templateResult", currentTemplateAdaptationTest);
+  await loadTemplateAdaptation(selectedTemplateNode, { preserveResults: true });
+  const resultBox = $("#templateAdaptationResult");
+  if (resultBox && currentTemplateAdaptation) {
+    resultBox.textContent = renderTemplateAdaptationActionResult(currentTemplateAdaptation, currentTemplateAdaptationValidation, currentTemplateAdaptationTest);
+  }
+}
+
+async function batchTestTemplateAdaptation() {
+  const moduleId = currentTemplateAdaptation?.profile?.moduleId || selectedTemplateNode?.moduleId || templateAdaptationManagedModuleId;
+  showResult("#templateResult", "\u6b63\u5728\u6279\u91cf\u62bd\u6d4b\u6a21\u677f...");
+  const result = await api("/api/template-adaptations/batch-test", {
+    method: "POST",
+    body: JSON.stringify({
+      moduleId,
+      count: 10
+    })
+  });
+  showResult("#templateResult", result);
+  const resultBox = $("#templateAdaptationResult");
+  if (resultBox) {
+    resultBox.textContent = [
+      `\u6279\u91cf\u6d4b\u8bd5\uff1a${result.passedCount}/${result.testedCount} PASS`,
+      `\u62a5\u544a\u8def\u5f84\uff1a${result.reportPath || "-"}`,
+      `\u6d4b\u8bd5\u6a21\u5757\uff1a${result.moduleId || "-"} ${result.moduleVersion || ""}`.trim()
+    ].join("\n");
+  }
+}
+
 async function selectTemplateTreeNode(node) {
   selectedTemplateNode = node;
   currentGeneratedForm = null;
@@ -1362,6 +1801,7 @@ async function selectTemplateTreeNode(node) {
         </div>
       </div>`;
     await loadTemplateRules(node);
+    await loadTemplateAdaptation(node);
     updateTemplateToolbarState(false);
     return;
   }
@@ -1965,6 +2405,7 @@ async function createGeneratedForm(event) {
     await loadSummaryTree();
     await openGeneratedForm(result.node);
   } catch (error) {
+    await openTemplateAdaptationFromError(error).catch(() => false);
     showResult("#templateResult", error);
   }
 }
@@ -2000,6 +2441,7 @@ async function createGeneratedFormDirectly(node) {
     await loadSummaryTree();
     await openGeneratedForm(result.node);
   } catch (error) {
+    await openTemplateAdaptationFromError(error).catch(() => false);
     showResult("#templateResult", error);
   } finally {
     directGeneratedFormCreating = false;
@@ -5127,6 +5569,26 @@ async function boot() {
     if (!event.target.closest("#materialLedgerFilterMenu") && !event.target.closest("[data-ledger-filter]")) {
       closeMaterialLedgerFilterMenu();
     }
+  });
+  $("#spreadsheetPreview").addEventListener("click", (event) => {
+    const actionButton = event.target.closest("[data-template-adapt-action]");
+    if (!actionButton) {
+      return;
+    }
+
+    const action = actionButton.dataset.templateAdaptAction;
+    const handlers = {
+      save: saveTemplateAdaptation,
+      validate: validateTemplateAdaptation,
+      test: testTemplateAdaptation,
+      batch: batchTestTemplateAdaptation
+    };
+    const handler = handlers[action];
+    if (!handler) {
+      return;
+    }
+
+    handler().catch((error) => showResult("#templateResult", error));
   });
   $("#newGeneratedForm").addEventListener("click", openGeneratedFormModal);
   $("#saveSpreadsheet").addEventListener("click", saveSpreadsheet);

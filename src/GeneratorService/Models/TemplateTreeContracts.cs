@@ -47,7 +47,10 @@ public sealed record GeneratedFormCreateResult(
     bool Success,
     TemplateTreeNodeDto Node,
     string GeneratedFilePath,
-    string Message);
+    string Message,
+    IReadOnlyList<string>? MissingFields = null,
+    string? TemplateNodeId = null,
+    string? AdaptationStatus = null);
 
 public sealed record DeleteGeneratedFormResult(
     bool Success,

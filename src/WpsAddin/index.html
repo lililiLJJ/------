@@ -226,6 +226,37 @@
     </section>
 
     <section id="templates" class="tabPanel">
+      <div class="templateManagementEntryCard">
+        <div class="templateManagementEntryInfo">
+          <div>
+            <h2>模板管理中心</h2>
+            <p>模板管理已升级为独立配置中心，模板库、模板适配、字段映射和模板测试将逐步迁移到独立工作区。</p>
+          </div>
+          <div class="actions compactActions">
+            <button id="openTemplateManagementCenter" type="button" class="primary">打开模板管理中心</button>
+          </div>
+        </div>
+        <div class="templateManagementEntryGrid">
+          <section class="templateManagementEntrySection">
+            <h3>当前入口页说明</h3>
+            <ul class="templateManagementEntryList">
+              <li>主界面的“模板管理”现在只保留为入口页。</li>
+              <li>独立入口页 `template-management.html` 已预留，后续阶段会承载完整模板管理工作区。</li>
+              <li>现有模板工作区先隐藏保留，避免影响当前业务逻辑和接口链路。</li>
+            </ul>
+          </section>
+          <section class="templateManagementEntrySection">
+            <h3>下一阶段计划</h3>
+            <ul class="templateManagementEntryList">
+              <li>实现系统独立窗口优先打开和单实例聚焦。</li>
+              <li>迁移模板库、模板适配、字段映射、模板测试到模板管理中心宿主。</li>
+              <li>补齐页面内回退窗体与未保存修改拦截。</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+
+      <div id="templateLegacyHost" class="hidden">
       <div class="templateWorkbenchToolbar">
         <button id="newGeneratedForm" class="primary" disabled>新建资料</button>
         <button id="saveSpreadsheet" disabled>保存</button>
@@ -267,6 +298,7 @@
         </section>
       </div>
       <pre id="templateResult" class="resultBox"></pre>
+      </div>
     </section>
 
     <section id="materials" class="tabPanel">

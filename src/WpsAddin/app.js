@@ -74,6 +74,7 @@ const tabSyncKeys = {
 };
 
 const materialLedgerWindowHash = "materials-ledger-window";
+const templateManagementWindowHash = "template-management-window";
 const workbookManager = createWorkbookManager();
 
 const $ = (selector) => document.querySelector(selector);
@@ -5224,6 +5225,11 @@ function activateTabFromHash() {
     return;
   }
 
+  if (requestedTab === templateManagementWindowHash || isTemplateManagementStandaloneWindow()) {
+    activateTab("templates");
+    return;
+  }
+
   activateTab(normalizeTabId(requestedTab));
 }
 
@@ -5238,6 +5244,49 @@ async function bootMaterialLedgerStandaloneWindow() {
   await refreshStatus();
   await loadCurrentProject().catch((error) => showResult("#materialResult", error));
   await openMaterialLedgerDialog("edit");
+}
+
+function isTemplateManagementStandaloneWindow() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("view") === templateManagementWindowHash
+    || window.location.hash.replace("#", "") === templateManagementWindowHash;
+}
+
+async function bootTemplateManagementStandaloneWindow() {
+  document.body.classList.add("templateManagementStandaloneMode");
+  const legacyHost = $("#templateLegacyHost");
+  if (legacyHost) {
+    legacyHost.classList.remove("hidden");
+  }
+  activateTab("templates");
+}
+
+function buildTemplateManagementWindowUrl() {
+  const url = new URL("template-management.html", window.location.href);
+  url.searchParams.set("v", "20260601-template-management");
+  return url.toString();
+}
+
+function openTemplateManagementEntryPage() {
+  const url = buildTemplateManagementWindowUrl();
+  let popup = null;
+  try {
+    popup = window.open(url, "_blank", "popup=yes,width=1440,height=900,resizable=yes,scrollbars=yes");
+  } catch {
+    popup = null;
+  }
+
+  if (popup) {
+    try {
+      popup.focus();
+    } catch {
+      // Some WPS WebViews do not allow focusing external windows.
+    }
+    showResult("#templateResult", "已打开模板管理中心入口页。");
+    return;
+  }
+
+  window.location.assign(url);
 }
 
 function applyExternalTabSignal(message) {
@@ -5322,6 +5371,9 @@ async function boot() {
   bindTabs();
   bindExternalTabSwitching();
   activateTabFromHash();
+  if (isTemplateManagementStandaloneWindow()) {
+    await bootTemplateManagementStandaloneWindow();
+  }
   $("#refreshStatus").addEventListener("click", refreshStatus);
   $("#retryServiceStatus").addEventListener("click", retryServiceStatus);
   $("#copyStartCommand").addEventListener("click", copyStartCommand);
@@ -5403,6 +5455,7 @@ async function boot() {
   $("#reloadTemplates").addEventListener("click", loadTemplates);
   $("#refreshTemplateList").addEventListener("click", refreshTemplateManagement);
   $("#openTemplateFolder").addEventListener("click", openTemplateFolder);
+  $("#openTemplateManagementCenter")?.addEventListener("click", openTemplateManagementEntryPage);
   $("#refreshSummary").addEventListener("click", loadSummaryTree);
   $("#generateSummary").addEventListener("click", generateSummary);
   $("#refreshBatchPlans").addEventListener("click", () => loadBatchPlans().catch((error) => showResult("#batchPlanResult", error)));
@@ -5696,9 +5749,26 @@ function ensureTemplateManagementWorkspace() {
     return;
   }
 
-  let tabs = $("#templateManagementTabs");
-  if (!tabs) {
-    tabs = document.createElement("div");
+  let workspace = $("#templateManagementWorkspace");
+  if (!workspace) {
+    workspace = document.createElement("div");
+    workspace.id = "templateManagementWorkspace";
+    workspace.className = "templateManagementWorkspace";
+
+    const sidebar = document.createElement("aside");
+    sidebar.id = "templateManagementSidebar";
+    sidebar.className = "templateManagementSidebar";
+    sidebar.innerHTML = `
+      <div class="templateManagementSidebarHeader">
+        <h3>模板管理</h3>
+        <p>查看模板库、适配状态与字段映射。</p>
+      </div>`;
+
+    const content = document.createElement("div");
+    content.id = "templateManagementContent";
+    content.className = "templateManagementContent";
+
+    const tabs = document.createElement("div");
     tabs.id = "templateManagementTabs";
     tabs.className = "templateManagementTabs";
     tabs.innerHTML = templateManagementTabMeta
@@ -5712,8 +5782,10 @@ function ensureTemplateManagementWorkspace() {
       .map((tab) => `<section id="${tab.panelId}" class="templateManagementPanel"></section>`)
       .join("");
 
-    pane.appendChild(tabs);
-    pane.appendChild(panels);
+    sidebar.appendChild(tabs);
+    content.appendChild(panels);
+    workspace.append(sidebar, content);
+    pane.appendChild(workspace);
 
     const libraryPanel = $("#templateLibraryTabPanel");
     libraryPanel?.appendChild(preview);

@@ -22,30 +22,85 @@ public sealed record TemplateProfileInfo(
 
 public sealed record TemplateFieldMappingInfo(
     string FieldKey,
+    string DisplayName,
     string Mode,
     IReadOnlyList<string> PlaceholderTokens,
     IReadOnlyList<TemplateFieldTarget> Targets,
+    string ValueSource,
+    string DefaultValue,
+    int SortOrder,
+    bool IsSystemField,
+    string? Description,
     bool IsRequired,
-    bool IsEnabled);
+    bool IsEnabled,
+    string? PrimaryCellReference,
+    int TargetCount);
 
 public sealed record TemplateAdaptationDetailResult(
     bool Success,
     string TemplateNodeId,
     TemplateProfileInfo Profile,
     IReadOnlyList<TemplateFieldMappingInfo> Mappings,
-    IReadOnlyList<string> RequiredFields);
+    IReadOnlyList<string> RequiredFields,
+    IReadOnlyList<string> MissingRequiredFields,
+    string ModuleStatus,
+    string AdaptationStatus,
+    bool CanEdit,
+    bool CanTest);
 
 public sealed record TemplateFieldMappingSaveItem(
     string? FieldKey,
+    string? DisplayName,
     string? Mode,
     IReadOnlyList<string>? PlaceholderTokens,
     IReadOnlyList<TemplateFieldTarget>? Targets,
+    string? ValueSource,
+    string? DefaultValue,
+    int? SortOrder,
+    bool? IsSystemField,
+    string? Description,
     bool? IsRequired,
     bool? IsEnabled);
 
 public sealed record TemplateAdaptationSaveRequest(
     string? MappingMode,
     IReadOnlyList<TemplateFieldMappingSaveItem>? Mappings);
+
+public sealed record TemplateMappingTemplateSummary(
+    string TemplateNodeId,
+    string ModuleId,
+    string ModuleVersion,
+    long TemplateItemId,
+    string TemplateCode,
+    string TemplateName,
+    string TemplateFile,
+    string TemplateFilePath,
+    int MappingCount,
+    int RequiredMappingCount,
+    int CompletedRequiredCount,
+    IReadOnlyList<string> MissingRequiredFields,
+    DateTimeOffset? UpdatedAt,
+    string ModuleStatus,
+    string AdaptationStatus,
+    bool CanEdit,
+    bool CanTest);
+
+public sealed record TemplateMappingTemplateListResult(
+    bool Success,
+    int TotalCount,
+    IReadOnlyList<TemplateMappingTemplateSummary> Templates);
+
+public sealed record TemplateMappingFieldListResult(
+    bool Success,
+    string TemplateNodeId,
+    string TemplateName,
+    IReadOnlyList<TemplateFieldMappingInfo> Fields);
+
+public sealed record TemplateMappingFieldDeleteResult(
+    bool Success,
+    string TemplateNodeId,
+    string FieldKey,
+    string Message);
 
 public sealed record TemplateValidationIssue(
     string Code,

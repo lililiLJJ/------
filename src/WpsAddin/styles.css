@@ -553,6 +553,228 @@ textarea {
   font-size: 12px;
 }
 
+.templateManagementTabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px 12px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.templateManagementTabs button {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text);
+}
+
+.templateManagementTabs button.active {
+  border-color: #1f6feb;
+  background: #eaf2ff;
+  color: #0b4fb3;
+}
+
+.templateManagementPanels {
+  min-height: 0;
+}
+
+.templateManagementPanel {
+  display: none;
+  min-height: 0;
+}
+
+.templateManagementPanel.active {
+  display: block;
+}
+
+.templateManagementPanel > .spreadsheetPreview {
+  border: 0;
+  border-radius: 0;
+  min-height: 420px;
+}
+
+.templateAdaptationOverview,
+.templateFieldMappingPanel,
+.templateTestPanel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.templateAdaptationOverview {
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.9fr);
+}
+
+.templateAdaptationListCard,
+.templateAdaptationSummaryCard,
+.templateMappingEditorCard,
+.templateMappingDiagnosticsCard,
+.templateTestResultCard {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 94%);
+}
+
+.templateAdaptationFilterBar,
+.templateFieldMappingToolbar,
+.templateTestToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.templateAdaptationFilterBar .actions,
+.templateFieldMappingToolbar .actions,
+.templateTestToolbar .actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.templateAdaptationListTable,
+.templateFieldMappingTable,
+.templateTestResultTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.templateAdaptationListTable th,
+.templateAdaptationListTable td,
+.templateFieldMappingTable th,
+.templateFieldMappingTable td,
+.templateTestResultTable th,
+.templateTestResultTable td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.templateAdaptationListTable tbody tr.selectedRow {
+  background: #f5f9ff;
+}
+
+.templateAdaptationListTable tbody tr:hover {
+  background: #fafcff;
+}
+
+.templateFieldKeyCell {
+  min-width: 160px;
+}
+
+.templateFieldKeyCell input[readonly] {
+  background: #f6f8fb;
+}
+
+.templateFieldMappingTable input,
+.templateFieldMappingTable select,
+.templateFieldMappingTable textarea,
+.templateTargetRow input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.templateFieldMappingTable textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.templateFieldCheckbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.templateFieldCheckbox input {
+  width: 18px;
+  min-height: 18px;
+}
+
+.templateFieldDeleteCell {
+  width: 84px;
+  text-align: center;
+}
+
+.templateTargetList {
+  display: grid;
+  gap: 8px;
+}
+
+.templateTargetRow {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(100px, 120px) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.templateTargetRow button {
+  white-space: nowrap;
+}
+
+.templateMappingMeta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.templateFieldSystemBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: #eef4ff;
+  color: #2155b6;
+}
+
+.templateFieldCustomBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: #eef8ef;
+  color: #1f7a35;
+}
+
+.templateSummaryList {
+  display: grid;
+  gap: 10px;
+}
+
+.templateSummaryList div {
+  display: grid;
+  gap: 4px;
+}
+
+.templateSummaryList dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.templateSummaryList dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.templateMissingFieldList,
+.templateIssueList,
+.templateMessageList {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.templateTestPath {
+  word-break: break-all;
+}
+
 .summaryWorkbench {
   display: grid;
   grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
@@ -1832,15 +2054,26 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .templateAdaptationOverview {
+    grid-template-columns: 1fr;
+  }
+
   .templateAdaptationSummaryGrid,
   .templateAdaptationFieldGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .templateTargetRow {
     grid-template-columns: 1fr;
   }
 
   .actions,
   .batchToolbar,
   .headerActions,
-  .templateWorkbenchToolbar {
+  .templateWorkbenchToolbar,
+  .templateAdaptationFilterBar,
+  .templateFieldMappingToolbar,
+  .templateTestToolbar {
     flex-wrap: wrap;
   }
 

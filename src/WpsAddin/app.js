@@ -8,6 +8,12 @@ let selectedTemplateNode = null;
 let currentTemplateAdaptation = null;
 let currentTemplateAdaptationValidation = null;
 let currentTemplateAdaptationTest = null;
+let templateMappingTemplates = [];
+let currentTemplateManagementTab = "library";
+let templateMappingFilters = {
+  moduleStatus: "",
+  adaptationStatus: ""
+};
 let currentGeneratedForm = null;
 let lastRowHeightFitAdjustment = null;
 let summaryTreeNodes = [];
@@ -5668,6 +5674,945 @@ async function boot() {
     await loadSettings().catch((error) => showResult("#settingsResult", error));
     await runEnvironmentCheck().catch((error) => showResult("#environmentResult", error));
     await refreshLicense();
+  }
+}
+
+const templateManagementTabMeta = [
+  { key: "library", label: "模板库", panelId: "templateLibraryTabPanel" },
+  { key: "adaptation", label: "模板适配", panelId: "templateAdaptationTabPanel" },
+  { key: "mapping", label: "字段映射", panelId: "templateMappingTabPanel" },
+  { key: "test", label: "模板测试", panelId: "templateTestTabPanel" }
+];
+
+const templateMappingValueSourceOptions = [
+  { value: "BusinessData", label: "业务数据优先" },
+  { value: "DefaultValue", label: "默认值" }
+];
+
+function ensureTemplateManagementWorkspace() {
+  const pane = $(".spreadsheetPane");
+  const preview = $("#spreadsheetPreview");
+  if (!pane || !preview) {
+    return;
+  }
+
+  let tabs = $("#templateManagementTabs");
+  if (!tabs) {
+    tabs = document.createElement("div");
+    tabs.id = "templateManagementTabs";
+    tabs.className = "templateManagementTabs";
+    tabs.innerHTML = templateManagementTabMeta
+      .map((tab) => `<button type="button" data-template-management-tab="${tab.key}">${tab.label}</button>`)
+      .join("");
+
+    const panels = document.createElement("div");
+    panels.id = "templateManagementPanels";
+    panels.className = "templateManagementPanels";
+    panels.innerHTML = templateManagementTabMeta
+      .map((tab) => `<section id="${tab.panelId}" class="templateManagementPanel"></section>`)
+      .join("");
+
+    pane.appendChild(tabs);
+    pane.appendChild(panels);
+
+    const libraryPanel = $("#templateLibraryTabPanel");
+    libraryPanel?.appendChild(preview);
+    const adaptationPanel = $("#templateAdaptationTabPanel");
+    const mappingPanel = $("#templateMappingTabPanel");
+    const testPanel = $("#templateTestTabPanel");
+    if (adaptationPanel && !$("#templateAdaptationOverview")) {
+      adaptationPanel.innerHTML = '<div id="templateAdaptationOverview" class="templateAdaptationOverview"></div>';
+    }
+    if (mappingPanel && !$("#templateFieldMappingPanel")) {
+      mappingPanel.innerHTML = '<div id="templateFieldMappingPanel" class="templateFieldMappingPanel"></div>';
+    }
+    if (testPanel && !$("#templateTestPanel")) {
+      testPanel.innerHTML = '<div id="templateTestPanel" class="templateTestPanel"></div>';
+    }
+  }
+
+  bindTemplateManagementEvents();
+  activateTemplateManagementTab(currentTemplateManagementTab);
+}
+
+function bindTemplateManagementEvents() {
+  const pane = $(".spreadsheetPane");
+  if (!pane || pane.dataset.templateManagementBound === "true") {
+    return;
+  }
+
+  pane.dataset.templateManagementBound = "true";
+  pane.addEventListener("click", (event) => {
+    const tabButton = event.target.closest("[data-template-management-tab]");
+    if (tabButton) {
+      activateTemplateManagementTab(tabButton.dataset.templateManagementTab || "library");
+      return;
+    }
+
+    const selectButton = event.target.closest("[data-template-adaptation-select]");
+    if (selectButton) {
+      const nodeId = selectButton.dataset.templateAdaptationSelect || "";
+      const node = findTemplateTreeNodeById(nodeId);
+      if (!node) {
+        showResult("#templateResult", `未找到模板节点：${nodeId}`);
+        return;
+      }
+
+      const targetTab = selectButton.dataset.templateAdaptationTargetTab || "adaptation";
+      selectTemplateTreeNode(node)
+        .then(() => activateTemplateManagementTab(targetTab))
+        .catch((error) => showResult("#templateResult", error));
+      return;
+    }
+
+    const addFieldButton = event.target.closest("[data-template-mapping-add-field]");
+    if (addFieldButton) {
+      appendTemplateMappingRow();
+      return;
+    }
+
+    const deleteFieldButton = event.target.closest("[data-template-mapping-delete-field]");
+    if (deleteFieldButton) {
+      const row = deleteFieldButton.closest("[data-template-mapping-row]");
+      if (row) {
+        if (row.dataset.systemField === "true") {
+          showResult("#templateResult", "系统字段不允许删除。");
+          return;
+        }
+        row.remove();
+      }
+      return;
+    }
+
+    const addTargetButton = event.target.closest("[data-template-target-add]");
+    if (addTargetButton) {
+      const row = addTargetButton.closest("[data-template-mapping-row]");
+      const list = row?.querySelector("[data-template-target-list]");
+      if (list) {
+        list.insertAdjacentHTML("beforeend", buildTemplateTargetRowMarkup({ worksheetName: "", cellReference: "" }, false));
+      }
+      return;
+    }
+
+    const removeTargetButton = event.target.closest("[data-template-target-remove]");
+    if (removeTargetButton) {
+      const targetRow = removeTargetButton.closest("[data-template-target-row]");
+      const list = targetRow?.parentElement;
+      if (targetRow && list) {
+        targetRow.remove();
+        if (!list.querySelector("[data-template-target-row]")) {
+          list.insertAdjacentHTML("beforeend", buildTemplateTargetRowMarkup({ worksheetName: "", cellReference: "" }, false));
+        }
+      }
+      return;
+    }
+
+    const actionButton = event.target.closest("[data-template-adapt-action]");
+    if (!actionButton) {
+      return;
+    }
+
+    const action = actionButton.dataset.templateAdaptAction;
+    const handlers = {
+      save: saveTemplateAdaptation,
+      validate: validateTemplateAdaptation,
+      test: testTemplateAdaptation,
+      batch: batchTestTemplateAdaptation
+    };
+    const handler = handlers[action];
+    if (handler) {
+      handler().catch((error) => showResult("#templateResult", error));
+    }
+  });
+
+  pane.addEventListener("change", (event) => {
+    if (event.target.matches("[data-template-management-filter='moduleStatus']")) {
+      templateMappingFilters.moduleStatus = event.target.value || "";
+      renderTemplateAdaptationOverview();
+      return;
+    }
+
+    if (event.target.matches("[data-template-management-filter='adaptationStatus']")) {
+      templateMappingFilters.adaptationStatus = event.target.value || "";
+      renderTemplateAdaptationOverview();
+      return;
+    }
+
+    if (event.target.matches("[data-template-target-cell]")) {
+      event.target.value = normalizeTemplateMappingCellReference(event.target.value);
+    }
+  });
+}
+
+function activateTemplateManagementTab(tabName) {
+  currentTemplateManagementTab = templateManagementTabMeta.some((item) => item.key === tabName) ? tabName : "library";
+  for (const button of $$("[data-template-management-tab]")) {
+    button.classList.toggle("active", button.dataset.templateManagementTab === currentTemplateManagementTab);
+  }
+
+  for (const tab of templateManagementTabMeta) {
+    const panel = document.getElementById(tab.panelId);
+    panel?.classList.toggle("active", tab.key === currentTemplateManagementTab);
+  }
+}
+
+function getTemplateManagementStatusTone(status) {
+  switch (status) {
+    case "Completed":
+    case "Managed":
+      return "ok";
+    case "Partial":
+    case "ReadOnly":
+      return "warning";
+    case "Error":
+      return "error";
+    default:
+      return "";
+  }
+}
+
+function getTemplateManagementStatusLabel(status) {
+  switch (status) {
+    case "Managed":
+      return "已接管";
+    case "Unmanaged":
+      return "未接管";
+    case "ReadOnly":
+      return "只读";
+    case "Unconfigured":
+      return "未适配";
+    case "Partial":
+      return "缺少字段";
+    case "Completed":
+      return "已完成";
+    case "Error":
+      return "存在异常";
+    default:
+      return status || "-";
+  }
+}
+
+function getTemplateManagementFieldDisplayName(fieldKey, displayName) {
+  return displayName || getTemplateAdaptationFieldLabel(fieldKey);
+}
+
+function normalizeTemplateMappingCellReference(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function isValidTemplateMappingCellReference(value) {
+  return /^[A-Z]{1,3}[1-9][0-9]*$/.test(normalizeTemplateMappingCellReference(value));
+}
+
+function isValidTemplateMappingFieldKey(fieldKey, isSystemField) {
+  if (isSystemField || templateAdaptationFieldMeta.some((item) => item.key === fieldKey)) {
+    return true;
+  }
+
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(fieldKey || "");
+}
+
+function parseTemplateMappingPlaceholderTokens(value) {
+  return [...new Set(String(value || "")
+    .split(/[\n,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean))];
+}
+
+function buildTemplateTargetRowMarkup(target, readOnly) {
+  const worksheetName = target?.worksheetName || "";
+  const cellReference = normalizeTemplateMappingCellReference(target?.cellReference || "");
+  return `
+    <div class="templateTargetRow" data-template-target-row>
+      <input type="text" data-template-target-worksheet value="${escapeHtml(worksheetName)}" placeholder="工作表名称" ${readOnly ? "disabled" : ""}>
+      <input type="text" data-template-target-cell value="${escapeHtml(cellReference)}" placeholder="E5" ${readOnly ? "disabled" : ""}>
+      ${readOnly ? "" : '<button type="button" data-template-target-remove>删除目标</button>'}
+    </div>`;
+}
+
+function buildTemplateMappingRowMarkup(mapping, readOnly = false) {
+  const fieldKey = mapping?.fieldKey || "";
+  const displayName = getTemplateManagementFieldDisplayName(fieldKey, mapping?.displayName || "");
+  const mode = resolveTemplateAdaptationFieldMode(mapping);
+  const placeholderTokens = (mapping?.placeholderTokens || []).join(", ");
+  const valueSource = mapping?.valueSource || "BusinessData";
+  const defaultValue = mapping?.defaultValue || "";
+  const sortOrder = Number.isFinite(mapping?.sortOrder) ? mapping.sortOrder : "";
+  const isSystemField = !!mapping?.isSystemField;
+  const isRequired = !!mapping?.isRequired;
+  const isEnabled = mapping?.isEnabled !== false;
+  const targets = mapping?.targets?.length ? mapping.targets : [{ worksheetName: "", cellReference: mapping?.primaryCellReference || "" }];
+  const targetCount = mapping?.targetCount ?? targets.filter((item) => item?.cellReference).length;
+  const primaryCellReference = mapping?.primaryCellReference || targets.find((item) => item?.cellReference)?.cellReference || "";
+  return `
+    <tr data-template-mapping-row data-system-field="${isSystemField ? "true" : "false"}" data-description="${escapeHtml(mapping?.description || "")}">
+      <td class="templateFieldKeyCell">
+        <div class="templateMappingMeta">
+          <span class="${isSystemField ? "templateFieldSystemBadge" : "templateFieldCustomBadge"}">${isSystemField ? "系统字段" : "自定义字段"}</span>
+        </div>
+        <input type="text" data-template-field="fieldKey" value="${escapeHtml(fieldKey)}" placeholder="FieldKey" ${readOnly || isSystemField ? "readonly" : ""}>
+      </td>
+      <td>
+        <input type="text" data-template-field="displayName" value="${escapeHtml(displayName)}" placeholder="中文说明" ${readOnly ? "disabled" : ""}>
+      </td>
+      <td>
+        <select data-template-field="mode" ${readOnly ? "disabled" : ""}>
+          ${templateAdaptationModeOptions.map((item) => `<option value="${item.value}" ${item.value === mode ? "selected" : ""}>${item.label}</option>`).join("")}
+        </select>
+      </td>
+      <td>
+        <input type="text" data-template-field="placeholderTokens" value="${escapeHtml(placeholderTokens)}" placeholder="{{ProjectName}}, {{PartName}}" ${readOnly ? "disabled" : ""}>
+      </td>
+      <td>
+        <select data-template-field="valueSource" ${readOnly ? "disabled" : ""}>
+          ${templateMappingValueSourceOptions.map((item) => `<option value="${item.value}" ${item.value === valueSource ? "selected" : ""}>${item.label}</option>`).join("")}
+        </select>
+      </td>
+      <td>
+        <input type="text" data-template-field="defaultValue" value="${escapeHtml(defaultValue)}" placeholder="默认值" ${readOnly ? "disabled" : ""}>
+      </td>
+      <td class="templateFieldCheckbox">
+        <input type="checkbox" data-template-field="isRequired" ${isRequired ? "checked" : ""} ${readOnly ? "disabled" : ""}>
+      </td>
+      <td class="templateFieldCheckbox">
+        <input type="checkbox" data-template-field="isEnabled" ${isEnabled ? "checked" : ""} ${readOnly ? "disabled" : ""}>
+      </td>
+      <td>
+        <input type="number" data-template-field="sortOrder" value="${escapeHtml(sortOrder)}" min="0" step="1" ${readOnly ? "disabled" : ""}>
+      </td>
+      <td>
+        <div class="templateTargetList" data-template-target-list>
+          ${targets.map((target) => buildTemplateTargetRowMarkup(target, readOnly)).join("")}
+        </div>
+        <p class="templateAdaptationHint">目标数量：${targetCount}，首个单元格：${escapeHtml(primaryCellReference || "-")}</p>
+        ${readOnly ? "" : '<button type="button" data-template-target-add>新增目标</button>'}
+      </td>
+      <td class="templateFieldDeleteCell">
+        ${readOnly || isSystemField ? '<span class="templateAdaptationHint">锁定</span>' : '<button type="button" data-template-mapping-delete-field>删除</button>'}
+      </td>
+    </tr>`;
+}
+
+function appendTemplateMappingRow() {
+  const tbody = $("#templateFieldMappingTableBody");
+  if (!tbody) {
+    return;
+  }
+
+  const nextSortOrder = tbody.querySelectorAll("[data-template-mapping-row]").length + 1;
+  tbody.insertAdjacentHTML("beforeend", buildTemplateMappingRowMarkup({
+    fieldKey: "",
+    displayName: "",
+    mode: "Cell",
+    placeholderTokens: [],
+    targets: [{ worksheetName: "", cellReference: "" }],
+    valueSource: "BusinessData",
+    defaultValue: "",
+    sortOrder: nextSortOrder,
+    isSystemField: false,
+    description: "",
+    isRequired: false,
+    isEnabled: true,
+    primaryCellReference: "",
+    targetCount: 0
+  }));
+}
+
+function renderTemplateManagementPlaceholder(panelSelector, title, message) {
+  const panel = $(panelSelector);
+  if (!panel) {
+    return;
+  }
+
+  panel.innerHTML = `
+    <section class="templateMappingEditorCard">
+      <h3>${escapeHtml(title)}</h3>
+      <p class="emptyText">${escapeHtml(message)}</p>
+    </section>`;
+}
+
+async function loadTemplateMappingTemplates() {
+  ensureTemplateManagementWorkspace();
+  const result = await api("/api/template-mappings/templates");
+  templateMappingTemplates = result.templates || [];
+  renderTemplateAdaptationOverview();
+  return result;
+}
+
+function renderTemplateAdaptationOverview() {
+  ensureTemplateManagementWorkspace();
+  const panel = $("#templateAdaptationOverview");
+  if (!panel) {
+    return;
+  }
+
+  const filtered = templateMappingTemplates.filter((item) => {
+    if (templateMappingFilters.moduleStatus && item.moduleStatus !== templateMappingFilters.moduleStatus) {
+      return false;
+    }
+    if (templateMappingFilters.adaptationStatus && item.adaptationStatus !== templateMappingFilters.adaptationStatus) {
+      return false;
+    }
+    return true;
+  });
+
+  const selectedId = currentTemplateAdaptation?.templateNodeId || selectedTemplateNode?.id || "";
+  const selectedSummary = templateMappingTemplates.find((item) => item.templateNodeId === selectedId) || null;
+  const missingFields = selectedSummary?.missingRequiredFields || currentTemplateAdaptation?.missingRequiredFields || [];
+  panel.innerHTML = `
+    <section class="templateAdaptationListCard">
+      <div class="templateAdaptationFilterBar">
+        <div>
+          <h3>模板适配列表</h3>
+          <p class="templateAdaptationHint">共 ${templateMappingTemplates.length} 个模板，当前显示 ${filtered.length} 个。</p>
+        </div>
+        <div class="actions">
+          <label>
+            <span>模块状态</span>
+            <select data-template-management-filter="moduleStatus">
+              <option value="">全部</option>
+              <option value="Managed" ${templateMappingFilters.moduleStatus === "Managed" ? "selected" : ""}>已接管</option>
+              <option value="ReadOnly" ${templateMappingFilters.moduleStatus === "ReadOnly" ? "selected" : ""}>只读</option>
+              <option value="Unmanaged" ${templateMappingFilters.moduleStatus === "Unmanaged" ? "selected" : ""}>未接管</option>
+            </select>
+          </label>
+          <label>
+            <span>适配状态</span>
+            <select data-template-management-filter="adaptationStatus">
+              <option value="">全部</option>
+              <option value="Completed" ${templateMappingFilters.adaptationStatus === "Completed" ? "selected" : ""}>已完成</option>
+              <option value="Partial" ${templateMappingFilters.adaptationStatus === "Partial" ? "selected" : ""}>缺少字段</option>
+              <option value="Error" ${templateMappingFilters.adaptationStatus === "Error" ? "selected" : ""}>存在异常</option>
+              <option value="Unconfigured" ${templateMappingFilters.adaptationStatus === "Unconfigured" ? "selected" : ""}>未适配</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <table class="templateAdaptationListTable">
+        <thead>
+          <tr>
+            <th>模块ID</th>
+            <th>版本</th>
+            <th>模板</th>
+            <th>模板文件</th>
+            <th>映射数量</th>
+            <th>必填完成</th>
+            <th>更新时间</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filtered.length
+            ? filtered.map((item) => `
+              <tr class="${item.templateNodeId === selectedId ? "selectedRow" : ""}">
+                <td>${escapeHtml(item.moduleId || "-")}</td>
+                <td>${escapeHtml(item.moduleVersion || "-")}</td>
+                <td>${escapeHtml(item.templateName || item.templateCode || item.templateNodeId)}</td>
+                <td title="${escapeHtml(item.templateFilePath || "")}">${escapeHtml(item.templateFilePath || item.templateFile || "-")}</td>
+                <td>${escapeHtml(item.mappingCount ?? 0)}</td>
+                <td>${escapeHtml(`${item.completedRequiredCount ?? 0}/${item.requiredMappingCount ?? 0}`)}</td>
+                <td>${escapeHtml(formatDateTimeText(item.updatedAt))}</td>
+                <td>
+                  <span class="diagnosticBadge ${getTemplateManagementStatusTone(item.adaptationStatus)}">${escapeHtml(getTemplateManagementStatusLabel(item.adaptationStatus))}</span>
+                </td>
+                <td>
+                  <button type="button" data-template-adaptation-select="${escapeHtml(item.templateNodeId)}" data-template-adaptation-target-tab="adaptation">查看</button>
+                  <button type="button" data-template-adaptation-select="${escapeHtml(item.templateNodeId)}" data-template-adaptation-target-tab="mapping">编辑映射</button>
+                </td>
+              </tr>`)
+              .join("")
+            : '<tr><td colspan="9" class="emptyText">没有符合筛选条件的模板。</td></tr>'}
+        </tbody>
+      </table>
+    </section>
+    <aside class="templateAdaptationSummaryCard">
+      <h3>当前模板摘要</h3>
+      ${selectedSummary || currentTemplateAdaptation
+        ? `
+          <dl class="templateSummaryList">
+            <div><dt>模板名称</dt><dd>${escapeHtml(selectedSummary?.templateName || currentTemplateAdaptation?.profile?.templateName || selectedTemplateNode?.name || "-")}</dd></div>
+            <div><dt>模板ID</dt><dd>${escapeHtml(selectedSummary?.templateNodeId || currentTemplateAdaptation?.templateNodeId || selectedTemplateNode?.id || "-")}</dd></div>
+            <div><dt>模块信息</dt><dd>${escapeHtml([selectedSummary?.moduleId || currentTemplateAdaptation?.profile?.moduleId, selectedSummary?.moduleVersion || currentTemplateAdaptation?.profile?.moduleVersion].filter(Boolean).join(" / ") || "-")}</dd></div>
+            <div><dt>模块状态</dt><dd><span class="diagnosticBadge ${getTemplateManagementStatusTone(selectedSummary?.moduleStatus || currentTemplateAdaptation?.moduleStatus)}">${escapeHtml(getTemplateManagementStatusLabel(selectedSummary?.moduleStatus || currentTemplateAdaptation?.moduleStatus || ""))}</span></dd></div>
+            <div><dt>适配状态</dt><dd><span class="diagnosticBadge ${getTemplateManagementStatusTone(selectedSummary?.adaptationStatus || currentTemplateAdaptation?.adaptationStatus)}">${escapeHtml(getTemplateManagementStatusLabel(selectedSummary?.adaptationStatus || currentTemplateAdaptation?.adaptationStatus || ""))}</span></dd></div>
+            <div><dt>模板路径</dt><dd>${escapeHtml(selectedSummary?.templateFilePath || currentTemplateAdaptation?.profile?.templateFile || selectedTemplateNode?.templateFilePath || "-")}</dd></div>
+            <div><dt>缺失必填字段</dt><dd>${missingFields.length ? `<ul class="templateMissingFieldList">${missingFields.map((item) => `<li>${escapeHtml(getTemplateAdaptationFieldLabel(item))}</li>`).join("")}</ul>` : "无"}</dd></div>
+            <div><dt>最后更新时间</dt><dd>${escapeHtml(formatDateTimeText(selectedSummary?.updatedAt || currentTemplateAdaptation?.profile?.updatedAt))}</dd></div>
+          </dl>`
+        : '<p class="emptyText">选择一个模板后，这里会显示适配摘要。</p>'}
+    </aside>`;
+}
+
+function renderTemplateFieldMappingPanel(node, detail) {
+  ensureTemplateManagementWorkspace();
+  const panel = $("#templateFieldMappingPanel");
+  if (!panel) {
+    return;
+  }
+
+  if (!detail) {
+    renderTemplateManagementPlaceholder("#templateFieldMappingPanel", "字段映射", "请先从左侧模板树或“模板适配”列表中选择一个模板。");
+    return;
+  }
+
+  const readOnly = !detail.canEdit;
+  const mappings = [...(detail.mappings || [])].sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0) || String(left.fieldKey || "").localeCompare(String(right.fieldKey || "")));
+  const validationIssues = currentTemplateAdaptationValidation?.issues || [];
+  panel.innerHTML = `
+    <section class="templateMappingEditorCard">
+      <div class="templateFieldMappingToolbar">
+        <div>
+          <h3>${escapeHtml(detail.profile.templateName || node?.name || "字段映射")}</h3>
+          <p class="templateAdaptationHint">只允许按 TemplateFieldMapping 和标准英文占位符写入，不猜测单元格。</p>
+        </div>
+        <div class="actions">
+          <label class="wideLabel">
+            <span>映射模式</span>
+            <select id="templateFieldMappingMode" ${readOnly ? "disabled" : ""}>
+              ${templateAdaptationModeOptions.map((item) => `<option value="${item.value}" ${item.value === (detail.profile.mappingMode || "Cell") ? "selected" : ""}>${item.label}</option>`).join("")}
+            </select>
+          </label>
+          <button type="button" data-template-mapping-add-field ${readOnly ? "disabled" : ""}>新增字段</button>
+          <button type="button" data-template-adapt-action="save" ${readOnly ? "disabled" : ""}>批量保存</button>
+          <button type="button" data-template-adapt-action="validate">校验模板</button>
+          <button type="button" data-template-adapt-action="test" ${!detail.canTest ? "disabled" : ""}>测试写入</button>
+          <button type="button" data-template-adapt-action="batch">批量测试</button>
+        </div>
+      </div>
+      ${readOnly ? '<p class="emptyText">当前模板处于只读状态，可以查看映射，但不能编辑或执行测试写入。</p>' : ""}
+      <table class="templateFieldMappingTable">
+        <thead>
+          <tr>
+            <th>FieldKey</th>
+            <th>中文说明</th>
+            <th>Mode</th>
+            <th>Placeholder</th>
+            <th>值来源</th>
+            <th>默认值</th>
+            <th>必填</th>
+            <th>启用</th>
+            <th>排序</th>
+            <th>工作表 / 单元格</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="templateFieldMappingTableBody">
+          ${mappings.map((mapping) => buildTemplateMappingRowMarkup(mapping, readOnly)).join("")}
+        </tbody>
+      </table>
+    </section>
+    <section class="templateMappingDiagnosticsCard">
+      <h3>校验与适配状态</h3>
+      <div class="templateAdaptationSummaryGrid">
+        <div>
+          <strong>模块状态</strong>
+          <p><span class="diagnosticBadge ${getTemplateManagementStatusTone(detail.moduleStatus)}">${escapeHtml(getTemplateManagementStatusLabel(detail.moduleStatus))}</span></p>
+        </div>
+        <div>
+          <strong>适配状态</strong>
+          <p><span class="diagnosticBadge ${getTemplateManagementStatusTone(detail.adaptationStatus)}">${escapeHtml(getTemplateManagementStatusLabel(detail.adaptationStatus))}</span></p>
+        </div>
+        <div>
+          <strong>缺失必填字段</strong>
+          <p>${detail.missingRequiredFields?.length ? escapeHtml(detail.missingRequiredFields.map(getTemplateAdaptationFieldLabel).join("、")) : "无"}</p>
+        </div>
+        <div>
+          <strong>最后更新时间</strong>
+          <p>${escapeHtml(formatDateTimeText(detail.profile.updatedAt))}</p>
+        </div>
+      </div>
+      ${currentTemplateAdaptationValidation
+        ? `
+          <div>
+            <p>生成可用：<span class="diagnosticBadge ${currentTemplateAdaptationValidation.canGenerate ? "ok" : "error"}">${currentTemplateAdaptationValidation.canGenerate ? "允许生成" : "禁止生成"}</span></p>
+            <p>缺失字段：${escapeHtml((currentTemplateAdaptationValidation.missingFields || []).map(getTemplateAdaptationFieldLabel).join("、") || "无")}</p>
+            ${validationIssues.length
+              ? `<ul class="templateIssueList">${validationIssues.map((item) => `<li>${escapeHtml([getTemplateManagementFieldDisplayName(item.fieldKey, ""), item.worksheetName, item.cellReference, item.message].filter(Boolean).join("｜"))}</li>`).join("")}</ul>`
+              : '<p class="emptyText">最近一次校验未发现问题。</p>'}
+          </div>`
+        : '<p class="emptyText">还没有执行模板校验。</p>'}
+    </section>`;
+}
+
+function renderTemplateTestPanel(detail, testResult = currentTemplateAdaptationTest) {
+  ensureTemplateManagementWorkspace();
+  const panel = $("#templateTestPanel");
+  if (!panel) {
+    return;
+  }
+
+  if (!detail) {
+    renderTemplateManagementPlaceholder("#templateTestPanel", "模板测试", "请先选择一个模板，再执行测试写入。");
+    return;
+  }
+
+  panel.innerHTML = `
+    <section class="templateTestResultCard">
+      <div class="templateTestToolbar">
+        <div>
+          <h3>模板测试</h3>
+          <p class="templateAdaptationHint">测试文件会复制原模板，仅写入指定字段值，不改动排版、合并单元格和打印设置。</p>
+        </div>
+        <div class="actions">
+          <button type="button" data-template-adapt-action="validate">先校验</button>
+          <button type="button" data-template-adapt-action="test" ${!detail.canTest ? "disabled" : ""}>测试写入</button>
+        </div>
+      </div>
+      ${testResult
+        ? `
+          <p>测试结果：<span class="diagnosticBadge ${testResult.success ? "ok" : "error"}">${escapeHtml(testResult.result || (testResult.success ? "成功" : "失败"))}</span></p>
+          <p class="templateTestPath">输出文件：${escapeHtml(testResult.outputPath || "-")}</p>
+          <p>布局保护：<span class="diagnosticBadge ${testResult.layout?.success ? "ok" : "error"}">${testResult.layout?.success ? "通过" : "异常"}</span></p>
+          ${(testResult.messages || []).length ? `<ul class="templateMessageList">${(testResult.messages || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+          <table class="templateTestResultTable">
+            <thead>
+              <tr>
+                <th>字段</th>
+                <th>状态</th>
+                <th>写入地址</th>
+                <th>写入值</th>
+                <th>错误信息</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(testResult.fields || []).map((item) => `
+                <tr>
+                  <td>${escapeHtml(getTemplateAdaptationFieldLabel(item.fieldKey))}</td>
+                  <td><span class="diagnosticBadge ${item.success ? "ok" : "error"}">${item.success ? "成功" : "失败"}</span></td>
+                  <td>${escapeHtml((item.targetLocations || []).join("；") || "-")}</td>
+                  <td>${escapeHtml(item.expectedValue || (item.actualValues || []).join("；") || "-")}</td>
+                  <td>${escapeHtml(item.message || "-")}</td>
+                </tr>`).join("")}
+            </tbody>
+          </table>`
+        : '<p class="emptyText">还没有执行测试写入。点击“测试写入”后会生成测试文件并自动打开。</p>'}
+    </section>`;
+}
+
+function buildTemplateAdaptationSaveRequest() {
+  const tableRows = $$("#templateFieldMappingTableBody [data-template-mapping-row]");
+  if (tableRows.length === 0) {
+    throw new Error("当前没有可保存的字段映射。");
+  }
+
+  const seen = new Map();
+  const mappings = tableRows.map((row, index) => {
+    const isSystemField = row.dataset.systemField === "true";
+    const fieldKey = String(row.querySelector("[data-template-field='fieldKey']")?.value || "").trim();
+    const displayName = String(row.querySelector("[data-template-field='displayName']")?.value || "").trim();
+    const mode = String(row.querySelector("[data-template-field='mode']")?.value || "Cell").trim() || "Cell";
+    const placeholderTokens = parseTemplateMappingPlaceholderTokens(row.querySelector("[data-template-field='placeholderTokens']")?.value || "");
+    const valueSource = String(row.querySelector("[data-template-field='valueSource']")?.value || "BusinessData").trim() || "BusinessData";
+    const defaultValue = String(row.querySelector("[data-template-field='defaultValue']")?.value || "");
+    const sortOrderText = String(row.querySelector("[data-template-field='sortOrder']")?.value || "").trim();
+    const sortOrder = sortOrderText ? Number(sortOrderText) : index + 1;
+    const isRequired = !!row.querySelector("[data-template-field='isRequired']")?.checked;
+    const isEnabled = !!row.querySelector("[data-template-field='isEnabled']")?.checked;
+    const targets = [...row.querySelectorAll("[data-template-target-row]")]
+      .map((targetRow) => {
+        const worksheetName = String(targetRow.querySelector("[data-template-target-worksheet]")?.value || "").trim();
+        const cellReference = normalizeTemplateMappingCellReference(targetRow.querySelector("[data-template-target-cell]")?.value || "");
+        if (!worksheetName && !cellReference) {
+          return null;
+        }
+
+        if (cellReference && !isValidTemplateMappingCellReference(cellReference)) {
+          throw new Error(`字段 ${fieldKey || "未命名字段"} 的单元格地址格式不正确：${cellReference}`);
+        }
+
+        return {
+          worksheetName: worksheetName || null,
+          cellReference
+        };
+      })
+      .filter(Boolean);
+
+    if (!fieldKey) {
+      throw new Error(`第 ${index + 1} 行缺少 FieldKey。`);
+    }
+
+    if (!isValidTemplateMappingFieldKey(fieldKey, isSystemField)) {
+      throw new Error(`字段 ${fieldKey} 不是合法的英文 FieldKey。`);
+    }
+
+    const duplicateKey = fieldKey.toLowerCase();
+    if (seen.has(duplicateKey)) {
+      throw new Error(`字段 ${fieldKey} 重复，请先处理重复映射。`);
+    }
+    seen.set(duplicateKey, true);
+
+    return {
+      fieldKey,
+      displayName: displayName || getTemplateManagementFieldDisplayName(fieldKey, ""),
+      mode,
+      placeholderTokens,
+      targets,
+      valueSource,
+      defaultValue,
+      sortOrder,
+      isSystemField,
+      description: row.dataset.description || "",
+      isRequired,
+      isEnabled
+    };
+  });
+
+  return {
+    mappingMode: $("#templateFieldMappingMode")?.value || currentTemplateAdaptation?.profile?.mappingMode || "Cell",
+    mappings
+  };
+}
+
+async function refreshTemplateManagement() {
+  showResult("#templateResult", "正在刷新模板管理数据...");
+  try {
+    await rescanModules();
+    await loadTemplates();
+    await loadTemplateLibraryTree();
+  } catch (error) {
+    $("#templateSummary").textContent = "模板读取失败。";
+    showResult("#templateResult", error);
+  }
+}
+
+async function loadTemplateLibraryTree() {
+  ensureTemplateManagementWorkspace();
+  const result = await api(`/api/template-library/tree?${appendProjectContext(new URLSearchParams()).toString()}`);
+  templateTreeNodes = result.nodes || [];
+  selectedTemplateNode = null;
+  currentGeneratedForm = null;
+  currentTemplateAdaptation = null;
+  currentTemplateAdaptationValidation = null;
+  currentTemplateAdaptationTest = null;
+  lastRowHeightFitAdjustment = null;
+  $("#templateSummary").textContent = `${result.projectName}｜${result.unitProjectName || getActiveUnitProject()?.unitProjectName || "当前单位工程"}｜已加载工程资料规范层级树。`;
+  renderTemplateTreeView();
+  renderSpreadsheetPlaceholder();
+  updateTemplateToolbarState(false);
+  await loadTemplateMappingTemplates().catch((error) => showResult("#templateResult", error));
+  renderTemplateFieldMappingPanel(null, null);
+  renderTemplateTestPanel(null, null);
+  showResult("#templateResult", result);
+  return result;
+}
+
+function renderSpreadsheetPlaceholder() {
+  ensureTemplateManagementWorkspace();
+  const preview = $("#spreadsheetPreview");
+  if (preview) {
+    preview.innerHTML = `
+      <div class="spreadsheetEmpty">
+        <strong>WPS 表格编辑区</strong>
+        <p>选择左侧模板可以查看模板信息、规则、适配状态与字段映射；选择已创建资料表后，会打开真实 .xlsx 文件。</p>
+      </div>`;
+  }
+
+  if (!currentTemplateAdaptation) {
+    renderTemplateManagementPlaceholder("#templateFieldMappingPanel", "字段映射", "请选择一个模板后再查看和编辑字段映射。");
+    renderTemplateManagementPlaceholder("#templateTestPanel", "模板测试", "请选择一个模板后执行测试写入。");
+  }
+}
+
+async function loadTemplateAdaptation(node, options = {}) {
+  ensureTemplateManagementWorkspace();
+  if (!node || node.nodeType !== "template") {
+    currentTemplateAdaptation = null;
+    currentTemplateAdaptationValidation = null;
+    currentTemplateAdaptationTest = null;
+    renderTemplateAdaptationOverview();
+    renderTemplateFieldMappingPanel(null, null);
+    renderTemplateTestPanel(null, null);
+    return null;
+  }
+
+  try {
+    const detail = await api(`/api/template-mappings/${encodeURIComponent(node.id)}`);
+    currentTemplateAdaptation = detail;
+    if (!options.preserveResults) {
+      currentTemplateAdaptationValidation = null;
+      currentTemplateAdaptationTest = null;
+    }
+    renderTemplateAdaptationOverview();
+    renderTemplateFieldMappingPanel(node, detail);
+    renderTemplateTestPanel(detail, currentTemplateAdaptationTest);
+    showResult("#templateResult", detail);
+    return detail;
+  } catch (error) {
+    currentTemplateAdaptation = null;
+    renderTemplateAdaptationOverview();
+    renderTemplateManagementPlaceholder("#templateFieldMappingPanel", "字段映射", error.message || "模板适配读取失败。");
+    renderTemplateManagementPlaceholder("#templateTestPanel", "模板测试", error.message || "模板测试数据读取失败。");
+    showResult("#templateResult", error);
+    throw error;
+  }
+}
+
+async function openTemplateAdaptationFromError(error) {
+  if (!error?.templateNodeId) {
+    throw error;
+  }
+
+  const node = findTemplateTreeNodeById(error.templateNodeId);
+  if (!node) {
+    throw error;
+  }
+
+  await selectTemplateTreeNode(node);
+  activateTemplateManagementTab("mapping");
+}
+
+async function saveTemplateAdaptation() {
+  if (!selectedTemplateNode || selectedTemplateNode.nodeType !== "template") {
+    throw new Error("请先选择模板。");
+  }
+
+  if (!currentTemplateAdaptation?.canEdit) {
+    throw new Error("当前模板为只读状态，不能修改字段映射。");
+  }
+
+  const request = buildTemplateAdaptationSaveRequest();
+  showResult("#templateResult", "正在保存字段映射...");
+  const detail = await api(`/api/template-mappings/${encodeURIComponent(selectedTemplateNode.id)}/fields`, {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+  currentTemplateAdaptation = detail;
+  currentTemplateAdaptationValidation = null;
+  currentTemplateAdaptationTest = null;
+  showResult("#templateResult", { message: "字段映射已保存。", templateNodeId: selectedTemplateNode.id });
+  await loadTemplateMappingTemplates();
+  await loadTemplateAdaptation(selectedTemplateNode, { preserveResults: true });
+}
+
+async function validateTemplateAdaptation() {
+  if (!selectedTemplateNode || selectedTemplateNode.nodeType !== "template") {
+    throw new Error("请先选择模板。");
+  }
+
+  showResult("#templateResult", "正在校验模板适配...");
+  currentTemplateAdaptationValidation = await api(`/api/template-mappings/${encodeURIComponent(selectedTemplateNode.id)}/validate`, {
+    method: "POST"
+  });
+  showResult("#templateResult", currentTemplateAdaptationValidation);
+  await loadTemplateMappingTemplates();
+  await loadTemplateAdaptation(selectedTemplateNode, { preserveResults: true });
+  renderTemplateAdaptationOverview();
+  renderTemplateFieldMappingPanel(selectedTemplateNode, currentTemplateAdaptation);
+  renderTemplateTestPanel(currentTemplateAdaptation, currentTemplateAdaptationTest);
+}
+
+async function testTemplateAdaptation() {
+  if (!selectedTemplateNode || selectedTemplateNode.nodeType !== "template") {
+    throw new Error("请先选择模板。");
+  }
+
+  if (!currentTemplateAdaptation?.canTest) {
+    throw new Error("当前模板不支持测试写入。");
+  }
+
+  showResult("#templateResult", "正在生成测试文件...");
+  currentTemplateAdaptationTest = await api(`/api/template-mappings/${encodeURIComponent(selectedTemplateNode.id)}/test`, {
+    method: "POST"
+  });
+  showResult("#templateResult", currentTemplateAdaptationTest);
+  renderTemplateTestPanel(currentTemplateAdaptation, currentTemplateAdaptationTest);
+  renderTemplateFieldMappingPanel(selectedTemplateNode, currentTemplateAdaptation);
+  if (currentTemplateAdaptationTest.outputPath) {
+    await openLocalSpreadsheetFile(currentTemplateAdaptationTest.outputPath).catch((error) => showResult("#templateResult", error));
+  }
+  await loadTemplateMappingTemplates();
+  await loadTemplateAdaptation(selectedTemplateNode, { preserveResults: true });
+  activateTemplateManagementTab("test");
+}
+
+async function batchTestTemplateAdaptation() {
+  const moduleId = currentTemplateAdaptation?.profile?.moduleId || selectedTemplateNode?.moduleId || templateAdaptationManagedModuleId;
+  showResult("#templateResult", "正在批量测试模板...");
+  const result = await api("/api/template-adaptations/batch-test", {
+    method: "POST",
+    body: JSON.stringify({
+      moduleId,
+      count: 10
+    })
+  });
+  showResult("#templateResult", result);
+  if ($("#templateTestPanel")) {
+    const summary = `
+      <section class="templateTestResultCard">
+        <h3>批量测试结果</h3>
+        <p>通过率：${escapeHtml(`${result.passedCount}/${result.testedCount}`)}</p>
+        <p class="templateTestPath">报告路径：${escapeHtml(result.reportPath || "-")}</p>
+        <p>测试模块：${escapeHtml(`${result.moduleId || "-"} ${result.moduleVersion || ""}`.trim())}</p>
+      </section>`;
+    $("#templateTestPanel").insertAdjacentHTML("afterbegin", summary);
+  }
+}
+
+async function selectTemplateTreeNode(node) {
+  ensureTemplateManagementWorkspace();
+  selectedTemplateNode = node;
+  currentGeneratedForm = null;
+  lastRowHeightFitAdjustment = null;
+  for (const item of $$(".specTreeNode")) {
+    item.classList.toggle("selected", item.dataset.nodeId === node.id);
+  }
+
+  if (node.nodeType === "template") {
+    $("#spreadsheetTitle").textContent = node.name;
+    $("#spreadsheetSummary").textContent = `模板编码：${node.templateCode || "未配置"}｜模块：${node.moduleName || "兼容模板库"}`;
+    const preview = $("#spreadsheetPreview");
+    if (preview) {
+      preview.innerHTML = `
+        <div class="templateInfoPanel">
+          <div class="templateInfoGrid">
+            <span>模块</span><strong>${escapeHtml(node.moduleName || "兼容模板库")}</strong>
+            <span>地区</span><strong>${escapeHtml(node.province || "未配置")}</strong>
+            <span>专业</span><strong>${escapeHtml(node.major || node.discipline || "未配置")}</strong>
+            <span>年份</span><strong>${escapeHtml(node.year || "未配置")}</strong>
+            <span>模板文件</span><strong>${escapeHtml(node.templateFilePath || "未配置")}</strong>
+          </div>
+          <div id="templateRulesPanel" class="templateRulesPanel">
+            <p class="emptyText">正在读取模板规则...</p>
+          </div>
+        </div>`;
+    }
+    await loadTemplateRules(node);
+    await loadTemplateAdaptation(node);
+    updateTemplateToolbarState(false);
+    return;
+  }
+
+  if (node.nodeType === "generated_form") {
+    activateTemplateManagementTab("library");
+    await openGeneratedForm(node);
+  }
+}
+
+async function openGeneratedForm(node) {
+  ensureTemplateManagementWorkspace();
+  activateTemplateManagementTab("library");
+  $("#spreadsheetTitle").textContent = node.name;
+  $("#spreadsheetSummary").textContent = "正在打开资料表...";
+  try {
+    const form = await api(`/api/generated-forms/${encodeURIComponent(node.id)}`);
+    currentGeneratedForm = form;
+    lastRowHeightFitAdjustment = null;
+    $("#spreadsheetSummary").textContent = `模板编码：${form.templateCode || "未配置"}｜可编辑：${form.canEdit ? "是" : "否"}`;
+    const preview = $("#spreadsheetPreview");
+    if (preview) {
+      preview.innerHTML = `
+        <div class="spreadsheetFileCard">
+          <strong>${escapeHtml(form.name)}</strong>
+          <p>${escapeHtml(form.generatedFilePath)}</p>
+        </div>`;
+    }
+    await openSpreadsheetPath(form);
+    updateTemplateToolbarState(false);
+    showResult("#templateResult", form);
+  } catch (error) {
+    $("#spreadsheetSummary").textContent = "资料表打开失败。";
+    showResult("#templateResult", error);
   }
 }
 

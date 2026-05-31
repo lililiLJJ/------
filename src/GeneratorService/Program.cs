@@ -835,6 +835,134 @@ app.MapPut("/api/template-adaptations/{templateNodeId}", (string templateNodeId,
     }
 });
 
+app.MapGet("/api/template-mappings/templates", (TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetTemplates());
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapGet("/api/template-mappings/{templateNodeId}", (string templateNodeId, TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetDetail(templateNodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapGet("/api/template-mappings/{templateNodeId}/fields", (string templateNodeId, TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetFields(templateNodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/template-mappings/{templateNodeId}/fields", (string templateNodeId, TemplateAdaptationSaveRequest request, TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.SaveFields(templateNodeId, request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPut("/api/template-mappings/{templateNodeId}/fields/{fieldKey}", (string templateNodeId, string fieldKey, TemplateFieldMappingSaveItem request, TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.SaveField(templateNodeId, fieldKey, request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapDelete("/api/template-mappings/{templateNodeId}/fields/{fieldKey}", (string templateNodeId, string fieldKey, TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.DeleteField(templateNodeId, fieldKey));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/template-mappings/{templateNodeId}/validate", (string templateNodeId, TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Validate(templateNodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/template-mappings/{templateNodeId}/test", (string templateNodeId, TemplateAdaptationService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Test(templateNodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
 app.MapPost("/api/template-adaptations/{templateNodeId}/validate", (string templateNodeId, TemplateAdaptationService service) =>
 {
     try

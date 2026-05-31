@@ -12,18 +12,6 @@ public sealed class TemplateAdaptationRepository
         WriteIndented = false
     };
 
-    private static readonly string[] BootstrapKeywords =
-    [
-        "火灾自动报警系统",
-        "自动喷水灭火系统",
-        "消火栓系统",
-        "应急照明",
-        "防排烟系统",
-        "气体灭火系统",
-        "消防电源监控系统",
-        "电气火灾监控系统"
-    ];
-
     private readonly DirectoryInfo _rootPath;
     private readonly AppConfig _config;
 
@@ -60,9 +48,15 @@ public sealed class TemplateAdaptationRepository
               ModuleVersion TEXT NOT NULL,
               TemplateItemId INTEGER NOT NULL,
               FieldKey TEXT NOT NULL,
+              DisplayName TEXT NULL,
               Mode TEXT NOT NULL,
               PlaceholderTokensJson TEXT NOT NULL DEFAULT '[]',
               TargetsJson TEXT NOT NULL DEFAULT '[]',
+              ValueSource TEXT NOT NULL DEFAULT 'BusinessData',
+              DefaultValue TEXT NOT NULL DEFAULT '',
+              SortOrder INTEGER NOT NULL DEFAULT 0,
+              IsSystemField INTEGER NOT NULL DEFAULT 0,
+              Description TEXT NULL,
               IsRequired INTEGER NOT NULL DEFAULT 1,
               IsEnabled INTEGER NOT NULL DEFAULT 1,
               CreatedAt TEXT NOT NULL,
@@ -85,10 +79,38 @@ public sealed class TemplateAdaptationRepository
 
             CREATE INDEX IF NOT EXISTS idx_template_profile_status
               ON TemplateProfile(ModuleId, ModuleVersion, Status, UpdatedAt);
+            CREATE INDEX IF NOT EXISTS idx_template_mapping_sort
+              ON TemplateFieldMapping(ModuleId, ModuleVersion, TemplateItemId, SortOrder, FieldKey);
             CREATE INDEX IF NOT EXISTS idx_template_test_record_template
               ON TemplateTestRecord(ModuleId, ModuleVersion, TemplateItemId, CreatedAt);
             """;
         command.ExecuteNonQuery();
+
+        EnsureColumnExists(connection, "TemplateFieldMapping", "DisplayName TEXT NULL");
+        EnsureColumnExists(connection, "TemplateFieldMapping", "ValueSource TEXT NOT NULL DEFAULT 'BusinessData'");
+        EnsureColumnExists(connection, "TemplateFieldMapping", "DefaultValue TEXT NOT NULL DEFAULT ''");
+        EnsureColumnExists(connection, "TemplateFieldMapping", "SortOrder INTEGER NOT NULL DEFAULT 0");
+        EnsureColumnExists(connection, "TemplateFieldMapping", "IsSystemField INTEGER NOT NULL DEFAULT 0");
+        EnsureColumnExists(connection, "TemplateFieldMapping", "Description TEXT NULL");
+        BackfillMappingMetadata(connection);
+    }
+
+    public IReadOnlyList<TemplateResolution> ListTemplateResolutions(ModuleManager moduleManager)
+    {
+        return moduleManager.ListTemplates()
+            .Select(template => new TemplateResolution(
+                BuildTemplateNodeId(template.ModuleId, template.TemplateItemId),
+                template.ModuleId,
+                template.ModuleVersion,
+                template.TemplateItemId,
+                template.TemplateName,
+                string.IsNullOrWhiteSpace(template.TemplateCode) ? "template" : template.TemplateCode,
+                template.TemplateType,
+                template.TemplateFile,
+                template.TemplatePath))
+            .OrderBy(item => item.ModuleId, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.TemplateName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     public void EnsureBootstrapProfiles(ModuleManager moduleManager)
@@ -96,7 +118,7 @@ public sealed class TemplateAdaptationRepository
         foreach (var module in moduleManager.GetValidModules())
         {
             if (module.Manifest is null ||
-                !string.Equals(module.Manifest.ModuleId, "gd_installation_2024", StringComparison.OrdinalIgnoreCase) ||
+                !TemplateAdaptationFields.IsManagedModule(module.Manifest.ModuleId) ||
                 string.IsNullOrWhiteSpace(module.RulesDbPath) ||
                 string.IsNullOrWhiteSpace(module.TemplateRootPath))
             {
@@ -120,7 +142,7 @@ public sealed class TemplateAdaptationRepository
 
                 var workbook = TemplateWorkbookHelper.Inspect(fullTemplatePath);
                 var adjacentTargets = TemplateWorkbookHelper.FindAdjacentTargets(fullTemplatePath, TemplateAdaptationFields.LabelAliases);
-                var mappings = EnsureUniqueTargets(TemplateAdaptationFields.RequiredFieldKeys
+                var generatedMappings = EnsureUniqueTargets(TemplateAdaptationFields.RequiredFieldKeys
                     .Select(fieldKey =>
                     {
                         var placeholderTokens = workbook.Placeholders.Any(item => string.Equals(item, fieldKey, StringComparison.OrdinalIgnoreCase))
@@ -133,21 +155,27 @@ public sealed class TemplateAdaptationRepository
                             : placeholderTokens.Length > 0
                                 ? "Placeholder"
                                 : "Cell";
-                        return new TemplateFieldMappingInfo(
+                        return CreateMapping(
                             fieldKey,
+                            TemplateAdaptationFields.GetDisplayName(fieldKey),
                             mode,
                             placeholderTokens,
                             targets,
+                            TemplateAdaptationFields.ValueSourceBusinessData,
+                            "",
+                            TemplateAdaptationFields.GetDefaultSortOrder(fieldKey),
+                            true,
+                            null,
                             true,
                             placeholderTokens.Length > 0 || targets.Count > 0);
                     })
                     .ToArray());
 
                 var effectiveMappings = existingProfile is null
-                    ? mappings
+                    ? generatedMappings
                     : MergeBootstrapMappings(
                         ListMappings(item.ModuleId, item.ModuleVersion, item.TemplateItemId),
-                        mappings);
+                        generatedMappings);
                 SaveAdaptation(
                     item.ToResolution(fullTemplatePath),
                     ResolveProfileMappingMode(effectiveMappings),
@@ -178,10 +206,12 @@ public sealed class TemplateAdaptationRepository
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT FieldKey, Mode, PlaceholderTokensJson, TargetsJson, IsRequired, IsEnabled
+            SELECT FieldKey, DisplayName, Mode, PlaceholderTokensJson, TargetsJson,
+                   ValueSource, DefaultValue, SortOrder, IsSystemField, Description,
+                   IsRequired, IsEnabled
             FROM TemplateFieldMapping
             WHERE ModuleId = $moduleId AND ModuleVersion = $moduleVersion AND TemplateItemId = $templateItemId
-            ORDER BY FieldKey;
+            ORDER BY SortOrder, FieldKey;
             """;
         command.Parameters.AddWithValue("$moduleId", moduleId);
         command.Parameters.AddWithValue("$moduleVersion", moduleVersion);
@@ -201,19 +231,7 @@ public sealed class TemplateAdaptationRepository
         var profile = GetProfile(template.ModuleId, template.ModuleVersion, template.TemplateItemId)
             ?? BuildDefaultProfile(template);
         var mappings = ListMappings(template.ModuleId, template.ModuleVersion, template.TemplateItemId);
-        if (mappings.Count == 0)
-        {
-            mappings = TemplateAdaptationFields.RequiredFieldKeys
-                .Select(fieldKey => new TemplateFieldMappingInfo(fieldKey, "Cell", [], [], true, false))
-                .ToArray();
-        }
-
-        return new TemplateAdaptationDetailResult(
-            true,
-            template.TemplateNodeId,
-            profile,
-            mappings,
-            TemplateAdaptationFields.RequiredFieldKeys);
+        return BuildDetail(template, profile, mappings);
     }
 
     public TemplateAdaptationDetailResult SaveAdaptation(
@@ -221,12 +239,17 @@ public sealed class TemplateAdaptationRepository
         string mappingMode,
         IReadOnlyList<TemplateFieldMappingInfo> mappings)
     {
+        var normalizedMappings = EnsureSystemMappings(mappings)
+            .OrderBy(item => item.SortOrder)
+            .ThenBy(item => item.FieldKey, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
         var now = DateTimeOffset.Now;
         var currentProfile = GetProfile(template.ModuleId, template.ModuleVersion, template.TemplateItemId);
         var createdAt = currentProfile?.CreatedAt ?? now;
-        var status = ResolveStatus(mappings);
+        var status = ResolveStoredStatus(normalizedMappings);
 
         using (var upsertProfile = connection.CreateCommand())
         {
@@ -272,25 +295,33 @@ public sealed class TemplateAdaptationRepository
             delete.ExecuteNonQuery();
         }
 
-        foreach (var mapping in mappings)
+        foreach (var mapping in normalizedMappings)
         {
             using var insert = connection.CreateCommand();
             insert.Transaction = transaction;
             insert.CommandText = """
                 INSERT INTO TemplateFieldMapping (
-                    ModuleId, ModuleVersion, TemplateItemId, FieldKey, Mode, PlaceholderTokensJson,
-                    TargetsJson, IsRequired, IsEnabled, CreatedAt, UpdatedAt)
+                    ModuleId, ModuleVersion, TemplateItemId, FieldKey, DisplayName, Mode,
+                    PlaceholderTokensJson, TargetsJson, ValueSource, DefaultValue, SortOrder,
+                    IsSystemField, Description, IsRequired, IsEnabled, CreatedAt, UpdatedAt)
                 VALUES (
-                    $moduleId, $moduleVersion, $templateItemId, $fieldKey, $mode, $placeholderTokensJson,
-                    $targetsJson, $isRequired, $isEnabled, $createdAt, $updatedAt);
+                    $moduleId, $moduleVersion, $templateItemId, $fieldKey, $displayName, $mode,
+                    $placeholderTokensJson, $targetsJson, $valueSource, $defaultValue, $sortOrder,
+                    $isSystemField, $description, $isRequired, $isEnabled, $createdAt, $updatedAt);
                 """;
             insert.Parameters.AddWithValue("$moduleId", template.ModuleId);
             insert.Parameters.AddWithValue("$moduleVersion", template.ModuleVersion);
             insert.Parameters.AddWithValue("$templateItemId", template.TemplateItemId);
             insert.Parameters.AddWithValue("$fieldKey", mapping.FieldKey);
+            insert.Parameters.AddWithValue("$displayName", mapping.DisplayName);
             insert.Parameters.AddWithValue("$mode", NormalizeMode(mapping.Mode));
             insert.Parameters.AddWithValue("$placeholderTokensJson", JsonSerializer.Serialize(mapping.PlaceholderTokens, JsonOptions));
             insert.Parameters.AddWithValue("$targetsJson", JsonSerializer.Serialize(mapping.Targets, JsonOptions));
+            insert.Parameters.AddWithValue("$valueSource", NormalizeValueSource(mapping.ValueSource));
+            insert.Parameters.AddWithValue("$defaultValue", mapping.DefaultValue ?? "");
+            insert.Parameters.AddWithValue("$sortOrder", mapping.SortOrder);
+            insert.Parameters.AddWithValue("$isSystemField", mapping.IsSystemField ? 1 : 0);
+            insert.Parameters.AddWithValue("$description", string.IsNullOrWhiteSpace(mapping.Description) ? DBNull.Value : mapping.Description);
             insert.Parameters.AddWithValue("$isRequired", mapping.IsRequired ? 1 : 0);
             insert.Parameters.AddWithValue("$isEnabled", mapping.IsEnabled ? 1 : 0);
             insert.Parameters.AddWithValue("$createdAt", now.ToString("O"));
@@ -398,6 +429,33 @@ public sealed class TemplateAdaptationRepository
         return profiles;
     }
 
+    private TemplateAdaptationDetailResult BuildDetail(
+        TemplateResolution template,
+        TemplateProfileInfo profile,
+        IReadOnlyList<TemplateFieldMappingInfo> mappings)
+    {
+        var effectiveMappings = EnsureSystemMappings(mappings)
+            .OrderBy(item => item.SortOrder)
+            .ThenBy(item => item.FieldKey, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var missingRequiredFields = GetMissingRequiredFieldKeys(effectiveMappings);
+        var moduleStatus = TemplateAdaptationFields.ResolveModuleStatus(template.ModuleId);
+        var adaptationStatus = ResolveAdaptationStatus(profile.Status, effectiveMappings, missingRequiredFields, profile.LastTestStatus, moduleStatus);
+        var canEdit = string.Equals(moduleStatus, TemplateAdaptationFields.ModuleStatusManaged, StringComparison.OrdinalIgnoreCase);
+
+        return new TemplateAdaptationDetailResult(
+            true,
+            template.TemplateNodeId,
+            profile,
+            effectiveMappings,
+            TemplateAdaptationFields.RequiredFieldKeys,
+            missingRequiredFields,
+            moduleStatus,
+            adaptationStatus,
+            canEdit,
+            canEdit);
+    }
+
     private static string NormalizeMode(string mode)
     {
         return mode switch
@@ -407,7 +465,16 @@ public sealed class TemplateAdaptationRepository
         };
     }
 
-    private static string ResolveProfileMappingMode(IReadOnlyList<TemplateFieldMappingInfo> mappings)
+    private static string NormalizeValueSource(string? valueSource)
+    {
+        return valueSource switch
+        {
+            TemplateAdaptationFields.ValueSourceDefaultValue => TemplateAdaptationFields.ValueSourceDefaultValue,
+            _ => TemplateAdaptationFields.ValueSourceBusinessData
+        };
+    }
+
+    public static string ResolveProfileMappingMode(IReadOnlyList<TemplateFieldMappingInfo> mappings)
     {
         var hasPlaceholder = mappings.Any(item =>
             item.IsEnabled &&
@@ -427,22 +494,64 @@ public sealed class TemplateAdaptationRepository
                 : "Cell";
     }
 
-    private static string ResolveStatus(IReadOnlyList<TemplateFieldMappingInfo> mappings)
+    private static string ResolveStoredStatus(IReadOnlyList<TemplateFieldMappingInfo> mappings)
     {
-        var missing = mappings
+        var enabledMappings = mappings.Where(item => item.IsEnabled).ToArray();
+        if (enabledMappings.Length == 0)
+        {
+            return "unconfigured";
+        }
+
+        return GetMissingRequiredFieldKeys(mappings).Count == 0 ? "configured" : "incomplete";
+    }
+
+    public static IReadOnlyList<string> GetMissingRequiredFieldKeys(IReadOnlyList<TemplateFieldMappingInfo> mappings)
+    {
+        return mappings
             .Where(item => item.IsRequired)
             .Where(item =>
                 !item.IsEnabled ||
                 (string.Equals(item.Mode, "Placeholder", StringComparison.OrdinalIgnoreCase) && item.PlaceholderTokens.Count == 0) ||
                 (string.Equals(item.Mode, "Cell", StringComparison.OrdinalIgnoreCase) && item.Targets.Count == 0) ||
                 (string.Equals(item.Mode, "Hybrid", StringComparison.OrdinalIgnoreCase) && item.PlaceholderTokens.Count == 0 && item.Targets.Count == 0))
+            .Select(item => item.FieldKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        return missing.Length == 0 ? "configured" : "incomplete";
+    }
+
+    private static string ResolveAdaptationStatus(
+        string rawStatus,
+        IReadOnlyList<TemplateFieldMappingInfo> mappings,
+        IReadOnlyList<string> missingRequiredFields,
+        string? lastTestStatus,
+        string moduleStatus)
+    {
+        if (string.Equals(rawStatus, "error", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(lastTestStatus, "FAIL", StringComparison.OrdinalIgnoreCase))
+        {
+            return TemplateAdaptationFields.AdaptationStatusError;
+        }
+
+        var enabledMappings = mappings.Count(item => item.IsEnabled);
+        if (enabledMappings == 0)
+        {
+            return TemplateAdaptationFields.AdaptationStatusUnconfigured;
+        }
+
+        if (missingRequiredFields.Count > 0)
+        {
+            return TemplateAdaptationFields.AdaptationStatusPartial;
+        }
+
+        return string.Equals(moduleStatus, TemplateAdaptationFields.ModuleStatusManaged, StringComparison.OrdinalIgnoreCase)
+            ? TemplateAdaptationFields.AdaptationStatusCompleted
+            : TemplateAdaptationFields.AdaptationStatusCompleted;
     }
 
     private static bool CanAutoUpgrade(TemplateProfileInfo profile)
     {
-        return string.Equals(profile.Status, "incomplete", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(profile.Status, "incomplete", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(profile.Status, "unconfigured", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<TemplateFieldMappingInfo> MergeBootstrapMappings(
@@ -464,7 +573,11 @@ public sealed class TemplateAdaptationRepository
                     return existing;
                 }
 
-                return generated;
+                return generated with
+                {
+                    DefaultValue = existing.DefaultValue,
+                    Description = existing.Description
+                };
             })
             .ToArray();
     }
@@ -475,14 +588,8 @@ public sealed class TemplateAdaptationRepository
         var usedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<TemplateFieldMappingInfo>(mappings.Count);
 
-        foreach (var fieldKey in TemplateAdaptationFields.RequiredFieldKeys)
+        foreach (var mapping in mappings.OrderBy(item => item.SortOrder).ThenBy(item => item.FieldKey, StringComparer.OrdinalIgnoreCase))
         {
-            var mapping = mappings.FirstOrDefault(item => string.Equals(item.FieldKey, fieldKey, StringComparison.OrdinalIgnoreCase));
-            if (mapping is null)
-            {
-                continue;
-            }
-
             var uniqueTargets = mapping.Targets
                 .Where(target =>
                 {
@@ -500,11 +607,42 @@ public sealed class TemplateAdaptationRepository
             result.Add(mapping with
             {
                 Targets = uniqueTargets,
-                IsEnabled = mapping.PlaceholderTokens.Count > 0 || uniqueTargets.Length > 0
+                IsEnabled = mapping.PlaceholderTokens.Count > 0 || uniqueTargets.Length > 0 || mapping.IsEnabled,
+                PrimaryCellReference = BuildPrimaryCellReference(uniqueTargets),
+                TargetCount = uniqueTargets.Length
             });
         }
 
         return result;
+    }
+
+    private static IReadOnlyList<TemplateFieldMappingInfo> EnsureSystemMappings(IReadOnlyList<TemplateFieldMappingInfo> mappings)
+    {
+        var normalized = mappings
+            .Select(mapping => mapping with
+            {
+                DisplayName = string.IsNullOrWhiteSpace(mapping.DisplayName)
+                    ? TemplateAdaptationFields.GetDisplayName(mapping.FieldKey)
+                    : mapping.DisplayName,
+                ValueSource = NormalizeValueSource(mapping.ValueSource),
+                SortOrder = mapping.SortOrder == 0
+                    ? TemplateAdaptationFields.GetDefaultSortOrder(mapping.FieldKey)
+                    : mapping.SortOrder,
+                IsSystemField = mapping.IsSystemField || TemplateAdaptationFields.IsSystemField(mapping.FieldKey),
+                PrimaryCellReference = BuildPrimaryCellReference(mapping.Targets),
+                TargetCount = mapping.Targets.Count
+            })
+            .ToDictionary(item => item.FieldKey, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var fieldKey in TemplateAdaptationFields.RequiredFieldKeys)
+        {
+            if (!normalized.ContainsKey(fieldKey))
+            {
+                normalized[fieldKey] = TemplateAdaptationFields.CreateDefaultMapping(fieldKey);
+            }
+        }
+
+        return normalized.Values.ToArray();
     }
 
     private static bool ShouldBootstrap(string templateName, string templateFile)
@@ -520,6 +658,19 @@ public sealed class TemplateAdaptationRepository
     private static string BuildTemplateNodeId(string moduleId, long templateItemId)
     {
         return $"module:{moduleId}:template:{templateItemId}";
+    }
+
+    private static string? BuildPrimaryCellReference(IReadOnlyList<TemplateFieldTarget> targets)
+    {
+        var target = targets.FirstOrDefault();
+        if (target is null)
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(target.WorksheetName)
+            ? target.CellReference
+            : $"{target.WorksheetName}!{target.CellReference}";
     }
 
     private TemplateProfileInfo BuildDefaultProfile(TemplateResolution template)
@@ -563,13 +714,67 @@ public sealed class TemplateAdaptationRepository
 
     private static TemplateFieldMappingInfo ReadMapping(SqliteDataReader reader)
     {
+        var fieldKey = reader.GetString(0);
+        var displayName = reader.IsDBNull(1) || string.IsNullOrWhiteSpace(reader.GetString(1))
+            ? TemplateAdaptationFields.GetDisplayName(fieldKey)
+            : reader.GetString(1);
+        var targets = ParseTargets(reader.GetString(4));
+
+        return CreateMapping(
+            fieldKey,
+            displayName,
+            reader.GetString(2),
+            ParsePlaceholderTokens(reader.GetString(3)),
+            targets,
+            reader.IsDBNull(5) ? TemplateAdaptationFields.GetDefaultValueSource(fieldKey) : NormalizeValueSource(reader.GetString(5)),
+            reader.IsDBNull(6) ? "" : reader.GetString(6),
+            reader.IsDBNull(7) ? TemplateAdaptationFields.GetDefaultSortOrder(fieldKey) : reader.GetInt32(7),
+            !reader.IsDBNull(8) && reader.GetInt32(8) != 0 || TemplateAdaptationFields.IsSystemField(fieldKey),
+            reader.IsDBNull(9) ? null : reader.GetString(9),
+            !reader.IsDBNull(10) && reader.GetInt32(10) != 0,
+            !reader.IsDBNull(11) && reader.GetInt32(11) != 0);
+    }
+
+    private static TemplateFieldMappingInfo CreateMapping(
+        string fieldKey,
+        string displayName,
+        string mode,
+        IReadOnlyList<string> placeholderTokens,
+        IReadOnlyList<TemplateFieldTarget> targets,
+        string valueSource,
+        string defaultValue,
+        int sortOrder,
+        bool isSystemField,
+        string? description,
+        bool isRequired,
+        bool isEnabled)
+    {
+        var normalizedTargets = targets
+            .Where(target => !string.IsNullOrWhiteSpace(target.CellReference))
+            .Select(target => new TemplateFieldTarget(
+                string.IsNullOrWhiteSpace(target.WorksheetName) ? null : target.WorksheetName.Trim(),
+                target.CellReference.Trim().ToUpperInvariant()))
+            .ToArray();
+
         return new TemplateFieldMappingInfo(
-            reader.GetString(0),
-            reader.GetString(1),
-            ParsePlaceholderTokens(reader.GetString(2)),
-            ParseTargets(reader.GetString(3)),
-            !reader.IsDBNull(4) && reader.GetInt32(4) != 0,
-            !reader.IsDBNull(5) && reader.GetInt32(5) != 0);
+            fieldKey,
+            displayName,
+            NormalizeMode(mode),
+            placeholderTokens
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => item.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            normalizedTargets,
+            NormalizeValueSource(valueSource),
+            defaultValue ?? "",
+            sortOrder,
+            isSystemField,
+            string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+            isRequired,
+            isEnabled,
+            BuildPrimaryCellReference(normalizedTargets),
+            normalizedTargets.Length);
     }
 
     private static IReadOnlyList<string> ParsePlaceholderTokens(string json)
@@ -622,6 +827,88 @@ public sealed class TemplateAdaptationRepository
         }
 
         return items;
+    }
+
+    private static void EnsureColumnExists(SqliteConnection connection, string tableName, string columnDefinition)
+    {
+        var columnName = columnDefinition.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)[0];
+        if (HasColumn(connection, tableName, columnName))
+        {
+            return;
+        }
+
+        using var command = connection.CreateCommand();
+        command.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnDefinition};";
+        command.ExecuteNonQuery();
+    }
+
+    private static bool HasColumn(SqliteConnection connection, string tableName, string columnName)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({tableName});";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void BackfillMappingMetadata(SqliteConnection connection)
+    {
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE TemplateFieldMapping
+                SET DisplayName = CASE
+                        WHEN DisplayName IS NULL OR trim(DisplayName) = '' THEN FieldKey
+                        ELSE DisplayName
+                    END,
+                    DefaultValue = COALESCE(DefaultValue, ''),
+                    ValueSource = CASE
+                        WHEN ValueSource IN ('BusinessData', 'DefaultValue') THEN ValueSource
+                        ELSE 'BusinessData'
+                    END,
+                    SortOrder = CASE
+                        WHEN FieldKey = 'ProjectName' AND SortOrder = 0 THEN 10
+                        WHEN FieldKey = 'ConstructionUnit' AND SortOrder = 0 THEN 20
+                        WHEN FieldKey = 'SupervisionUnit' AND SortOrder = 0 THEN 30
+                        WHEN FieldKey = 'PartName' AND SortOrder = 0 THEN 40
+                        WHEN FieldKey = 'Capacity' AND SortOrder = 0 THEN 50
+                        WHEN FieldKey = 'ConstructionDate' AND SortOrder = 0 THEN 60
+                        WHEN SortOrder IS NULL THEN 1000
+                        ELSE SortOrder
+                    END,
+                    IsSystemField = CASE
+                        WHEN FieldKey IN ('ProjectName', 'ConstructionUnit', 'SupervisionUnit', 'PartName', 'Capacity', 'ConstructionDate') THEN 1
+                        WHEN IsSystemField IS NULL THEN 0
+                        ELSE IsSystemField
+                    END;
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        foreach (var fieldKey in TemplateAdaptationFields.RequiredFieldKeys)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE TemplateFieldMapping
+                SET DisplayName = $displayName,
+                    ValueSource = 'BusinessData',
+                    IsSystemField = 1,
+                    SortOrder = $sortOrder
+                WHERE FieldKey = $fieldKey
+                  AND (DisplayName IS NULL OR trim(DisplayName) = '' OR DisplayName = FieldKey OR IsSystemField = 0 OR SortOrder = 0);
+                """;
+            command.Parameters.AddWithValue("$displayName", TemplateAdaptationFields.GetDisplayName(fieldKey));
+            command.Parameters.AddWithValue("$sortOrder", TemplateAdaptationFields.GetDefaultSortOrder(fieldKey));
+            command.Parameters.AddWithValue("$fieldKey", fieldKey);
+            command.ExecuteNonQuery();
+        }
     }
 
     private SqliteConnection OpenConnection()

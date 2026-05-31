@@ -152,30 +152,38 @@ public sealed class TemplateTestHarness
 
     private static IReadOnlyDictionary<string, string> BuildSampleFields()
     {
-        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            [TemplateAdaptationFields.ProjectName] = "广东消防智能化示范工程",
-            [TemplateAdaptationFields.ConstructionUnit] = "广东样板施工有限公司",
-            [TemplateAdaptationFields.SupervisionUnit] = "广东样板监理有限公司",
-            [TemplateAdaptationFields.PartName] = "1层火灾报警控制室",
-            [TemplateAdaptationFields.Capacity] = "1个系统",
-            [TemplateAdaptationFields.ConstructionDate] = "2024-10-18",
-            ["projectName"] = "广东消防智能化示范工程",
-            ["constructorUnitName"] = "广东样板施工有限公司",
-            ["supervisorUnitName"] = "广东样板监理有限公司",
-            ["partName"] = "1层火灾报警控制室",
-            ["capacity"] = "1个系统",
-            ["constructionDate"] = "2024-10-18",
-            ["工程名称"] = "广东消防智能化示范工程",
-            ["施工单位"] = "广东样板施工有限公司",
-            ["监理单位"] = "广东样板监理有限公司",
-            ["检验批部位"] = "1层火灾报警控制室",
-            ["施工部位"] = "1层火灾报警控制室",
-            ["检验批容量"] = "1个系统",
-            ["施工日期"] = "2024-10-18"
+            [TemplateAdaptationFields.ProjectName] = "测试工程",
+            [TemplateAdaptationFields.ConstructionUnit] = "测试施工单位",
+            [TemplateAdaptationFields.SupervisionUnit] = "测试监理单位",
+            [TemplateAdaptationFields.PartName] = "地下室",
+            [TemplateAdaptationFields.Capacity] = "5套",
+            [TemplateAdaptationFields.ConstructionDate] = "2026-05-31",
+            ["projectName"] = "测试工程",
+            ["developerUnitName"] = "测试建设单位",
+            ["constructorUnitName"] = "测试施工单位",
+            ["designUnitName"] = "测试设计单位",
+            ["supervisorUnitName"] = "测试监理单位",
+            ["professionalSubcontractorUnitName"] = "测试专业分包单位",
+            ["thirdPartyInspectionUnitName"] = "测试第三方检测单位",
+            ["partName"] = "地下室",
+            ["capacity"] = "5套",
+            ["constructionDate"] = "2026-05-31",
+            ["acceptanceDate"] = "2026-06-01",
+            ["工程名称"] = "测试工程",
+            ["建设单位"] = "测试建设单位",
+            ["施工单位"] = "测试施工单位",
+            ["设计单位"] = "测试设计单位",
+            ["监理单位"] = "测试监理单位",
+            ["专业分包单位"] = "测试专业分包单位",
+            ["第三方检测单位"] = "测试第三方检测单位",
+            ["检验批部位"] = "地下室",
+            ["施工部位"] = "地下室",
+            ["检验批容量"] = "5套",
+            ["施工日期"] = "2026-05-31",
+            ["验收日期"] = "2026-06-01"
         };
-
-        return fields;
     }
 
     private static string WriteSingleReport(ProjectContext project, TemplateTestResult result)

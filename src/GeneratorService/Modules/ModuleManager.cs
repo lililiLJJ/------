@@ -139,14 +139,7 @@ public sealed class ModuleManager
         }
 
         var templateFile = reader.IsDBNull(3) ? "" : reader.GetString(3);
-        var templatePath = Path.GetFullPath(Path.Combine(module.TemplateRootPath, templateFile));
-        if (!File.Exists(templatePath))
-        {
-            var cacheRoot = _config.GetModuleCachePath(_rootPath);
-            var cachePath = _reader.EnsureExtracted(module.PackagePath, cacheRoot, manifest, forceRefresh: true);
-            var templateRootPath = Path.Combine(cachePath, manifest.TemplateRoot);
-            templatePath = Path.GetFullPath(Path.Combine(templateRootPath, templateFile));
-        }
+        var templatePath = ResolveTemplatePath(module, manifest, templateFile, ensureExists: true);
 
         return new ModuleTemplateRef(
             moduleId,
@@ -157,6 +150,44 @@ public sealed class ModuleManager
             templateFile,
             reader.IsDBNull(4) ? "" : reader.GetString(4),
             templatePath);
+    }
+
+    public IReadOnlyList<ModuleTemplateRef> ListTemplates()
+    {
+        var results = new List<ModuleTemplateRef>();
+        foreach (var module in GetValidModules())
+        {
+            if (module is not { RulesDbPath: not null, TemplateRootPath: not null, Manifest: not null })
+            {
+                continue;
+            }
+
+            using var connection = new SqliteConnection($"Data Source={module.RulesDbPath};Mode=ReadOnly");
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT Id, TemplateName, TemplateCode, TemplateFile, TemplateType
+                FROM TemplateItem
+                WHERE COALESCE(IsEnabled, 1) <> 0
+                ORDER BY SortOrder, Id;
+                """;
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var templateFile = reader.IsDBNull(3) ? "" : reader.GetString(3);
+                results.Add(new ModuleTemplateRef(
+                    module.Manifest.ModuleId,
+                    module.Manifest.Version,
+                    reader.GetInt64(0),
+                    reader.IsDBNull(1) ? "" : reader.GetString(1),
+                    reader.IsDBNull(2) ? "" : reader.GetString(2),
+                    templateFile,
+                    reader.IsDBNull(4) ? "" : reader.GetString(4),
+                    ResolveTemplatePath(module, module.Manifest, templateFile, ensureExists: false)));
+            }
+        }
+
+        return results;
     }
 
     public IReadOnlyList<string> GetTemplateDirectorySegments(string templateNodeId)
@@ -262,5 +293,23 @@ public sealed class ModuleManager
             manifest,
             errors.Count == 0,
             errors);
+    }
+
+    private string ResolveTemplatePath(
+        ModulePackageInfo module,
+        ModuleManifest manifest,
+        string templateFile,
+        bool ensureExists)
+    {
+        var templatePath = Path.GetFullPath(Path.Combine(module.TemplateRootPath!, templateFile));
+        if (!ensureExists || File.Exists(templatePath))
+        {
+            return templatePath;
+        }
+
+        var cacheRoot = _config.GetModuleCachePath(_rootPath);
+        var cachePath = _reader.EnsureExtracted(module.PackagePath, cacheRoot, manifest, forceRefresh: true);
+        var templateRootPath = Path.Combine(cachePath, manifest.TemplateRoot);
+        return Path.GetFullPath(Path.Combine(templateRootPath, templateFile));
     }
 }

@@ -6,6 +6,7 @@ namespace GeneratorService.TemplateLibrary;
 public sealed class TemplateValidationService
 {
     private static readonly Regex CellReferenceRegex = new(@"^[A-Z]{1,3}[1-9][0-9]*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex FieldKeyRegex = new(@"^[A-Za-z][A-Za-z0-9_]*$", RegexOptions.Compiled);
 
     private readonly TemplateService _templateService;
     private readonly TemplateAdaptationRepository _repository;
@@ -34,35 +35,59 @@ public sealed class TemplateValidationService
         var issues = new List<TemplateValidationIssue>();
         var missingFields = new List<string>();
 
-        foreach (var fieldKey in TemplateAdaptationFields.RequiredFieldKeys)
+        foreach (var duplicateFieldKey in detail.Mappings
+                     .GroupBy(item => item.FieldKey, StringComparer.OrdinalIgnoreCase)
+                     .Where(group => group.Count() > 1)
+                     .Select(group => group.Key))
         {
-            if (!mappingsByField.TryGetValue(fieldKey, out var mapping))
+            issues.Add(CreateIssue("duplicate_field_key", "error", duplicateFieldKey, $"字段 Key 重复：{duplicateFieldKey}"));
+        }
+
+        foreach (var mapping in detail.Mappings.Where(item => !item.IsSystemField))
+        {
+            if (!FieldKeyRegex.IsMatch(mapping.FieldKey))
             {
-                missingFields.Add(fieldKey);
-                issues.Add(CreateIssue("missing_mapping", "error", fieldKey, "缺少字段映射配置。"));
+                issues.Add(CreateIssue("invalid_field_key", "error", mapping.FieldKey, $"自定义字段 Key 无效：{mapping.FieldKey}"));
+            }
+        }
+
+        foreach (var mapping in detail.Mappings)
+        {
+            if (mapping.ValueSource is not (TemplateAdaptationFields.ValueSourceBusinessData or TemplateAdaptationFields.ValueSourceDefaultValue))
+            {
+                issues.Add(CreateIssue("invalid_value_source", "error", mapping.FieldKey, $"字段值来源无效：{mapping.ValueSource}"));
+            }
+        }
+
+        foreach (var mapping in detail.Mappings.Where(item => item.IsRequired))
+        {
+            if (!mappingsByField.TryGetValue(mapping.FieldKey, out var current))
+            {
+                missingFields.Add(mapping.FieldKey);
+                issues.Add(CreateIssue("missing_mapping", "error", mapping.FieldKey, "缺少字段映射配置。"));
                 continue;
             }
 
-            if (!mapping.IsEnabled)
+            if (!current.IsEnabled)
             {
-                missingFields.Add(fieldKey);
-                issues.Add(CreateIssue("disabled_mapping", "error", fieldKey, "字段映射已禁用。"));
+                missingFields.Add(mapping.FieldKey);
+                issues.Add(CreateIssue("disabled_mapping", "error", mapping.FieldKey, "字段映射已禁用。"));
                 continue;
             }
 
-            var mode = NormalizeMode(mapping.Mode);
+            var mode = NormalizeMode(current.Mode);
             var hasPlaceholder = false;
             var hasCell = false;
 
             if (mode is "Placeholder" or "Hybrid")
             {
-                if (mapping.PlaceholderTokens.Count == 0)
+                if (current.PlaceholderTokens.Count == 0)
                 {
-                    issues.Add(CreateIssue("missing_placeholder_token", "error", fieldKey, "未配置占位符。"));
+                    issues.Add(CreateIssue("missing_placeholder_token", "error", mapping.FieldKey, "未配置占位符。"));
                 }
                 else
                 {
-                    foreach (var token in mapping.PlaceholderTokens)
+                    foreach (var token in current.PlaceholderTokens)
                     {
                         if (workbook.Placeholders.Any(item => string.Equals(item, token, StringComparison.OrdinalIgnoreCase)))
                         {
@@ -70,7 +95,7 @@ public sealed class TemplateValidationService
                         }
                         else
                         {
-                            issues.Add(CreateIssue("placeholder_not_found", "error", fieldKey, $"模板中不存在占位符：{{{{{token}}}}}。"));
+                            issues.Add(CreateIssue("placeholder_not_found", "error", mapping.FieldKey, $"模板中不存在占位符：{{{{{token}}}}}。"));
                         }
                     }
                 }
@@ -78,24 +103,24 @@ public sealed class TemplateValidationService
 
             if (mode is "Cell" or "Hybrid")
             {
-                if (mapping.Targets.Count == 0)
+                if (current.Targets.Count == 0)
                 {
-                    issues.Add(CreateIssue("missing_target_cell", "error", fieldKey, "未配置目标单元格。"));
+                    issues.Add(CreateIssue("missing_target_cell", "error", mapping.FieldKey, "未配置目标单元格。"));
                 }
                 else
                 {
-                    foreach (var target in mapping.Targets)
+                    foreach (var target in current.Targets)
                     {
-                        if (!CellReferenceRegex.IsMatch(target.CellReference ?? ""))
+                        if (!CellReferenceRegex.IsMatch(target.CellReference))
                         {
-                            issues.Add(CreateIssue("invalid_cell_reference", "error", fieldKey, $"单元格地址无效：{target.CellReference}", target.WorksheetName, target.CellReference));
+                            issues.Add(CreateIssue("invalid_cell_reference", "error", mapping.FieldKey, $"单元格地址无效：{target.CellReference}", target.WorksheetName, target.CellReference));
                             continue;
                         }
 
                         if (!string.IsNullOrWhiteSpace(target.WorksheetName) &&
                             workbook.Worksheets.All(item => !string.Equals(item.Name, target.WorksheetName, StringComparison.OrdinalIgnoreCase)))
                         {
-                            issues.Add(CreateIssue("worksheet_not_found", "error", fieldKey, $"工作表不存在：{target.WorksheetName}", target.WorksheetName, target.CellReference));
+                            issues.Add(CreateIssue("worksheet_not_found", "error", mapping.FieldKey, $"工作表不存在：{target.WorksheetName}", target.WorksheetName, target.CellReference));
                             continue;
                         }
 
@@ -106,15 +131,15 @@ public sealed class TemplateValidationService
 
             if (mode == "Placeholder" && !hasPlaceholder)
             {
-                missingFields.Add(fieldKey);
+                missingFields.Add(mapping.FieldKey);
             }
             else if (mode == "Cell" && !hasCell)
             {
-                missingFields.Add(fieldKey);
+                missingFields.Add(mapping.FieldKey);
             }
             else if (mode == "Hybrid" && !hasPlaceholder && !hasCell)
             {
-                missingFields.Add(fieldKey);
+                missingFields.Add(mapping.FieldKey);
             }
         }
 
@@ -144,12 +169,17 @@ public sealed class TemplateValidationService
         }
 
         _repository.RecordValidation(template, result);
+        var detail = _repository.GetAdaptationDetail(template);
+        var labelsByField = detail.Mappings.ToDictionary(
+            item => item.FieldKey,
+            item => string.IsNullOrWhiteSpace(item.DisplayName) ? TemplateAdaptationFields.GetDisplayName(item.FieldKey) : item.DisplayName,
+            StringComparer.OrdinalIgnoreCase);
         var missingLabels = result.MissingFields
-            .Select(TemplateAdaptationFields.GetDisplayName)
+            .Select(fieldKey => labelsByField.TryGetValue(fieldKey, out var displayName) ? displayName : TemplateAdaptationFields.GetDisplayName(fieldKey))
             .ToArray();
         var message = missingLabels.Length > 0
-            ? $"模板“{template.TemplateName}”缺少必要字段映射：{string.Join("、", missingLabels)}，无法生成资料。"
-            : $"模板“{template.TemplateName}”未通过适配校验，无法生成资料。";
+            ? $"模板“{template.TemplateName}”缺少必填字段映射：{string.Join("、", missingLabels)}，无法生成资料。"
+            : $"模板“{template.TemplateName}”未通过模板适配校验，无法生成资料。";
         throw new TemplateAdaptationException(
             message,
             template.TemplateNodeId,

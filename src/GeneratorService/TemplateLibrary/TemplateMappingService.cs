@@ -18,7 +18,7 @@ public sealed class TemplateMappingService
 
     public bool ShouldUseAdaptation(TemplateResolution template)
     {
-        return string.Equals(template.ModuleId, "gd_installation_2024", StringComparison.OrdinalIgnoreCase);
+        return TemplateAdaptationFields.IsManagedModule(template.ModuleId);
     }
 
     public TemplateApplyResult Apply(string filePath, TemplateResolution template, IReadOnlyDictionary<string, string> fields)
@@ -27,7 +27,10 @@ public sealed class TemplateMappingService
         var detail = _repository.GetAdaptationDetail(template);
         var mappings = detail.Mappings
             .Where(item => item.IsEnabled)
-            .ToDictionary(item => item.FieldKey, StringComparer.OrdinalIgnoreCase);
+            .OrderBy(item => item.IsSystemField ? 0 : 1)
+            .ThenBy(item => item.SortOrder)
+            .ThenBy(item => item.FieldKey, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         var replacements = BuildPlaceholderReplacements(mappings, fields);
         var writeReceipts = new List<TemplateFieldWriteReceipt>();
 
@@ -36,14 +39,9 @@ public sealed class TemplateMappingService
             var workbookPart = document.WorkbookPart ?? throw new InvalidOperationException("模板缺少 WorkbookPart。");
             TemplateWorkbookHelper.ReplaceSimplePlaceholders(workbookPart, replacements);
 
-            foreach (var fieldKey in TemplateAdaptationFields.RequiredFieldKeys)
+            foreach (var mapping in mappings)
             {
-                if (!mappings.TryGetValue(fieldKey, out var mapping))
-                {
-                    continue;
-                }
-
-                var expectedValue = ResolveFieldValue(fieldKey, fields);
+                var expectedValue = ResolveFieldValue(mapping, fields);
                 var mode = NormalizeMode(mapping.Mode);
                 var locations = new List<string>();
 
@@ -62,18 +60,23 @@ public sealed class TemplateMappingService
                         locations.Add(FormatTarget(target));
                     }
                 }
-                else if (mode == "Placeholder")
+
+                if (mode is "Placeholder" or "Hybrid")
                 {
                     locations.AddRange(mapping.PlaceholderTokens.Select(item => $"{{{{{item}}}}}"));
                 }
 
-                writeReceipts.Add(new TemplateFieldWriteReceipt(fieldKey, mode, expectedValue, locations));
+                writeReceipts.Add(new TemplateFieldWriteReceipt(mapping.FieldKey, mode, expectedValue, locations));
             }
 
             workbookPart.Workbook.Save();
         }
 
-        var fieldResults = VerifyWrittenValues(filePath, template, fields, mappings);
+        var fieldResults = VerifyWrittenValues(
+            filePath,
+            template,
+            fields,
+            mappings.ToDictionary(item => item.FieldKey, StringComparer.OrdinalIgnoreCase));
         var failed = fieldResults.Where(item => !item.Success).ToArray();
         if (failed.Length > 0)
         {
@@ -98,35 +101,20 @@ public sealed class TemplateMappingService
         var mappings = mappingsOverride ?? detail.Mappings
             .Where(item => item.IsEnabled)
             .ToDictionary(item => item.FieldKey, StringComparer.OrdinalIgnoreCase);
-        var workbook = TemplateWorkbookHelper.Inspect(filePath);
         using var document = SpreadsheetDocument.Open(filePath, false);
         var workbookPart = document.WorkbookPart ?? throw new InvalidOperationException("模板缺少 WorkbookPart。");
         var sharedStrings = workbookPart.SharedStringTablePart?.SharedStringTable;
         var results = new List<TemplateFieldTestResult>();
 
-        foreach (var fieldKey in TemplateAdaptationFields.RequiredFieldKeys)
+        foreach (var mapping in mappings.Values
+                     .OrderBy(item => item.IsSystemField ? 0 : 1)
+                     .ThenBy(item => item.SortOrder)
+                     .ThenBy(item => item.FieldKey, StringComparer.OrdinalIgnoreCase))
         {
-            if (!mappings.TryGetValue(fieldKey, out var mapping))
-            {
-                continue;
-            }
-
-            var expectedValue = ResolveFieldValue(fieldKey, fields);
+            var expectedValue = ResolveFieldValue(mapping, fields);
             var mode = NormalizeMode(mapping.Mode);
             var targets = new List<string>();
             var actualValues = new List<string>();
-
-            if (mode is "Placeholder" or "Hybrid")
-            {
-                foreach (var token in mapping.PlaceholderTokens)
-                {
-                    targets.Add($"{{{{{token}}}}}");
-                    if (workbook.Placeholders.Any(item => string.Equals(item, token, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        actualValues.Add(expectedValue);
-                    }
-                }
-            }
 
             if (mode is "Cell" or "Hybrid")
             {
@@ -143,30 +131,37 @@ public sealed class TemplateMappingService
                 }
             }
 
-            if (actualValues.Count == 0)
+            if (mode is "Placeholder" or "Hybrid")
+            {
+                targets.AddRange(mapping.PlaceholderTokens.Select(item => $"{{{{{item}}}}}"));
+            }
+
+            if (actualValues.Count == 0 && mapping.Targets.Count > 0)
             {
                 results.Add(new TemplateFieldTestResult(
-                    fieldKey,
+                    mapping.FieldKey,
                     expectedValue,
                     mode,
                     targets,
                     actualValues,
                     false,
-                    $"{TemplateAdaptationFields.GetDisplayName(fieldKey)}没有找到任何写入结果。"));
+                    $"{mapping.DisplayName}没有找到任何写入结果。"));
                 continue;
             }
 
-            var failedValues = actualValues.Where(item => !string.Equals(item, expectedValue, StringComparison.Ordinal)).ToArray();
+            var failedValues = actualValues
+                .Where(item => !string.Equals(item, expectedValue, StringComparison.Ordinal))
+                .ToArray();
             results.Add(new TemplateFieldTestResult(
-                fieldKey,
+                mapping.FieldKey,
                 expectedValue,
                 mode,
                 targets,
                 actualValues,
                 failedValues.Length == 0,
                 failedValues.Length == 0
-                    ? $"{TemplateAdaptationFields.GetDisplayName(fieldKey)}写入成功。"
-                    : $"{TemplateAdaptationFields.GetDisplayName(fieldKey)}存在不一致值：{string.Join("、", failedValues)}"));
+                    ? $"{mapping.DisplayName}写入成功。"
+                    : $"{mapping.DisplayName}存在不一致值：{string.Join("、", failedValues)}"));
         }
 
         return results;
@@ -174,27 +169,32 @@ public sealed class TemplateMappingService
 
     public static IReadOnlyDictionary<string, string> BuildCanonicalFields(IReadOnlyDictionary<string, string> fields)
     {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var result = new Dictionary<string, string>(fields, StringComparer.OrdinalIgnoreCase)
         {
             [TemplateAdaptationFields.ProjectName] = Pick(fields, TemplateAdaptationFields.ProjectName, "projectName", "工程名称"),
             [TemplateAdaptationFields.ConstructionUnit] = Pick(fields, TemplateAdaptationFields.ConstructionUnit, "constructorUnitName", "施工单位"),
             [TemplateAdaptationFields.SupervisionUnit] = Pick(fields, TemplateAdaptationFields.SupervisionUnit, "supervisorUnitName", "监理单位"),
             [TemplateAdaptationFields.PartName] = Pick(fields, TemplateAdaptationFields.PartName, "partName", "检验批部位", "施工部位", "部位名称"),
             [TemplateAdaptationFields.Capacity] = Pick(fields, TemplateAdaptationFields.Capacity, "capacity", "检验批容量"),
-            [TemplateAdaptationFields.ConstructionDate] = Pick(fields, TemplateAdaptationFields.ConstructionDate, "constructionDate", "施工日期")
+            [TemplateAdaptationFields.ConstructionDate] = Pick(fields, TemplateAdaptationFields.ConstructionDate, "constructionDate", "施工日期"),
+            ["developerUnitName"] = Pick(fields, "developerUnitName", "建设单位"),
+            ["designUnitName"] = Pick(fields, "designUnitName", "设计单位"),
+            ["professionalSubcontractorUnitName"] = Pick(fields, "professionalSubcontractorUnitName", "专业分包单位"),
+            ["thirdPartyInspectionUnitName"] = Pick(fields, "thirdPartyInspectionUnitName", "第三方检测单位", "检测单位"),
+            ["acceptanceDate"] = Pick(fields, "acceptanceDate", "验收日期")
         };
 
         return result;
     }
 
     private static Dictionary<string, string> BuildPlaceholderReplacements(
-        IReadOnlyDictionary<string, TemplateFieldMappingInfo> mappings,
+        IReadOnlyList<TemplateFieldMappingInfo> mappings,
         IReadOnlyDictionary<string, string> fields)
     {
         var replacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in mappings.Values)
+        foreach (var item in mappings)
         {
-            var value = ResolveFieldValue(item.FieldKey, fields);
+            var value = ResolveFieldValue(item, fields);
             foreach (var token in item.PlaceholderTokens)
             {
                 replacements[token] = value;
@@ -204,9 +204,24 @@ public sealed class TemplateMappingService
         return replacements;
     }
 
-    private static string ResolveFieldValue(string fieldKey, IReadOnlyDictionary<string, string> fields)
+    private static string ResolveFieldValue(TemplateFieldMappingInfo mapping, IReadOnlyDictionary<string, string> fields)
     {
-        return BuildCanonicalFields(fields).TryGetValue(fieldKey, out var value) ? value : "";
+        var canonicalFields = BuildCanonicalFields(fields);
+        if (string.Equals(mapping.ValueSource, TemplateAdaptationFields.ValueSourceBusinessData, StringComparison.OrdinalIgnoreCase))
+        {
+            if (canonicalFields.TryGetValue(mapping.FieldKey, out var exactValue) && !string.IsNullOrWhiteSpace(exactValue))
+            {
+                return exactValue;
+            }
+
+            if (mapping.IsSystemField &&
+                canonicalFields.TryGetValue(mapping.FieldKey, out var systemValue))
+            {
+                return systemValue ?? "";
+            }
+        }
+
+        return mapping.DefaultValue ?? "";
     }
 
     private static string Pick(IReadOnlyDictionary<string, string> fields, params string[] keys)

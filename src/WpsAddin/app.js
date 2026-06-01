@@ -16,6 +16,8 @@ let templateMappingFilters = {
 };
 let currentGeneratedForm = null;
 let lastRowHeightFitAdjustment = null;
+let templateManagementDirty = false;
+let templateManagementDirtyTemplateNodeId = "";
 let summaryTreeNodes = [];
 let selectedSummaryNode = null;
 let currentSummaryPreview = null;
@@ -503,6 +505,7 @@ async function deactivateSelectedUnitProject() {
 
 function hasUnsavedProjectSwitchChanges() {
   return hasUnsavedMaterialLedgerChanges() ||
+    hasTemplateManagementUnsavedChanges() ||
     batchPlanRows.some((row) => row._dirty);
 }
 
@@ -511,7 +514,7 @@ function canSwitchProject() {
     return true;
   }
 
-  window.alert("当前存在未保存内容，请先保存材料台账或批量创建计划后再切换工程。");
+  window.alert("当前存在未保存内容，请先保存模板映射、材料台账或批量创建计划后再切换工程。");
   return false;
 }
 
@@ -1731,7 +1734,10 @@ async function openTemplateAdaptationFromError(error) {
     return false;
   }
 
-  await selectTemplateTreeNode(node);
+  const changed = await selectTemplateTreeNode(node);
+  if (changed === false) {
+    return false;
+  }
   const missingFields = (error.missingFields || []).map(getTemplateAdaptationFieldLabel);
   const message = [
     error.message || "\u6a21\u677f\u9002\u914d\u672a\u5b8c\u6210\u3002",
@@ -5308,6 +5314,40 @@ function shouldLoadTemplateManagementWorkspace() {
   return isTemplateManagementStandaloneWindow() || isTemplateManagementFallbackActive();
 }
 
+function hasTemplateManagementUnsavedChanges() {
+  return templateManagementDirty && !!templateManagementDirtyTemplateNodeId;
+}
+
+function markTemplateManagementDirty(templateNodeId = selectedTemplateNode?.id || currentTemplateAdaptation?.templateNodeId || "") {
+  if (!templateNodeId) {
+    return;
+  }
+
+  templateManagementDirty = true;
+  templateManagementDirtyTemplateNodeId = templateNodeId;
+}
+
+function clearTemplateManagementDirty(templateNodeId = "") {
+  if (!templateManagementDirty) {
+    return;
+  }
+
+  if (templateNodeId && templateManagementDirtyTemplateNodeId && templateManagementDirtyTemplateNodeId !== templateNodeId) {
+    return;
+  }
+
+  templateManagementDirty = false;
+  templateManagementDirtyTemplateNodeId = "";
+}
+
+function confirmTemplateManagementDiscard(actionLabel) {
+  if (!hasTemplateManagementUnsavedChanges()) {
+    return true;
+  }
+
+  return window.confirm(`当前模板存在未保存修改，${actionLabel}后这些修改将丢失，是否继续？`);
+}
+
 async function bootTemplateManagementStandaloneWindow() {
   document.body.classList.add("templateManagementStandaloneMode");
   const legacyHost = $("#templateLegacyHost");
@@ -5653,6 +5693,11 @@ function requestCloseTemplateManagementFallbackWindow() {
     return;
   }
 
+  if (!confirmTemplateManagementDiscard("关闭模板管理中心")) {
+    return;
+  }
+
+  clearTemplateManagementDirty();
   closeTemplateManagementFallbackWindow();
 }
 
@@ -5918,6 +5963,15 @@ function bindTemplateManagementWindowSync() {
     if (!document.hidden && isTemplateManagementStandaloneWindow()) {
       publishTemplateManagementWindowState();
     }
+  });
+
+  window.addEventListener("beforeunload", (event) => {
+    if (!hasTemplateManagementUnsavedChanges()) {
+      return;
+    }
+
+    event.preventDefault();
+    event.returnValue = "";
   });
 
   window.setInterval(() => {
@@ -6486,7 +6540,11 @@ function bindTemplateManagementEvents() {
 
       const targetTab = selectButton.dataset.templateAdaptationTargetTab || "adaptation";
       selectTemplateTreeNode(node)
-        .then(() => activateTemplateManagementTab(targetTab))
+        .then((changed) => {
+          if (changed !== false) {
+            activateTemplateManagementTab(targetTab);
+          }
+        })
         .catch((error) => showResult("#templateResult", error));
       return;
     }
@@ -6494,6 +6552,7 @@ function bindTemplateManagementEvents() {
     const addFieldButton = event.target.closest("[data-template-mapping-add-field]");
     if (addFieldButton) {
       appendTemplateMappingRow();
+      markTemplateManagementDirty();
       return;
     }
 
@@ -6506,6 +6565,7 @@ function bindTemplateManagementEvents() {
           return;
         }
         row.remove();
+        markTemplateManagementDirty();
       }
       return;
     }
@@ -6516,6 +6576,7 @@ function bindTemplateManagementEvents() {
       const list = row?.querySelector("[data-template-target-list]");
       if (list) {
         list.insertAdjacentHTML("beforeend", buildTemplateTargetRowMarkup({ worksheetName: "", cellReference: "" }, false));
+        markTemplateManagementDirty();
       }
       return;
     }
@@ -6529,6 +6590,7 @@ function bindTemplateManagementEvents() {
         if (!list.querySelector("[data-template-target-row]")) {
           list.insertAdjacentHTML("beforeend", buildTemplateTargetRowMarkup({ worksheetName: "", cellReference: "" }, false));
         }
+        markTemplateManagementDirty();
       }
       return;
     }
@@ -6551,6 +6613,12 @@ function bindTemplateManagementEvents() {
     }
   });
 
+  pane.addEventListener("input", (event) => {
+    if (event.target.closest("#templateFieldMappingTableBody") || event.target.id === "templateFieldMappingMode") {
+      markTemplateManagementDirty();
+    }
+  });
+
   pane.addEventListener("change", (event) => {
     if (event.target.matches("[data-template-management-filter='moduleStatus']")) {
       templateMappingFilters.moduleStatus = event.target.value || "";
@@ -6566,6 +6634,10 @@ function bindTemplateManagementEvents() {
 
     if (event.target.matches("[data-template-target-cell]")) {
       event.target.value = normalizeTemplateMappingCellReference(event.target.value);
+    }
+
+    if (event.target.closest("#templateFieldMappingTableBody") || event.target.id === "templateFieldMappingMode") {
+      markTemplateManagementDirty();
     }
   });
 }
@@ -6883,13 +6955,14 @@ function renderTemplateFieldMappingPanel(node, detail) {
   }
 
   const readOnly = !detail.canEdit;
+  const isDirty = templateManagementDirty && templateManagementDirtyTemplateNodeId === (detail.templateNodeId || selectedTemplateNode?.id || "");
   const mappings = [...(detail.mappings || [])].sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0) || String(left.fieldKey || "").localeCompare(String(right.fieldKey || "")));
   const validationIssues = currentTemplateAdaptationValidation?.issues || [];
   panel.innerHTML = `
     <section class="templateMappingEditorCard">
       <div class="templateFieldMappingToolbar">
         <div>
-          <h3>${escapeHtml(detail.profile.templateName || node?.name || "字段映射")}</h3>
+          <h3>${escapeHtml(detail.profile.templateName || node?.name || "字段映射")} ${isDirty ? '<span class="diagnosticBadge warning">未保存</span>' : ""}</h3>
           <p class="templateAdaptationHint">只允许按 TemplateFieldMapping 和标准英文占位符写入，不猜测单元格。</p>
         </div>
         <div class="actions">
@@ -7186,7 +7259,10 @@ async function openTemplateAdaptationFromError(error) {
     throw error;
   }
 
-  await selectTemplateTreeNode(node);
+  const changed = await selectTemplateTreeNode(node);
+  if (changed === false) {
+    return;
+  }
   activateTemplateManagementTab("mapping");
 }
 
@@ -7206,6 +7282,7 @@ async function saveTemplateAdaptation() {
     body: JSON.stringify(request)
   });
   currentTemplateAdaptation = detail;
+  clearTemplateManagementDirty(selectedTemplateNode.id);
   currentTemplateAdaptationValidation = null;
   currentTemplateAdaptationTest = null;
   showResult("#templateResult", { message: "字段映射已保存。", templateNodeId: selectedTemplateNode.id });
@@ -7278,6 +7355,15 @@ async function batchTestTemplateAdaptation() {
 }
 
 async function selectTemplateTreeNode(node) {
+  const nextNodeId = node?.id || "";
+  const currentNodeId = selectedTemplateNode?.id || "";
+  if (nextNodeId && nextNodeId !== currentNodeId && !confirmTemplateManagementDiscard("切换模板")) {
+    return false;
+  }
+  if (nextNodeId && nextNodeId !== currentNodeId) {
+    clearTemplateManagementDirty();
+  }
+
   ensureTemplateManagementWorkspace();
   selectedTemplateNode = node;
   currentGeneratedForm = null;
@@ -7308,13 +7394,15 @@ async function selectTemplateTreeNode(node) {
     await loadTemplateRules(node);
     await loadTemplateAdaptation(node);
     updateTemplateToolbarState(false);
-    return;
+    return true;
   }
 
   if (node.nodeType === "generated_form") {
     activateTemplateManagementTab("library");
     await openGeneratedForm(node);
   }
+
+  return true;
 }
 
 async function openGeneratedForm(node) {

@@ -138,7 +138,7 @@ public sealed class TemplateTreeRepository
         command.CommandText = """
             SELECT id, parent_id, project_id, name, node_type, folder_level,
                    template_code, template_file_path, generated_file_path,
-                   discipline, sort_order
+                   discipline, sort_order, created_at, updated_at
             FROM template_tree_nodes
             WHERE id = $id;
             """;
@@ -235,7 +235,7 @@ public sealed class TemplateTreeRepository
             templateNodeId,
             projectId,
             documentName,
-            "generated_form",
+            "document",
             null,
             templateCode,
             null,
@@ -248,7 +248,13 @@ public sealed class TemplateTreeRepository
             null,
             templateItemId,
             GetNextProjectDocumentSortOrder(connection, projectId, moduleId, templateItemId),
-            []);
+            [],
+            templateNodeId,
+            documentId,
+            null,
+            documentName,
+            now,
+            now);
     }
 
     public ProjectDocumentInfo? GetProjectDocument(string documentId)
@@ -545,7 +551,7 @@ public sealed class TemplateTreeRepository
         command.CommandText = """
             SELECT id, parent_id, project_id, name, node_type, folder_level,
                    template_code, template_file_path, generated_file_path,
-                   discipline, sort_order
+                   discipline, sort_order, created_at, updated_at
             FROM template_tree_nodes
             WHERE node_type <> 'generated_form'
                OR project_id = $projectId
@@ -586,12 +592,25 @@ public sealed class TemplateTreeRepository
 
     private static TemplateTreeNodeDto ReadNode(SqliteDataReader reader, IReadOnlyList<TemplateTreeNodeDto> children)
     {
+        var rawNodeType = reader.GetString(4);
+        var normalizedNodeType = string.Equals(rawNodeType, "generated_form", StringComparison.OrdinalIgnoreCase)
+            ? "document"
+            : rawNodeType;
+        var templateNodeId = normalizedNodeType switch
+        {
+            "template" => reader.GetString(0),
+            "document" => reader.IsDBNull(1) ? null : reader.GetString(1),
+            _ => null
+        };
+        var documentId = normalizedNodeType == "document" ? reader.GetString(0) : null;
+        var formName = normalizedNodeType == "document" ? reader.GetString(3) : null;
+
         return new TemplateTreeNodeDto(
             reader.GetString(0),
             reader.IsDBNull(1) ? null : reader.GetString(1),
             reader.IsDBNull(2) ? null : reader.GetString(2),
             reader.GetString(3),
-            reader.GetString(4),
+            normalizedNodeType,
             reader.IsDBNull(5) ? null : reader.GetString(5),
             reader.IsDBNull(6) ? null : reader.GetString(6),
             reader.IsDBNull(7) ? null : reader.GetString(7),
@@ -604,7 +623,13 @@ public sealed class TemplateTreeRepository
             null,
             null,
             reader.GetInt32(10),
-            children);
+            children,
+            templateNodeId,
+            documentId,
+            normalizedNodeType == "template" ? reader.GetString(3) : null,
+            formName,
+            reader.IsDBNull(11) ? null : DateTimeOffset.Parse(reader.GetString(11)),
+            reader.IsDBNull(12) ? null : DateTimeOffset.Parse(reader.GetString(12)));
     }
 
     private static ProjectDocumentInfo ReadProjectDocument(SqliteDataReader reader)

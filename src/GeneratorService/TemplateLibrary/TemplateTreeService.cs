@@ -232,13 +232,14 @@ public sealed class TemplateTreeService
             var templateNodeId = $"module:{module.Manifest!.ModuleId}:template:{templateItemId}";
             var templateCode = reader.IsDBNull(3) ? "" : reader.GetString(3);
             var templateFile = reader.IsDBNull(4) ? "" : reader.GetString(4);
-            var childDocuments = BuildDocumentNodes(module, projectId, templateNodeId, templateItemId, templateCode, documents);
+            var templateName = reader.GetString(2);
+            var childDocuments = BuildDocumentNodes(module, projectId, templateNodeId, templateItemId, templateName, templateCode, documents);
 
             nodes.Add(new TemplateTreeNodeDto(
                 templateNodeId,
                 $"module:{module.Manifest.ModuleId}:category:{reader.GetInt64(1)}",
                 null,
-                reader.GetString(2),
+                templateName,
                 "template",
                 reader.IsDBNull(5) ? "检验批" : reader.GetString(5),
                 templateCode,
@@ -252,7 +253,10 @@ public sealed class TemplateTreeService
                 module.Manifest.Year,
                 templateItemId,
                 reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
-                childDocuments));
+                childDocuments,
+                templateNodeId,
+                null,
+                templateName));
         }
 
         return nodes;
@@ -263,6 +267,7 @@ public sealed class TemplateTreeService
         string projectId,
         string templateNodeId,
         long templateItemId,
+        string templateName,
         string templateCode,
         IReadOnlyDictionary<string, ProjectDocumentInfo[]> documents)
     {
@@ -280,7 +285,7 @@ public sealed class TemplateTreeService
                 templateNodeId,
                 projectId,
                 item.DocumentName,
-                "generated_form",
+                "document",
                 null,
                 templateCode,
                 null,
@@ -293,7 +298,13 @@ public sealed class TemplateTreeService
                 module.Manifest.Year,
                 templateItemId,
                 sortOrder,
-                []);
+                [],
+                templateNodeId,
+                item.Id,
+                templateName,
+                item.DocumentName,
+                item.CreatedAt,
+                item.UpdatedAt);
         }).ToArray();
     }
 }

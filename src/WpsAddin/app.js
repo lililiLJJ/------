@@ -16,6 +16,9 @@ let templateMappingFilters = {
 };
 let currentGeneratedForm = null;
 let lastRowHeightFitAdjustment = null;
+let templateTreeBulkMode = false;
+const templateTreeSelectedDocumentIds = new Set();
+let templateTreeContextMenuNodeId = "";
 let templateManagementDirty = false;
 let templateManagementDirtyTemplateNodeId = "";
 let summaryTreeNodes = [];
@@ -57,6 +60,7 @@ let serviceAvailable = false;
 let lastExternalTabVersion = "";
 let templateManagementWindowRef = null;
 let lastTemplateManagementFocusVersion = "";
+let templateManagementStandaloneMode = false;
 const collapsedTemplateNodeIds = new Set();
 let templateTreeClickTimer = null;
 let directGeneratedFormCreating = false;
@@ -1204,6 +1208,7 @@ function appendModuleMeta(container, label, value) {
 async function loadTemplateLibraryTree() {
   const result = await api(`/api/template-library/tree?${appendProjectContext(new URLSearchParams()).toString()}`);
   templateTreeNodes = result.nodes || [];
+  syncTemplateTreeBulkSelection();
   selectedTemplateNode = null;
   currentGeneratedForm = null;
   lastRowHeightFitAdjustment = null;
@@ -1222,6 +1227,7 @@ function renderTemplateTreeView() {
   }
 
   tree.innerHTML = "";
+  updateTemplateBulkToolbarState();
   const filterText = ($("#templateSearch")?.value || "").trim();
   const nodes = filterTreeNodes(templateTreeNodes, filterText);
   if (nodes.length === 0) {
@@ -1232,9 +1238,210 @@ function renderTemplateTreeView() {
   const root = document.createElement("div");
   root.className = "specTreeRoot";
   for (const node of nodes) {
-    root.appendChild(createSpecTreeNode(node));
+    root.appendChild(createTemplateWorkbenchTreeNode(node));
   }
   tree.appendChild(root);
+}
+
+function isTemplateTreeTemplateNode(node) {
+  return node?.nodeType === "template";
+}
+
+function isTemplateTreeDocumentNode(node) {
+  return node?.nodeType === "document" || node?.nodeType === "generated_form";
+}
+
+function getTemplateTreeTemplateNodeId(node) {
+  if (!node) {
+    return "";
+  }
+
+  return node.templateNodeId || (isTemplateTreeTemplateNode(node) ? node.id : node.parentId) || "";
+}
+
+function getTemplateTreeDocumentId(node) {
+  return isTemplateTreeDocumentNode(node) ? (node.documentId || node.id || "") : "";
+}
+
+function getTemplateTreeFullNode(nodeOrId) {
+  if (!nodeOrId) {
+    return null;
+  }
+
+  const candidates = typeof nodeOrId === "string"
+    ? [nodeOrId]
+    : [nodeOrId.id, nodeOrId.documentId, nodeOrId.templateNodeId].filter(Boolean);
+  for (const candidate of candidates) {
+    const directNode = findTemplateTreeNodeById(candidate);
+    if (directNode) {
+      return directNode;
+    }
+  }
+
+  const documentId = typeof nodeOrId === "string" ? nodeOrId : nodeOrId.documentId;
+  return documentId ? findTemplateTreeNodeByDocumentId(documentId) : null;
+}
+
+function collectTemplateTreeDocumentNodes(node) {
+  const sourceNode = getTemplateTreeFullNode(node) || node;
+  if (!sourceNode) {
+    return [];
+  }
+
+  const result = [];
+  const visit = (current) => {
+    if (!current) {
+      return;
+    }
+
+    if (isTemplateTreeDocumentNode(current)) {
+      result.push(current);
+      return;
+    }
+
+    for (const child of current.children || []) {
+      visit(child);
+    }
+  };
+  visit(sourceNode);
+  return result;
+}
+
+function getTemplateTreeSelectionState(node) {
+  const sourceNode = getTemplateTreeFullNode(node) || node;
+  if (!sourceNode) {
+    return { checked: false, indeterminate: false, disabled: true };
+  }
+
+  if (isTemplateTreeDocumentNode(sourceNode)) {
+    const documentId = getTemplateTreeDocumentId(sourceNode);
+    return {
+      checked: templateTreeSelectedDocumentIds.has(documentId),
+      indeterminate: false,
+      disabled: !documentId
+    };
+  }
+
+  if (!isTemplateTreeTemplateNode(sourceNode)) {
+    return { checked: false, indeterminate: false, disabled: true };
+  }
+
+  const documentIds = collectTemplateTreeDocumentNodes(sourceNode)
+    .map((item) => getTemplateTreeDocumentId(item))
+    .filter(Boolean);
+  const checkedCount = documentIds.filter((id) => templateTreeSelectedDocumentIds.has(id)).length;
+  return {
+    checked: documentIds.length > 0 && checkedCount === documentIds.length,
+    indeterminate: checkedCount > 0 && checkedCount < documentIds.length,
+    disabled: documentIds.length === 0
+  };
+}
+
+function updateTemplateBulkToolbarState() {
+  const count = templateTreeSelectedDocumentIds.size;
+  $("#toggleTemplateBulkMode")?.classList.toggle("hidden", templateTreeBulkMode);
+  $("#deleteSelectedDocuments")?.classList.toggle("hidden", !templateTreeBulkMode);
+  $("#cancelTemplateBulkMode")?.classList.toggle("hidden", !templateTreeBulkMode);
+  $("#templateBulkSummary")?.classList.toggle("hidden", !templateTreeBulkMode);
+  if ($("#deleteSelectedDocuments")) {
+    $("#deleteSelectedDocuments").disabled = count === 0;
+  }
+  if ($("#templateBulkSummary")) {
+    $("#templateBulkSummary").textContent = `已选择 ${count} 个资料表`;
+  }
+}
+
+function clearTemplateTreeBulkSelection() {
+  templateTreeSelectedDocumentIds.clear();
+  updateTemplateBulkToolbarState();
+}
+
+function syncTemplateTreeBulkSelection() {
+  if (!templateTreeBulkMode) {
+    clearTemplateTreeBulkSelection();
+    return;
+  }
+
+  const existingDocumentIds = new Set(
+    collectTemplateTreeDocumentNodes({ children: templateTreeNodes })
+      .map((item) => getTemplateTreeDocumentId(item))
+      .filter(Boolean)
+  );
+  for (const documentId of [...templateTreeSelectedDocumentIds]) {
+    if (!existingDocumentIds.has(documentId)) {
+      templateTreeSelectedDocumentIds.delete(documentId);
+    }
+  }
+  updateTemplateBulkToolbarState();
+}
+
+function setTemplateTreeBulkMode(enabled) {
+  templateTreeBulkMode = Boolean(enabled);
+  closeTemplateTreeContextMenu();
+  if (!templateTreeBulkMode) {
+    clearTemplateTreeBulkSelection();
+  } else {
+    updateTemplateBulkToolbarState();
+  }
+  renderTemplateTreeView();
+}
+
+function toggleTemplateTreeBulkMode() {
+  setTemplateTreeBulkMode(!templateTreeBulkMode);
+}
+
+function toggleTemplateTreeNodeSelection(node, checked) {
+  const sourceNode = getTemplateTreeFullNode(node) || node;
+  if (!sourceNode) {
+    return;
+  }
+
+  const documentNodes = isTemplateTreeDocumentNode(sourceNode)
+    ? [sourceNode]
+    : collectTemplateTreeDocumentNodes(sourceNode);
+  for (const documentNode of documentNodes) {
+    const documentId = getTemplateTreeDocumentId(documentNode);
+    if (!documentId) {
+      continue;
+    }
+
+    if (checked) {
+      templateTreeSelectedDocumentIds.add(documentId);
+    } else {
+      templateTreeSelectedDocumentIds.delete(documentId);
+    }
+  }
+
+  updateTemplateBulkToolbarState();
+  renderTemplateTreeView();
+}
+
+function openTemplateTreeContextMenu(event, node) {
+  if (!isTemplateTreeDocumentNode(node)) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  const menu = $("#templateTreeContextMenu");
+  if (!menu) {
+    return;
+  }
+
+  templateTreeContextMenuNodeId = getTemplateTreeDocumentId(node);
+  menu.style.left = `${event.pageX}px`;
+  menu.style.top = `${event.pageY}px`;
+  menu.classList.remove("hidden");
+}
+
+function closeTemplateTreeContextMenu() {
+  const menu = $("#templateTreeContextMenu");
+  if (!menu) {
+    return;
+  }
+
+  menu.classList.add("hidden");
+  templateTreeContextMenuNodeId = "";
 }
 
 function filterTreeNodes(nodes, filterText) {
@@ -1254,6 +1461,101 @@ function filterTreeNodes(nodes, filterText) {
       return selfMatches || children.length > 0 ? { ...node, children } : null;
     })
     .filter(Boolean);
+}
+
+function createTemplateWorkbenchTreeNode(node) {
+  if (node.nodeType === "folder") {
+    return createSpecTreeNode(node);
+  }
+
+  const sourceNode = getTemplateTreeFullNode(node) || node;
+  const row = document.createElement("div");
+  row.className = "specTreeRow";
+
+  if (templateTreeBulkMode && (isTemplateTreeTemplateNode(sourceNode) || isTemplateTreeDocumentNode(sourceNode))) {
+    const selectionState = getTemplateTreeSelectionState(sourceNode);
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "specTreeCheckbox";
+    checkbox.checked = selectionState.checked;
+    checkbox.indeterminate = selectionState.indeterminate;
+    checkbox.disabled = selectionState.disabled;
+    checkbox.addEventListener("click", (event) => event.stopPropagation());
+    checkbox.addEventListener("change", (event) => {
+      event.stopPropagation();
+      toggleTemplateTreeNodeSelection(sourceNode, checkbox.checked);
+    });
+    row.appendChild(checkbox);
+  } else {
+    row.appendChild(document.createElement("span"));
+  }
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `specTreeNode ${isTemplateTreeDocumentNode(sourceNode) ? "document" : sourceNode.nodeType}`;
+  button.dataset.nodeId = sourceNode.id;
+  button.classList.toggle("selected", selectedTemplateNode?.id === sourceNode.id);
+
+  const title = document.createElement("span");
+  title.textContent = sourceNode.name;
+  const meta = document.createElement("small");
+  meta.textContent = isTemplateTreeTemplateNode(sourceNode)
+    ? [sourceNode.templateCode || "检验批模板", sourceNode.moduleName || ""].filter(Boolean).join(" · ")
+    : "已创建资料表";
+  button.append(title, meta);
+  button.addEventListener("click", (event) => {
+    closeTemplateTreeContextMenu();
+    handleSpecTreeNodeClick(event, sourceNode);
+  });
+  button.addEventListener("dblclick", (event) => {
+    closeTemplateTreeContextMenu();
+    handleSpecTreeNodeDoubleClick(event, sourceNode);
+  });
+  button.addEventListener("contextmenu", (event) => {
+    openTemplateTreeContextMenu(event, sourceNode);
+  });
+  row.appendChild(button);
+
+  const actions = document.createElement("div");
+  actions.className = "specTreeActions";
+  if (isTemplateTreeDocumentNode(sourceNode)) {
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "specTreeActionButton danger";
+    deleteButton.textContent = "删除";
+    deleteButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteProjectDocumentNodes([sourceNode]).catch((error) => showResult("#templateResult", error));
+    });
+    actions.appendChild(deleteButton);
+  }
+  row.appendChild(actions);
+
+  if (!sourceNode.children || sourceNode.children.length === 0) {
+    return row;
+  }
+
+  const isCollapsed = collapsedTemplateNodeIds.has(sourceNode.id);
+  if (isTemplateTreeTemplateNode(sourceNode)) {
+    button.classList.add("hasChildren");
+    button.setAttribute("aria-expanded", String(!isCollapsed));
+  }
+
+  const branch = document.createElement("div");
+  branch.className = `specTreeBranch ${sourceNode.nodeType}${isCollapsed ? " collapsed" : ""}`;
+  branch.appendChild(row);
+  if (isCollapsed) {
+    return branch;
+  }
+
+  const children = document.createElement("div");
+  children.className = "specTreeChildren";
+  for (const child of sourceNode.children) {
+    children.appendChild(createTemplateWorkbenchTreeNode(child));
+  }
+  branch.appendChild(children);
+  return branch;
 }
 
 function createSpecTreeNode(node) {
@@ -1326,7 +1628,7 @@ function createSpecTreeNode(node) {
 
 function handleSpecTreeNodeClick(event, node) {
   window.clearTimeout(templateTreeClickTimer);
-  if (node.nodeType === "template") {
+  if (isTemplateTreeTemplateNode(node)) {
     templateTreeClickTimer = window.setTimeout(async () => {
       if (node.children?.length > 0) {
         toggleTemplateNode(node.id);
@@ -1348,7 +1650,7 @@ function handleSpecTreeNodeDoubleClick(event, node) {
   event.stopPropagation();
   window.clearTimeout(templateTreeClickTimer);
 
-  if (node.nodeType !== "template") {
+  if (!isTemplateTreeTemplateNode(node)) {
     selectTemplateTreeNode(node);
     return;
   }
@@ -1414,6 +1716,43 @@ function findTemplateTreeNodeById(nodeId, nodes = templateTreeNodes) {
   }
 
   return null;
+}
+
+function findTemplateTreeNodeByDocumentId(documentId, nodes = templateTreeNodes) {
+  for (const node of nodes || []) {
+    if (isTemplateTreeDocumentNode(node) && getTemplateTreeDocumentId(node) === documentId) {
+      return node;
+    }
+
+    const nested = findTemplateTreeNodeByDocumentId(documentId, node.children || []);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function removeTemplateTreeNode(nodes, nodeId) {
+  let removedNode = null;
+  const nextNodes = [];
+  for (const node of nodes || []) {
+    if (node.id === nodeId) {
+      removedNode = node;
+      continue;
+    }
+
+    const childResult = removeTemplateTreeNode(node.children || [], nodeId);
+    if (childResult.removedNode) {
+      removedNode = childResult.removedNode;
+      nextNodes.push({ ...node, children: childResult.nodes });
+      continue;
+    }
+
+    nextNodes.push(node);
+  }
+
+  return { nodes: nextNodes, removedNode };
 }
 
 function getTemplateAdaptationFieldLabel(fieldKey) {
@@ -1851,7 +2190,7 @@ async function selectTemplateTreeNode(node) {
     return;
   }
 
-  if (node.nodeType === "generated_form") {
+  if (isTemplateTreeDocumentNode(node)) {
     await openGeneratedForm(node);
   }
 }
@@ -1920,7 +2259,7 @@ async function openGeneratedForm(node) {
   $("#spreadsheetTitle").textContent = node.name;
   $("#spreadsheetSummary").textContent = "正在打开资料表...";
   try {
-    const form = await api(`/api/generated-forms/${encodeURIComponent(node.id)}`);
+    const form = await api(buildProjectDocumentApiUrl(getTemplateTreeDocumentId(node)));
     currentGeneratedForm = form;
     lastRowHeightFitAdjustment = null;
     $("#spreadsheetSummary").textContent = `模板编码：${form.templateCode || "未配置"}｜可编辑：${form.canEdit ? "是" : "否"}`;
@@ -1947,7 +2286,7 @@ async function openSpreadsheetPath(form) {
     // Fallback to local service if WPS object model is unavailable or rejects the path.
   }
 
-  await api(`/api/generated-forms/${encodeURIComponent(form.id)}/open`, { method: "POST" });
+  await api(buildProjectDocumentApiUrl(form.documentId || form.id, "/open"), { method: "POST" });
 }
 
 async function openLocalSpreadsheetFile(filePath) {
@@ -2123,9 +2462,53 @@ function createWorkbookManager() {
     return String(path || "").split("/").filter(Boolean).pop() || "";
   }
 
+  function getWorkbookSavedState(workbook) {
+    try {
+      const saved = typeof workbook?.Saved === "function" ? workbook.Saved() : workbook?.Saved;
+      if (typeof saved === "boolean") {
+        return saved ? "saved" : "unsaved";
+      }
+      if (saved === 0 || saved === 1) {
+        return saved === 1 ? "saved" : "unsaved";
+      }
+    } catch {
+      // Fall through to unknown.
+    }
+
+    return "unknown";
+  }
+
+  function closeWorkbook(filePath, options = {}) {
+    const workbook = getOpenedWorkbook(filePath);
+    if (!workbook) {
+      return { success: true, closed: false };
+    }
+
+    const saveChanges = options.saveChanges === true;
+    try {
+      if (typeof workbook.Close === "function") {
+        workbook.Close(saveChanges);
+      } else {
+        return { success: false, closed: false, message: "当前 WPS 环境不支持关闭工作簿。" };
+      }
+    } catch (error) {
+      return { success: false, closed: false, message: error?.message || String(error) };
+    }
+
+    forgetWorkbook(filePath);
+    const remaining = getOpenedWorkbook(filePath);
+    return {
+      success: !remaining,
+      closed: !remaining,
+      message: remaining ? "目标工作簿仍处于打开状态。" : ""
+    };
+  }
+
   return {
     openOrActivate,
     getOpenedWorkbook,
+    getWorkbookSavedState,
+    closeWorkbook,
     activateWorkbook,
     forgetWorkbook,
     normalizeWorkbookPath
@@ -2548,7 +2931,7 @@ async function fitRowHeights() {
     }
 
     workbook.Save();
-    const backup = await api(`/api/generated-forms/${encodeURIComponent(currentGeneratedForm.id)}/backups`, { method: "POST" });
+    const backup = await api(buildProjectDocumentApiUrl(currentGeneratedForm.documentId || currentGeneratedForm.id, "/backups"), { method: "POST" });
     const rangeInfo = getRowHeightTargetRange(sheet);
     const eligibleRows = buildEligibleRows(sheet, rangeInfo);
     if (eligibleRows.length === 0) {
@@ -3328,7 +3711,7 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-async function deleteGeneratedForm() {
+async function deleteGeneratedFormLegacy() {
   if (!currentGeneratedForm) {
     return;
   }
@@ -3338,15 +3721,253 @@ async function deleteGeneratedForm() {
   }
 
   try {
-    const result = await api(`/api/generated-forms/${encodeURIComponent(currentGeneratedForm.id)}`, { method: "DELETE" });
-    showResult("#templateResult", result);
-    if (shouldLoadTemplateManagementWorkspace()) {
+    const deletedFormId = currentGeneratedForm.id;
+    const result = await api(buildProjectDocumentApiUrl(deletedFormId), { method: "DELETE" });
+    const wasPreviewingDeletedForm = selectedTemplateNode?.id === deletedFormId || currentGeneratedForm?.id === deletedFormId;
+    const localRemoveResult = removeTemplateTreeNode(templateTreeNodes, result.id || deletedFormId);
+    if (localRemoveResult.removedNode) {
+      templateTreeNodes = localRemoveResult.nodes;
+      collapsedTemplateNodeIds.delete(result.id || deletedFormId);
+      renderTemplateTreeView();
+    } else if (shouldLoadTemplateManagementWorkspace()) {
       await loadTemplateLibraryTree();
     }
+
+    if (wasPreviewingDeletedForm) {
+      clearGeneratedFormSelection();
+      await selectTemplateTreeParentAfterDelete(result.parentId || localRemoveResult.removedNode?.parentId);
+    } else {
+      updateTemplateToolbarState(false);
+    }
+
     await loadSummaryTree();
+    showResult("#templateResult", result);
   } catch (error) {
     showResult("#templateResult", error);
   }
+}
+
+function buildProjectDocumentApiUrl(documentId, suffix = "") {
+  const query = appendProjectContext(new URLSearchParams()).toString();
+  return `/api/project-documents/${encodeURIComponent(documentId)}${suffix}${query ? `?${query}` : ""}`;
+}
+
+function getCurrentProjectDocumentId() {
+  return currentGeneratedForm?.documentId || currentGeneratedForm?.id || getTemplateTreeDocumentId(selectedTemplateNode) || "";
+}
+
+function getTemplateTreeSiblingDocuments(templateNodeId) {
+  const templateNode = getTemplateTreeFullNode(templateNodeId);
+  return (templateNode?.children || []).filter((item) => isTemplateTreeDocumentNode(item));
+}
+
+function resolveDeleteSelectionTarget(deletedDocumentIds) {
+  const deletedSet = new Set((deletedDocumentIds || []).filter(Boolean));
+  const currentDocumentId = getCurrentProjectDocumentId();
+  if (!currentDocumentId || !deletedSet.has(currentDocumentId)) {
+    if (isTemplateTreeDocumentNode(selectedTemplateNode)) {
+      return { type: "document", id: getTemplateTreeDocumentId(selectedTemplateNode) };
+    }
+    if (isTemplateTreeTemplateNode(selectedTemplateNode)) {
+      return { type: "template", id: getTemplateTreeTemplateNodeId(selectedTemplateNode) };
+    }
+    return null;
+  }
+
+  const currentNode = getTemplateTreeFullNode(currentDocumentId);
+  const templateNodeId = getTemplateTreeTemplateNodeId(currentNode);
+  const siblings = getTemplateTreeSiblingDocuments(templateNodeId);
+  const currentIndex = siblings.findIndex((item) => getTemplateTreeDocumentId(item) === currentDocumentId);
+  const remaining = siblings.filter((item) => !deletedSet.has(getTemplateTreeDocumentId(item)));
+  const nextNode = remaining.find((item) => siblings.indexOf(item) > currentIndex) || remaining[0];
+  if (nextNode) {
+    return { type: "document", id: getTemplateTreeDocumentId(nextNode) };
+  }
+  if (templateNodeId) {
+    return { type: "template", id: templateNodeId };
+  }
+  return null;
+}
+
+function buildDeleteResultPayload(deletedIds, failedItems) {
+  const successCount = deletedIds.length;
+  const failedCount = failedItems.length;
+  return {
+    success: failedCount === 0,
+    deletedIds,
+    failedItems,
+    message: failedCount === 0
+      ? `已删除 ${successCount} 个资料表`
+      : `成功删除 ${successCount} 个，失败 ${failedCount} 个`
+  };
+}
+
+function promptDeleteOpenedWorkbook(detail, savedState) {
+  const savePrompt = savedState === "unsaved"
+    ? `资料表“${detail.name}”当前在 WPS 中打开，且存在未保存修改。\n\n点击“确定”将先保存并关闭，再继续删除。`
+    : `资料表“${detail.name}”当前在 WPS 中打开，无法确认是否已保存。\n\n点击“确定”将尝试保存并关闭，再继续删除。`;
+  if (window.confirm(savePrompt)) {
+    return "save";
+  }
+
+  const discardPrompt = `如果继续，系统将不保存并关闭“${detail.name}”，然后继续删除。\n\n点击“确定”表示不保存关闭；点击“取消”放弃删除该资料表。`;
+  return window.confirm(discardPrompt) ? "discard" : "cancel";
+}
+
+async function ensureProjectDocumentReadyForDeletion(detail) {
+  const workbook = workbookManager.getOpenedWorkbook(detail.generatedFilePath);
+  if (!workbook) {
+    return { success: true };
+  }
+
+  const savedState = workbookManager.getWorkbookSavedState(workbook);
+  const action = savedState === "saved" ? "discard" : promptDeleteOpenedWorkbook(detail, savedState);
+  if (action === "cancel") {
+    return { success: false, reason: "用户取消删除。" };
+  }
+
+  const closeResult = workbookManager.closeWorkbook(detail.generatedFilePath, { saveChanges: action === "save" });
+  if (!closeResult.success) {
+    return { success: false, reason: closeResult.message || "关闭 WPS 工作簿失败。" };
+  }
+
+  return { success: true };
+}
+
+async function restoreTemplateTreeSelection(target) {
+  if (!target) {
+    clearGeneratedFormSelection();
+    return;
+  }
+
+  const node = findTemplateTreeNodeById(target.id);
+  if (!node) {
+    clearGeneratedFormSelection();
+    return;
+  }
+
+  await selectTemplateTreeNode(node);
+}
+
+async function revealProjectDocumentFile(node) {
+  const documentId = getTemplateTreeDocumentId(node);
+  if (!documentId) {
+    throw new Error("未找到资料表标识。");
+  }
+
+  const detail = await api(buildProjectDocumentApiUrl(documentId));
+  await api("/api/files/reveal", {
+    method: "POST",
+    body: JSON.stringify({ filePath: detail.generatedFilePath })
+  });
+}
+
+async function deleteProjectDocumentNodes(nodesOrIds) {
+  const sourceNodes = (nodesOrIds || [])
+    .map((item) => typeof item === "string" ? getTemplateTreeFullNode(item) || { id: item, documentId: item, nodeType: "document" } : (getTemplateTreeFullNode(item) || item))
+    .filter((item) => isTemplateTreeDocumentNode(item));
+  const documentIds = [...new Set(sourceNodes.map((item) => getTemplateTreeDocumentId(item)).filter(Boolean))];
+  if (!documentIds.length) {
+    return;
+  }
+
+  const isBatch = documentIds.length > 1;
+  const confirmMessage = isBatch
+    ? `确定删除已勾选的 ${documentIds.length} 个资料表吗？`
+    : "确定删除该资料表吗？该操作会删除工程记录和本地文件。";
+  if (!window.confirm(confirmMessage)) {
+    return;
+  }
+
+  showResult("#templateResult", isBatch ? "正在批量删除资料表..." : "正在删除资料表...");
+  const selectionTarget = resolveDeleteSelectionTarget(documentIds);
+  const preflightFailures = [];
+  const deletableIds = [];
+  for (const documentId of documentIds) {
+    try {
+      const detail = await api(buildProjectDocumentApiUrl(documentId));
+      const closeResult = await ensureProjectDocumentReadyForDeletion(detail);
+      if (!closeResult.success) {
+        preflightFailures.push({
+          documentId,
+          formName: detail.formName || detail.name,
+          reason: closeResult.reason || "关闭 WPS 工作簿失败。"
+        });
+        continue;
+      }
+
+      deletableIds.push(documentId);
+    } catch (error) {
+      preflightFailures.push({
+        documentId,
+        reason: error.message || "读取资料表信息失败。"
+      });
+    }
+  }
+
+  let deletedIds = [];
+  const failedItems = [...preflightFailures];
+  if (deletableIds.length > 0) {
+    if (deletableIds.length === 1 && !isBatch) {
+      try {
+        const result = await api(buildProjectDocumentApiUrl(deletableIds[0]), { method: "DELETE" });
+        if (result.success) {
+          deletedIds = [result.documentId || result.id || deletableIds[0]];
+        } else {
+          failedItems.push({
+            documentId: result.documentId || deletableIds[0],
+            formName: result.formName,
+            reason: result.message || "删除失败。"
+          });
+        }
+      } catch (error) {
+        failedItems.push({
+          documentId: deletableIds[0],
+          reason: error.message || "删除失败。"
+        });
+      }
+    } else {
+      try {
+        const query = appendProjectContext(new URLSearchParams()).toString();
+        const result = await api(`/api/project-documents/batch-delete${query ? `?${query}` : ""}`, {
+          method: "POST",
+          body: JSON.stringify({ documentIds: deletableIds })
+        });
+        deletedIds = result.deletedIds || [];
+        failedItems.push(...(result.failedItems || []));
+      } catch (error) {
+        for (const documentId of deletableIds) {
+          failedItems.push({
+            documentId,
+            reason: error.message || "批量删除失败。"
+          });
+        }
+      }
+    }
+  }
+
+  for (const deletedId of deletedIds) {
+    templateTreeSelectedDocumentIds.delete(deletedId);
+  }
+  updateTemplateBulkToolbarState();
+
+  if (deletedIds.length > 0) {
+    if (shouldLoadTemplateManagementWorkspace()) {
+      await loadTemplateLibraryTree();
+      await restoreTemplateTreeSelection(selectionTarget);
+    }
+    await loadSummaryTree();
+  }
+
+  showResult("#templateResult", buildDeleteResultPayload(deletedIds, failedItems));
+}
+
+async function deleteGeneratedForm() {
+  if (!currentGeneratedForm) {
+    return;
+  }
+
+  await deleteProjectDocumentNodes([currentGeneratedForm.documentId || currentGeneratedForm.id]);
 }
 
 function escapeHtml(value) {
@@ -5294,7 +5915,8 @@ async function bootMaterialLedgerStandaloneWindow() {
 
 function isTemplateManagementStandaloneWindow() {
   const params = new URLSearchParams(window.location.search);
-  return params.get("view") === templateManagementWindowHash
+  return templateManagementStandaloneMode
+    || params.get("view") === templateManagementWindowHash
     || window.location.hash.replace("#", "") === templateManagementWindowHash;
 }
 
@@ -6061,6 +6683,7 @@ function bindExternalTabSwitching() {
 }
 
 async function boot() {
+  templateManagementStandaloneMode = isTemplateManagementStandaloneWindow();
   bindTabs();
   bindExternalTabSwitching();
   bindTemplateManagementWindowSync();
@@ -6332,6 +6955,9 @@ async function boot() {
     if (!event.target.closest("#materialLedgerFilterMenu") && !event.target.closest("[data-ledger-filter]")) {
       closeMaterialLedgerFilterMenu();
     }
+    if (!event.target.closest("#templateTreeContextMenu")) {
+      closeTemplateTreeContextMenu();
+    }
   });
   $("#spreadsheetPreview").addEventListener("click", (event) => {
     const actionButton = event.target.closest("[data-template-adapt-action]");
@@ -6359,6 +6985,42 @@ async function boot() {
   $("#fitRowHeights").addEventListener("click", fitRowHeights);
   $("#undoRowHeightFit").addEventListener("click", undoRowHeightFit);
   $("#deleteGeneratedForm").addEventListener("click", deleteGeneratedForm);
+  $("#toggleTemplateBulkMode")?.addEventListener("click", () => toggleTemplateTreeBulkMode());
+  $("#deleteSelectedDocuments")?.addEventListener("click", () => {
+    const nodes = [...templateTreeSelectedDocumentIds]
+      .map((documentId) => getTemplateTreeFullNode(documentId))
+      .filter(Boolean);
+    deleteProjectDocumentNodes(nodes).catch((error) => showResult("#templateResult", error));
+  });
+  $("#cancelTemplateBulkMode")?.addEventListener("click", () => setTemplateTreeBulkMode(false));
+  $("#templateTreeContextMenu")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const actionButton = event.target.closest("[data-tree-context-action]");
+    if (!actionButton) {
+      return;
+    }
+
+    const action = actionButton.dataset.treeContextAction;
+    const node = getTemplateTreeFullNode(templateTreeContextMenuNodeId);
+    closeTemplateTreeContextMenu();
+    if (!node) {
+      return;
+    }
+
+    if (action === "open") {
+      selectTemplateTreeNode(node).catch((error) => showResult("#templateResult", error));
+      return;
+    }
+
+    if (action === "delete") {
+      deleteProjectDocumentNodes([node]).catch((error) => showResult("#templateResult", error));
+      return;
+    }
+
+    if (action === "reveal") {
+      revealProjectDocumentFile(node).catch((error) => showResult("#templateResult", error));
+    }
+  });
   $("#templateSearch").addEventListener("input", renderTemplateTreeView);
   $("#generatedFormForm").addEventListener("submit", createGeneratedForm);
   $("#closeGeneratedFormModal").addEventListener("click", closeGeneratedFormModal);
@@ -6376,6 +7038,7 @@ async function boot() {
   });
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      closeTemplateTreeContextMenu();
       closeTemplatePreviewModal();
       closeGeneratedFormModal();
       closeUnitProjectDialog();
@@ -7181,6 +7844,7 @@ async function loadTemplateLibraryTree() {
   ensureTemplateManagementWorkspace();
   const result = await api(`/api/template-library/tree?${appendProjectContext(new URLSearchParams()).toString()}`);
   templateTreeNodes = result.nodes || [];
+  syncTemplateTreeBulkSelection();
   selectedTemplateNode = null;
   currentGeneratedForm = null;
   currentTemplateAdaptation = null;
@@ -7213,6 +7877,33 @@ function renderSpreadsheetPlaceholder() {
     renderTemplateManagementPlaceholder("#templateFieldMappingPanel", "字段映射", "请选择一个模板后再查看和编辑字段映射。");
     renderTemplateManagementPlaceholder("#templateTestPanel", "模板测试", "请选择一个模板后执行测试写入。");
   }
+}
+
+function clearGeneratedFormSelection() {
+  if (isTemplateTreeDocumentNode(selectedTemplateNode)) {
+    selectedTemplateNode = null;
+  }
+
+  currentGeneratedForm = null;
+  currentTemplateAdaptation = null;
+  currentTemplateAdaptationValidation = null;
+  currentTemplateAdaptationTest = null;
+  lastRowHeightFitAdjustment = null;
+  renderSpreadsheetPlaceholder();
+  updateTemplateToolbarState(false);
+}
+
+async function selectTemplateTreeParentAfterDelete(parentId) {
+  if (!parentId) {
+    return false;
+  }
+
+  const parentNode = findTemplateTreeNodeById(parentId);
+  if (!parentNode) {
+    return false;
+  }
+
+  return selectTemplateTreeNode(parentNode);
 }
 
 async function loadTemplateAdaptation(node, options = {}) {
@@ -7355,6 +8046,7 @@ async function batchTestTemplateAdaptation() {
 }
 
 async function selectTemplateTreeNode(node) {
+  closeTemplateTreeContextMenu();
   const nextNodeId = node?.id || "";
   const currentNodeId = selectedTemplateNode?.id || "";
   if (nextNodeId && nextNodeId !== currentNodeId && !confirmTemplateManagementDiscard("切换模板")) {
@@ -7397,7 +8089,7 @@ async function selectTemplateTreeNode(node) {
     return true;
   }
 
-  if (node.nodeType === "generated_form") {
+  if (isTemplateTreeDocumentNode(node)) {
     activateTemplateManagementTab("library");
     await openGeneratedForm(node);
   }
@@ -7411,7 +8103,7 @@ async function openGeneratedForm(node) {
   $("#spreadsheetTitle").textContent = node.name;
   $("#spreadsheetSummary").textContent = "正在打开资料表...";
   try {
-    const form = await api(`/api/generated-forms/${encodeURIComponent(node.id)}`);
+    const form = await api(buildProjectDocumentApiUrl(getTemplateTreeDocumentId(node)));
     currentGeneratedForm = form;
     lastRowHeightFitAdjustment = null;
     $("#spreadsheetSummary").textContent = `模板编码：${form.templateCode || "未配置"}｜可编辑：${form.canEdit ? "是" : "否"}`;

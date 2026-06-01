@@ -53,9 +53,15 @@ public sealed class GeneratedFormService
 
     public GeneratedFormInfo GetGeneratedForm(string nodeId)
     {
-        var document = _repository.GetProjectDocument(nodeId);
+        return GetProjectDocument(nodeId, null, null);
+    }
+
+    public GeneratedFormInfo GetProjectDocument(string documentId, string? projectId, string? unitProjectId)
+    {
+        var document = _repository.GetProjectDocument(documentId);
         if (document is not null)
         {
+            EnsureProjectDocumentAccess(document, projectId, unitProjectId);
             var documentPath = _repository.ResolveStoredPath(document.FilePath);
             if (!File.Exists(documentPath))
             {
@@ -68,11 +74,16 @@ public sealed class GeneratedFormService
                 document.DocumentName,
                 document.TemplateItemId.ToString(),
                 documentPath,
-                true);
+                true,
+                BuildProjectDocumentParentId(document),
+                document.Id,
+                null,
+                document.DocumentName);
         }
 
-        var node = _repository.GetNode(nodeId) ?? throw new FileNotFoundException("资料表节点不存在。", nodeId);
-        if (node.NodeType != "generated_form" || string.IsNullOrWhiteSpace(node.GeneratedFilePath))
+        var node = _repository.GetNode(documentId) ?? throw new FileNotFoundException("资料表节点不存在。", documentId);
+        EnsureLegacyNodeAccess(node, projectId);
+        if (node.NodeType != "document" || string.IsNullOrWhiteSpace(node.GeneratedFilePath))
         {
             throw new InvalidOperationException("当前节点不是已创建的资料表。");
         }
@@ -89,7 +100,11 @@ public sealed class GeneratedFormService
             node.Name,
             node.TemplateCode ?? "",
             filePath,
-            true);
+            true,
+            node.TemplateNodeId ?? node.ParentId,
+            node.Id,
+            node.TemplateName,
+            node.FormName ?? node.Name);
     }
 
     public GeneratedFormCreateResult CreateGeneratedForm(CreateGeneratedFormRequest request)
@@ -172,14 +187,54 @@ public sealed class GeneratedFormService
 
     public DeleteGeneratedFormResult DeleteGeneratedForm(string nodeId)
     {
-        var info = GetGeneratedForm(nodeId);
-        if (File.Exists(info.GeneratedFilePath))
+        return DeleteProjectDocument(nodeId, null, null);
+    }
+
+    public DeleteGeneratedFormResult DeleteProjectDocument(string documentId, string? projectId, string? unitProjectId)
+    {
+        return DeleteProjectDocumentCore(documentId, projectId, unitProjectId);
+    }
+
+    public BatchDeleteProjectDocumentsResult BatchDeleteProjectDocuments(
+        BatchDeleteProjectDocumentsRequest request,
+        string? projectId,
+        string? unitProjectId)
+    {
+        var documentIds = request.DocumentIds?
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? [];
+        if (documentIds.Length == 0)
         {
-            File.Delete(info.GeneratedFilePath);
+            throw new InvalidOperationException("请至少选择一个资料表。");
         }
 
-        var deleted = _repository.DeleteProjectDocument(nodeId) || _repository.DeleteGeneratedForm(nodeId);
-        return new DeleteGeneratedFormResult(deleted, nodeId, deleted ? "资料表已删除。" : "资料表节点不存在。");
+        var deletedIds = new List<string>();
+        var failedItems = new List<BatchDeleteProjectDocumentsFailedItem>();
+        foreach (var documentId in documentIds)
+        {
+            var result = DeleteProjectDocumentCore(documentId, projectId, unitProjectId);
+            if (result.Success)
+            {
+                deletedIds.Add(result.DocumentId ?? documentId);
+                continue;
+            }
+
+            failedItems.Add(new BatchDeleteProjectDocumentsFailedItem(
+                result.DocumentId ?? documentId,
+                result.Message,
+                result.FormName));
+        }
+
+        var message = failedItems.Count == 0
+            ? $"已删除 {deletedIds.Count} 个资料表"
+            : $"成功删除 {deletedIds.Count} 个，失败 {failedItems.Count} 个";
+        return new BatchDeleteProjectDocumentsResult(
+            failedItems.Count == 0,
+            deletedIds,
+            failedItems,
+            message);
     }
 
     public GeneratedFormBackupResult BackupGeneratedForm(string nodeId)
@@ -514,6 +569,135 @@ public sealed class GeneratedFormService
         }
 
         return "";
+    }
+
+    private DeleteGeneratedFormResult DeleteProjectDocumentCore(string documentId, string? projectId, string? unitProjectId)
+    {
+        var document = _repository.GetProjectDocument(documentId);
+        if (document is not null)
+        {
+            EnsureProjectDocumentAccess(document, projectId, unitProjectId);
+            var parentId = BuildProjectDocumentParentId(document);
+            var generatedFilePath = _repository.ResolveStoredPath(document.FilePath);
+            try
+            {
+                var fileDeleted = DeleteGeneratedFile(generatedFilePath);
+                var projectDocumentDeleted = _repository.DeleteProjectDocument(documentId);
+                return new DeleteGeneratedFormResult(
+                    projectDocumentDeleted,
+                    documentId,
+                    documentId,
+                    parentId,
+                    projectDocumentDeleted ? "资料表已删除。" : "资料表记录不存在。",
+                    document.DocumentName,
+                    generatedFilePath,
+                    fileDeleted,
+                    projectDocumentDeleted,
+                    false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return new DeleteGeneratedFormResult(
+                    false,
+                    documentId,
+                    documentId,
+                    parentId,
+                    ex.Message,
+                    document.DocumentName,
+                    generatedFilePath);
+            }
+        }
+
+        var legacyNode = _repository.GetNode(documentId);
+        if (legacyNode is null)
+        {
+            return new DeleteGeneratedFormResult(false, documentId, documentId, null, "资料表节点不存在。");
+        }
+
+        EnsureLegacyNodeAccess(legacyNode, projectId);
+        if (legacyNode.NodeType != "document")
+        {
+            return new DeleteGeneratedFormResult(false, documentId, documentId, legacyNode.ParentId, "当前节点不是已创建的资料表。");
+        }
+
+        var legacyFilePath = ResolveLegacyGeneratedFilePath(legacyNode);
+        try
+        {
+            var fileDeleted = DeleteGeneratedFile(legacyFilePath);
+            var legacyNodeDeleted = _repository.DeleteGeneratedForm(documentId);
+            return new DeleteGeneratedFormResult(
+                legacyNodeDeleted,
+                documentId,
+                documentId,
+                legacyNode.ParentId,
+                legacyNodeDeleted ? "资料表已删除。" : "资料表节点不存在。",
+                legacyNode.FormName ?? legacyNode.Name,
+                legacyFilePath,
+                fileDeleted,
+                false,
+                legacyNodeDeleted);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new DeleteGeneratedFormResult(
+                false,
+                documentId,
+                documentId,
+                legacyNode.ParentId,
+                ex.Message,
+                legacyNode.FormName ?? legacyNode.Name,
+                legacyFilePath);
+        }
+    }
+
+    private static bool DeleteGeneratedFile(string? generatedFilePath)
+    {
+        if (string.IsNullOrWhiteSpace(generatedFilePath) || !File.Exists(generatedFilePath))
+        {
+            return false;
+        }
+
+        File.Delete(generatedFilePath);
+        return true;
+    }
+
+    private static void EnsureProjectDocumentAccess(ProjectDocumentInfo document, string? projectId, string? unitProjectId)
+    {
+        if (!string.IsNullOrWhiteSpace(projectId) &&
+            !string.Equals(document.ProjectId, projectId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("资料表不属于当前工程。");
+        }
+
+        if (!string.IsNullOrWhiteSpace(unitProjectId) &&
+            !string.Equals(document.UnitProjectId, unitProjectId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("资料表不属于当前单位工程。");
+        }
+    }
+
+    private static void EnsureLegacyNodeAccess(TemplateTreeNodeDto node, string? projectId)
+    {
+        if (!string.IsNullOrWhiteSpace(projectId) &&
+            !string.Equals(node.ProjectId, projectId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("资料表不属于当前工程。");
+        }
+    }
+
+    private static string BuildProjectDocumentParentId(ProjectDocumentInfo document)
+    {
+        return $"module:{document.ModuleId}:template:{document.TemplateItemId}";
+    }
+
+    private string? ResolveLegacyGeneratedFilePath(TemplateTreeNodeDto? legacyNode)
+    {
+        if (legacyNode is null || string.IsNullOrWhiteSpace(legacyNode.GeneratedFilePath))
+        {
+            return null;
+        }
+
+        return _repository.ResolveStoredPath(legacyNode.GeneratedFilePath);
     }
 
     private static string ResolveUniquePath(string directory, string fileName)

@@ -258,6 +258,10 @@
 
       <div id="templateLegacyHost" class="hidden">
       <div class="templateWorkbenchToolbar">
+        <button id="toggleTemplateBulkMode">批量管理</button>
+        <button id="deleteSelectedDocuments" class="danger hidden" disabled>批量删除</button>
+        <button id="cancelTemplateBulkMode" class="hidden">取消批量</button>
+        <span id="templateBulkSummary" class="templateBulkSummary hidden">已选择 0 个资料表</span>
         <button id="newGeneratedForm" class="primary" disabled>新建资料</button>
         <button id="saveSpreadsheet" disabled>保存</button>
         <button id="exportSpreadsheet" disabled>导出</button>
@@ -298,6 +302,12 @@
         </section>
       </div>
       <pre id="templateResult" class="resultBox"></pre>
+      <div id="templateTreeContextMenu" class="templateTreeContextMenu hidden">
+        <button type="button" data-tree-context-action="open">打开</button>
+        <button type="button" data-tree-context-action="rename" disabled>重命名</button>
+        <button type="button" data-tree-context-action="delete" class="danger">删除</button>
+        <button type="button" data-tree-context-action="reveal">定位文件</button>
+      </div>
       </div>
     </section>
 

@@ -738,6 +738,45 @@ app.MapPost("/api/files/open", (OpenSpreadsheetRequest request, SpreadsheetOpenS
     }
 });
 
+app.MapPost("/api/files/reveal", (OpenSpreadsheetRequest request) =>
+{
+    try
+    {
+        if (string.IsNullOrWhiteSpace(request.FilePath))
+        {
+            throw new InvalidOperationException("文件路径不能为空。");
+        }
+
+        var filePath = Path.GetFullPath(request.FilePath);
+        if (!File.Exists(filePath))
+        {
+            throw new FileNotFoundException($"文件不存在：{filePath}", filePath);
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "explorer.exe",
+            Arguments = $"/select,\"{filePath}\"",
+            UseShellExecute = true
+        });
+
+        return Results.Ok(new
+        {
+            success = true,
+            path = filePath,
+            message = "已定位资料表文件。"
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
 app.MapPost("/api/files/open-url", (OpenUrlRequest request) =>
 {
     try
@@ -1033,6 +1072,22 @@ app.MapGet("/api/generated-forms/{nodeId}", (string nodeId, GeneratedFormService
     }
 });
 
+app.MapGet("/api/project-documents/{documentId}", (string documentId, string? projectId, string? unitProjectId, GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetProjectDocument(documentId, projectId, unitProjectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
 app.MapPost("/api/generated-forms", (CreateGeneratedFormRequest request, GeneratedFormService service) =>
 {
     try
@@ -1054,6 +1109,26 @@ app.MapPost("/api/generated-forms", (CreateGeneratedFormRequest request, Generat
             });
         }
 
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/project-documents/batch-delete", (
+    BatchDeleteProjectDocumentsRequest request,
+    string? projectId,
+    string? unitProjectId,
+    GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.BatchDeleteProjectDocuments(request, projectId, unitProjectId));
+    }
+    catch (Exception ex)
+    {
         return Results.BadRequest(new
         {
             success = false,
@@ -1088,6 +1163,34 @@ app.MapPost("/api/generated-forms/{nodeId}/open", (
     }
 });
 
+app.MapPost("/api/project-documents/{documentId}/open", (
+    string documentId,
+    string? projectId,
+    string? unitProjectId,
+    GeneratedFormService formService,
+    SpreadsheetOpenService openService) =>
+{
+    try
+    {
+        var form = formService.GetProjectDocument(documentId, projectId, unitProjectId);
+        openService.OpenSpreadsheet(form.GeneratedFilePath);
+        return Results.Ok(new
+        {
+            success = true,
+            path = form.GeneratedFilePath,
+            message = "已打开资料表。"
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
 app.MapPost("/api/generated-forms/{nodeId}/backups", (string nodeId, GeneratedFormService service) =>
 {
     try
@@ -1104,11 +1207,43 @@ app.MapPost("/api/generated-forms/{nodeId}/backups", (string nodeId, GeneratedFo
     }
 });
 
+app.MapPost("/api/project-documents/{documentId}/backups", (string documentId, GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.BackupGeneratedForm(documentId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
 app.MapDelete("/api/generated-forms/{nodeId}", (string nodeId, GeneratedFormService service) =>
 {
     try
     {
         return Results.Ok(service.DeleteGeneratedForm(nodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = ex.Message
+        });
+    }
+});
+
+app.MapDelete("/api/project-documents/{documentId}", (string documentId, string? projectId, string? unitProjectId, GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.DeleteProjectDocument(documentId, projectId, unitProjectId));
     }
     catch (Exception ex)
     {

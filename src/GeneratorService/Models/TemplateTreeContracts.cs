@@ -18,7 +18,13 @@ public sealed record TemplateTreeNodeDto(
     string? Year,
     long? TemplateItemId,
     int SortOrder,
-    IReadOnlyList<TemplateTreeNodeDto> Children);
+    IReadOnlyList<TemplateTreeNodeDto> Children,
+    string? TemplateNodeId = null,
+    string? DocumentId = null,
+    string? TemplateName = null,
+    string? FormName = null,
+    DateTimeOffset? CreatedAt = null,
+    DateTimeOffset? UpdatedAt = null);
 
 public sealed record TemplateTreeResult(
     bool Success,
@@ -41,7 +47,11 @@ public sealed record GeneratedFormInfo(
     string Name,
     string TemplateCode,
     string GeneratedFilePath,
-    bool CanEdit);
+    bool CanEdit,
+    string? TemplateNodeId = null,
+    string? DocumentId = null,
+    string? TemplateName = null,
+    string? FormName = null);
 
 public sealed record GeneratedFormCreateResult(
     bool Success,
@@ -55,6 +65,27 @@ public sealed record GeneratedFormCreateResult(
 public sealed record DeleteGeneratedFormResult(
     bool Success,
     string Id,
+    string? DocumentId,
+    string? ParentId,
+    string Message,
+    string? FormName = null,
+    string? GeneratedFilePath = null,
+    bool FileDeleted = false,
+    bool ProjectDocumentDeleted = false,
+    bool LegacyNodeDeleted = false);
+
+public sealed record BatchDeleteProjectDocumentsRequest(
+    IReadOnlyList<string>? DocumentIds);
+
+public sealed record BatchDeleteProjectDocumentsFailedItem(
+    string DocumentId,
+    string Reason,
+    string? FormName = null);
+
+public sealed record BatchDeleteProjectDocumentsResult(
+    bool Success,
+    IReadOnlyList<string> DeletedIds,
+    IReadOnlyList<BatchDeleteProjectDocumentsFailedItem> FailedItems,
     string Message);
 
 public sealed record GeneratedFormBackupResult(

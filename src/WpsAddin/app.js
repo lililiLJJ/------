@@ -38,6 +38,19 @@ const materialLedgerWindowState = {
   dragOffsetX: 0,
   dragOffsetY: 0
 };
+const templateManagementWindowState = {
+  maximized: false,
+  minimized: false,
+  restore: null,
+  dragging: false,
+  resizing: false,
+  resizeDirection: "",
+  dragOffsetX: 0,
+  dragOffsetY: 0,
+  resizeStartX: 0,
+  resizeStartY: 0,
+  resizeRect: null
+};
 let serviceAvailable = false;
 let lastExternalTabVersion = "";
 let templateManagementWindowRef = null;
@@ -5279,8 +5292,20 @@ function isTemplateManagementStandaloneWindow() {
     || window.location.hash.replace("#", "") === templateManagementWindowHash;
 }
 
+function isTemplateManagementFallbackActive() {
+  const dialog = $("#templateManagementDialog");
+  const resumeChip = $("#templateManagementResumeChip");
+  const body = $("#templateManagementWindowBody");
+  const host = $("#templateLegacyHost");
+  return !!(
+    (dialog && !dialog.classList.contains("hidden")) ||
+    (resumeChip && !resumeChip.classList.contains("hidden")) ||
+    (body && host && body.contains(host))
+  );
+}
+
 function shouldLoadTemplateManagementWorkspace() {
-  return isTemplateManagementStandaloneWindow();
+  return isTemplateManagementStandaloneWindow() || isTemplateManagementFallbackActive();
 }
 
 async function bootTemplateManagementStandaloneWindow() {
@@ -5503,10 +5528,320 @@ function focusTemplateManagementCenter() {
   return hasActiveTemplateManagementCenter();
 }
 
+function updateTemplateManagementWindowButtons() {
+  $("#templateManagementMaximize")?.classList.toggle("hidden", templateManagementWindowState.maximized);
+  $("#templateManagementRestore")?.classList.toggle("hidden", !templateManagementWindowState.maximized);
+}
+
+function getTemplateManagementWindowElement() {
+  return $("#templateManagementWindow");
+}
+
+function resetTemplateManagementWindowPosition() {
+  const windowElement = getTemplateManagementWindowElement();
+  if (!windowElement) {
+    return;
+  }
+
+  const width = Math.min(window.innerWidth - 32, 1480);
+  const height = Math.min(window.innerHeight - 32, 900);
+  windowElement.style.left = `${Math.max(16, Math.round((window.innerWidth - width) / 2))}px`;
+  windowElement.style.top = `${Math.max(16, Math.round((window.innerHeight - height) / 2))}px`;
+  windowElement.style.width = `${Math.max(960, width)}px`;
+  windowElement.style.height = `${Math.max(620, height)}px`;
+  templateManagementWindowState.maximized = false;
+  templateManagementWindowState.restore = null;
+  updateTemplateManagementWindowButtons();
+}
+
+function mountTemplateManagementLegacyHost() {
+  const host = $("#templateLegacyHost");
+  const body = $("#templateManagementWindowBody");
+  if (!host || !body || body.contains(host)) {
+    return;
+  }
+
+  host.classList.remove("hidden");
+  body.appendChild(host);
+}
+
+function restoreTemplateManagementLegacyHost() {
+  const host = $("#templateLegacyHost");
+  const templatesPanel = $("#templates");
+  if (!host || !templatesPanel) {
+    return;
+  }
+
+  const anchor = $("#templateResult");
+  if (anchor && anchor.parentElement === host) {
+    templatesPanel.appendChild(host);
+  } else {
+    templatesPanel.appendChild(host);
+  }
+  host.classList.add("hidden");
+}
+
+async function ensureTemplateManagementFallbackWorkspaceLoaded() {
+  mountTemplateManagementLegacyHost();
+  if (!serviceAvailable) {
+    await refreshStatus();
+  }
+
+  if (!serviceAvailable) {
+    throw new Error("本地服务未启动，无法打开模板管理中心。");
+  }
+
+  await loadTemplateLibraryTree().catch((error) => {
+    showResult("#templateResult", error);
+    throw error;
+  });
+}
+
+function focusTemplateManagementFallbackWindow() {
+  const windowElement = getTemplateManagementWindowElement();
+  if (!windowElement) {
+    return;
+  }
+
+  windowElement.scrollIntoView({ block: "nearest" });
+  $("#templateManagementCloseTop")?.focus();
+}
+
+function minimizeTemplateManagementFallbackWindow() {
+  const dialog = $("#templateManagementDialog");
+  const resumeChip = $("#templateManagementResumeChip");
+  if (!dialog || !resumeChip) {
+    return;
+  }
+
+  dialog.classList.add("hidden");
+  resumeChip.classList.remove("hidden");
+  templateManagementWindowState.minimized = true;
+}
+
+function resumeTemplateManagementFallbackWindow() {
+  const dialog = $("#templateManagementDialog");
+  const resumeChip = $("#templateManagementResumeChip");
+  if (!dialog || !resumeChip) {
+    return;
+  }
+
+  dialog.classList.remove("hidden");
+  resumeChip.classList.add("hidden");
+  templateManagementWindowState.minimized = false;
+  focusTemplateManagementFallbackWindow();
+}
+
+function closeTemplateManagementFallbackWindow() {
+  const dialog = $("#templateManagementDialog");
+  const resumeChip = $("#templateManagementResumeChip");
+  if (!dialog || !resumeChip) {
+    return;
+  }
+
+  dialog.classList.add("hidden");
+  resumeChip.classList.add("hidden");
+  templateManagementWindowState.minimized = false;
+  templateManagementWindowState.maximized = false;
+  templateManagementWindowState.restore = null;
+  restoreTemplateManagementLegacyHost();
+  updateTemplateManagementWindowButtons();
+}
+
+function requestCloseTemplateManagementFallbackWindow() {
+  if (!isTemplateManagementFallbackActive()) {
+    return;
+  }
+
+  closeTemplateManagementFallbackWindow();
+}
+
+async function openTemplateManagementFallbackWindow() {
+  const dialog = $("#templateManagementDialog");
+  const resumeChip = $("#templateManagementResumeChip");
+  if (!dialog || !resumeChip) {
+    throw new Error("模板管理回退窗体容器未找到。");
+  }
+
+  mountTemplateManagementLegacyHost();
+  if (!templateManagementWindowState.restore && !templateManagementWindowState.maximized && dialog.classList.contains("hidden")) {
+    resetTemplateManagementWindowPosition();
+  }
+  dialog.classList.remove("hidden");
+  resumeChip.classList.add("hidden");
+  templateManagementWindowState.minimized = false;
+  focusTemplateManagementFallbackWindow();
+  try {
+    await ensureTemplateManagementFallbackWorkspaceLoaded();
+  } catch (error) {
+    closeTemplateManagementFallbackWindow();
+    throw error;
+  }
+}
+
+function maximizeTemplateManagementFallbackWindow() {
+  const windowElement = getTemplateManagementWindowElement();
+  if (!windowElement || templateManagementWindowState.maximized) {
+    return;
+  }
+
+  templateManagementWindowState.restore = {
+    left: windowElement.style.left,
+    top: windowElement.style.top,
+    width: windowElement.style.width,
+    height: windowElement.style.height
+  };
+  templateManagementWindowState.maximized = true;
+  windowElement.style.left = "8px";
+  windowElement.style.top = "8px";
+  windowElement.style.width = "calc(100vw - 16px)";
+  windowElement.style.height = "calc(100vh - 16px)";
+  updateTemplateManagementWindowButtons();
+}
+
+function restoreTemplateManagementFallbackWindow() {
+  const windowElement = getTemplateManagementWindowElement();
+  const restore = templateManagementWindowState.restore;
+  if (!windowElement || !restore) {
+    return;
+  }
+
+  templateManagementWindowState.maximized = false;
+  windowElement.style.left = restore.left;
+  windowElement.style.top = restore.top;
+  windowElement.style.width = restore.width;
+  windowElement.style.height = restore.height;
+  templateManagementWindowState.restore = null;
+  updateTemplateManagementWindowButtons();
+}
+
+function beginTemplateManagementFallbackDrag(event) {
+  if (event.button !== 0 || templateManagementWindowState.maximized || event.target.closest("button")) {
+    return;
+  }
+
+  const windowElement = getTemplateManagementWindowElement();
+  if (!windowElement) {
+    return;
+  }
+
+  const rect = windowElement.getBoundingClientRect();
+  templateManagementWindowState.dragging = true;
+  templateManagementWindowState.dragOffsetX = event.clientX - rect.left;
+  templateManagementWindowState.dragOffsetY = event.clientY - rect.top;
+  document.body.classList.add("templateManagementDragging");
+  event.preventDefault();
+}
+
+function moveTemplateManagementFallbackWindow(event) {
+  const windowElement = getTemplateManagementWindowElement();
+  if (!windowElement) {
+    return;
+  }
+
+  if (templateManagementWindowState.dragging) {
+    const rect = windowElement.getBoundingClientRect();
+    const left = Math.min(window.innerWidth - 120, Math.max(0, event.clientX - templateManagementWindowState.dragOffsetX));
+    const top = Math.min(window.innerHeight - 72, Math.max(0, event.clientY - templateManagementWindowState.dragOffsetY));
+    windowElement.style.left = `${left}px`;
+    windowElement.style.top = `${top}px`;
+    windowElement.style.width = `${rect.width}px`;
+    windowElement.style.height = `${rect.height}px`;
+    return;
+  }
+
+  if (!templateManagementWindowState.resizing || templateManagementWindowState.maximized) {
+    return;
+  }
+
+  const direction = templateManagementWindowState.resizeDirection;
+  const rect = templateManagementWindowState.resizeRect;
+  if (!direction || !rect) {
+    return;
+  }
+
+  const minWidth = 960;
+  const minHeight = 620;
+  const deltaX = event.clientX - templateManagementWindowState.resizeStartX;
+  const deltaY = event.clientY - templateManagementWindowState.resizeStartY;
+  let left = rect.left;
+  let top = rect.top;
+  let width = rect.width;
+  let height = rect.height;
+
+  if (direction.includes("e")) {
+    width = Math.max(minWidth, rect.width + deltaX);
+  }
+  if (direction.includes("s")) {
+    height = Math.max(minHeight, rect.height + deltaY);
+  }
+  if (direction.includes("w")) {
+    width = Math.max(minWidth, rect.width - deltaX);
+    left = rect.right - width;
+  }
+  if (direction.includes("n")) {
+    height = Math.max(minHeight, rect.height - deltaY);
+    top = rect.bottom - height;
+  }
+
+  windowElement.style.left = `${Math.max(0, left)}px`;
+  windowElement.style.top = `${Math.max(0, top)}px`;
+  windowElement.style.width = `${Math.min(window.innerWidth - 16, width)}px`;
+  windowElement.style.height = `${Math.min(window.innerHeight - 16, height)}px`;
+}
+
+function endTemplateManagementFallbackPointer() {
+  if (templateManagementWindowState.dragging) {
+    templateManagementWindowState.dragging = false;
+    document.body.classList.remove("templateManagementDragging");
+  }
+
+  if (templateManagementWindowState.resizing) {
+    templateManagementWindowState.resizing = false;
+    templateManagementWindowState.resizeDirection = "";
+    templateManagementWindowState.resizeRect = null;
+    document.body.classList.remove("templateManagementResizing");
+  }
+}
+
+function beginTemplateManagementFallbackResize(event) {
+  if (event.button !== 0 || templateManagementWindowState.maximized) {
+    return;
+  }
+
+  const handle = event.target.closest("[data-template-management-resize]");
+  const windowElement = getTemplateManagementWindowElement();
+  if (!handle || !windowElement) {
+    return;
+  }
+
+  const rect = windowElement.getBoundingClientRect();
+  templateManagementWindowState.resizing = true;
+  templateManagementWindowState.resizeDirection = handle.dataset.templateManagementResize || "";
+  templateManagementWindowState.resizeStartX = event.clientX;
+  templateManagementWindowState.resizeStartY = event.clientY;
+  templateManagementWindowState.resizeRect = {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height
+  };
+  document.body.classList.add("templateManagementResizing");
+  event.preventDefault();
+}
+
 async function openTemplateManagementCenter() {
   if (isTemplateManagementStandaloneWindow()) {
     publishTemplateManagementWindowState();
     focusTemplateManagementCenter();
+    return;
+  }
+
+  if (isTemplateManagementFallbackActive()) {
+    resumeTemplateManagementFallbackWindow();
+    showResult("#templateResult", "已恢复页面内模板管理中心。");
     return;
   }
 
@@ -5550,7 +5885,8 @@ async function openTemplateManagementCenter() {
     return;
   }
 
-  showResult("#templateResult", "当前 WPS 环境暂时无法打开独立模板管理中心。页面内回退窗体将在下一阶段接入。");
+  await openTemplateManagementFallbackWindow();
+  showResult("#templateResult", "当前 WPS 环境阻止了独立窗口，已切换为页面内模板管理中心。");
 }
 
 function bindTemplateManagementWindowSync() {
@@ -5803,8 +6139,18 @@ async function boot() {
   $("#materialLedgerQuickFilter").addEventListener("input", renderMaterialLedgerGrid);
   $("#materialLedgerClearFilters").addEventListener("click", clearMaterialLedgerFilters);
   $("#materialLedgerDragHandle").addEventListener("mousedown", beginMaterialLedgerDrag);
+  $("#templateManagementClose").addEventListener("click", requestCloseTemplateManagementFallbackWindow);
+  $("#templateManagementCloseTop").addEventListener("click", requestCloseTemplateManagementFallbackWindow);
+  $("#templateManagementMinimize").addEventListener("click", minimizeTemplateManagementFallbackWindow);
+  $("#templateManagementResumeChip").addEventListener("click", resumeTemplateManagementFallbackWindow);
+  $("#templateManagementMaximize").addEventListener("click", maximizeTemplateManagementFallbackWindow);
+  $("#templateManagementRestore").addEventListener("click", restoreTemplateManagementFallbackWindow);
+  $("#templateManagementDragHandle").addEventListener("mousedown", beginTemplateManagementFallbackDrag);
+  $("#templateManagementWindow").addEventListener("mousedown", beginTemplateManagementFallbackResize);
   document.addEventListener("mousemove", moveMaterialLedgerWindow);
+  document.addEventListener("mousemove", moveTemplateManagementFallbackWindow);
   document.addEventListener("mouseup", endMaterialLedgerDrag);
+  document.addEventListener("mouseup", endTemplateManagementFallbackPointer);
   $("#materialLedgerHead").addEventListener("click", (event) => {
     const button = event.target.closest("[data-ledger-filter]");
     if (!button) {

@@ -301,6 +301,34 @@
       </div>
     </section>
 
+    <div id="templateManagementDialog" class="templateManagementDialog hidden" role="dialog" aria-modal="true" aria-labelledby="templateManagementDialogTitle">
+      <div id="templateManagementWindow" class="templateManagementWindow">
+        <div id="templateManagementDragHandle" class="templateManagementHeader">
+          <div>
+            <h2 id="templateManagementDialogTitle">模板管理中心</h2>
+            <p>回退模式下仍可继续使用模板库、模板适配、字段映射和模板测试。</p>
+          </div>
+          <div class="templateManagementWindowControls">
+            <button id="templateManagementMinimize" type="button" title="最小化">_</button>
+            <button id="templateManagementMaximize" type="button" title="最大化">□</button>
+            <button id="templateManagementRestore" type="button" class="hidden" title="还原">▣</button>
+            <button id="templateManagementCloseTop" type="button" title="关闭">×</button>
+          </div>
+        </div>
+        <div class="templateManagementWindowBody" id="templateManagementWindowBody"></div>
+        <button id="templateManagementClose" type="button" class="templateManagementFooterButton">关闭</button>
+        <span class="templateManagementResizeHandle north" data-template-management-resize="n"></span>
+        <span class="templateManagementResizeHandle east" data-template-management-resize="e"></span>
+        <span class="templateManagementResizeHandle south" data-template-management-resize="s"></span>
+        <span class="templateManagementResizeHandle west" data-template-management-resize="w"></span>
+        <span class="templateManagementResizeHandle northEast" data-template-management-resize="ne"></span>
+        <span class="templateManagementResizeHandle northWest" data-template-management-resize="nw"></span>
+        <span class="templateManagementResizeHandle southEast" data-template-management-resize="se"></span>
+        <span class="templateManagementResizeHandle southWest" data-template-management-resize="sw"></span>
+      </div>
+    </div>
+    <button id="templateManagementResumeChip" type="button" class="templateManagementResumeChip hidden">恢复模板管理中心</button>
+
     <section id="materials" class="tabPanel">
       <div class="sectionHeader">
         <div>

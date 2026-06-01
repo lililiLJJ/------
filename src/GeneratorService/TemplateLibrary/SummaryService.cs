@@ -2,10 +2,7 @@ using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using GeneratorService.Models;
-using GeneratorService.Modules;
 using GeneratorService.Projects;
-using Microsoft.Data.Sqlite;
-using Serilog;
 
 namespace GeneratorService.TemplateLibrary;
 
@@ -17,26 +14,23 @@ public sealed class SummaryService
     private const string ConstructorResult = "符合要求";
     private const string SupervisorConclusion = "验收合格";
 
-    private static readonly Regex CategoryNodeRegex = new(
-        @"^module:(?<moduleId>.+):category:(?<categoryId>\d+)$",
+    private static readonly Regex SummaryNodeRegex = new(
+        @"^summary:(?<summaryType>Division|SubDivision|SubItem):(?<moduleId>.+?):(?<categoryId>.+)$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private readonly DirectoryInfo _rootPath;
     private readonly TemplateTreeRepository _repository;
-    private readonly ModuleManager _moduleManager;
     private readonly ProjectManager _projectManager;
     private readonly UnitProjectService _unitProjectService;
 
     public SummaryService(
         DirectoryInfo rootPath,
         TemplateTreeRepository repository,
-        ModuleManager moduleManager,
         ProjectManager projectManager,
         UnitProjectService unitProjectService)
     {
         _rootPath = rootPath;
         _repository = repository;
-        _moduleManager = moduleManager;
         _projectManager = projectManager;
         _unitProjectService = unitProjectService;
     }
@@ -46,12 +40,13 @@ public sealed class SummaryService
         var project = _projectManager.ResolveProject(projectId);
         var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, unitProjectId);
         var warnings = new List<string>();
-        var documents = LoadDocuments(project.ProjectId, unitProject.Id, warnings);
+        var documents = LoadInspectionBatchDocuments(project.ProjectId, unitProject.Id, warnings);
         var nodes = BuildTree(documents);
+
         return new SummaryTreeResult(
             true,
             project.ProjectId,
-            _repository.GetProjectName(project.ProjectId),
+            project.ProjectName,
             unitProject.Id,
             unitProject.UnitProjectName,
             nodes,
@@ -63,47 +58,24 @@ public sealed class SummaryService
         var project = _projectManager.ResolveProject(projectId);
         var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, unitProjectId);
         var summaryType = NormalizeSummaryType(type);
-        var target = ParseCategoryNodeId(categoryId);
+        var target = ParseSummaryNodeId(categoryId, summaryType);
         var warnings = new List<string>();
-        var documents = LoadDocuments(project.ProjectId, unitProject.Id, warnings)
-            .Where(item => MatchesCategory(item.Path, summaryType, target.ModuleId, target.CategoryId))
+        var documents = LoadInspectionBatchDocuments(project.ProjectId, unitProject.Id, warnings)
+            .Where(item => MatchesCategory(item, target))
             .ToArray();
-
-        foreach (var item in documents)
-        {
-            if (string.IsNullOrWhiteSpace(item.Document.Capacity))
-            {
-                warnings.Add($"资料“{item.Document.DocumentName}”缺少检验批容量，预览中按空值显示。");
-            }
-
-            if (string.IsNullOrWhiteSpace(item.Document.PartName))
-            {
-                warnings.Add($"资料“{item.Document.DocumentName}”缺少检验批部位，预览中按空值显示。");
-            }
-        }
-
         var rows = BuildPreviewRows(summaryType, documents);
-        var first = documents.FirstOrDefault()?.Path;
-        var title = first is null
-            ? summaryType
-            : summaryType switch
-            {
-                SubItem => $"{first.SubItemName}分项工程质量验收记录",
-                SubDivision => $"{first.SubDivisionName}子分部工程质量验收记录",
-                Division => $"{first.DivisionName}分部工程质量验收记录",
-                _ => summaryType
-            };
+        var title = BuildTitle(summaryType, documents);
 
         return new SummaryPreviewResult(
             true,
             project.ProjectId,
             unitProject.Id,
             summaryType,
-            categoryId,
+            target.RawId,
             title,
-            first?.DivisionName ?? "",
-            summaryType == Division ? "" : first?.SubDivisionName ?? "",
-            summaryType == SubItem ? first?.SubItemName ?? "" : "",
+            documents.FirstOrDefault()?.Context.DivisionName ?? "",
+            summaryType == Division ? "" : documents.FirstOrDefault()?.Context.SubDivisionName ?? "",
+            summaryType == SubItem ? documents.FirstOrDefault()?.Context.SubItemName ?? "" : "",
             rows,
             BuildTotals(documents),
             warnings);
@@ -117,261 +89,153 @@ public sealed class SummaryService
             throw new InvalidOperationException("当前汇总对象没有可生成的有效资料。");
         }
 
-        var templatePath = ResolveSummaryTemplate(preview.SummaryType);
         var project = _projectManager.ResolveProject(preview.ProjectId);
         var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, preview.UnitProjectId);
         var outputDirectory = Path.Combine(project.GeneratedFormsPath, "Summary", SanitizePathSegment(unitProject.UnitProjectName), preview.SummaryType);
         Directory.CreateDirectory(outputDirectory);
 
+        var templatePath = ResolveSummaryTemplate(preview.SummaryType);
         var outputName = SanitizeFileName($"{preview.Title}-{DateTime.Now:yyyyMMddHHmmss}.xlsx");
         var outputPath = ResolveUniquePath(outputDirectory, outputName);
         File.Copy(templatePath, outputPath);
         FillWorkbook(outputPath, project.ProjectName, preview);
 
-        var target = ParseCategoryNodeId(preview.CategoryId);
-        var summaryDocument = _repository.InsertSummaryDocument(
+        var sourceDocuments = LoadInspectionBatchDocuments(preview.ProjectId, preview.UnitProjectId, [])
+            .Where(item => MatchesCategory(item, ParseSummaryNodeId(preview.CategoryId, preview.SummaryType)))
+            .ToArray();
+        var now = DateTimeOffset.Now;
+        var document = new GeneratedDocumentIndexInfo(
+            $"generated-document:{Guid.NewGuid():N}",
             preview.ProjectId,
             preview.UnitProjectId,
-            target.ModuleId,
-            preview.SummaryType,
-            preview.DivisionName,
-            preview.SubDivisionName,
-            preview.SubItemName,
+            "Summary",
             preview.Title,
-            outputPath,
+            "SummaryData",
+            preview.CategoryId,
+            $"summary:{preview.SummaryType}:{preview.CategoryId}",
+            _repository.ToStoredPath(outputPath),
+            "Active",
+            "Normal",
+            "",
+            now,
+            now,
+            now,
+            null,
+            null,
+            null);
+        _repository.InsertGeneratedDocument(document);
+        _repository.UpsertSummaryDetail(
+            document.DocumentId,
+            preview.SummaryType,
+            preview.CategoryId,
+            sourceDocuments.Select(item => item.Document.DocumentId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
             preview.Totals.SourceDocumentCount);
 
         return new GenerateSummaryResult(
             true,
-            summaryDocument,
+            document,
             outputPath,
             "汇总表已生成。",
             preview.Warnings);
     }
 
-    private IReadOnlyList<SummarySourceDocument> LoadDocuments(string projectId, string unitProjectId, List<string> warnings)
+    private IReadOnlyList<InspectionBatchSummarySource> LoadInspectionBatchDocuments(string projectId, string unitProjectId, List<string> warnings)
     {
-        var documents = _repository.ListProjectDocuments(projectId, unitProjectId)
-            .Where(document =>
-                !string.Equals(document.Status, "Deleted", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(document.Status, "Invalid", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(document => document.CreatedAt)
-            .ThenBy(document => document.DocumentName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        var result = new List<SummarySourceDocument>();
-        foreach (var moduleGroup in documents.GroupBy(document => document.ModuleId))
+        var contexts = _repository.LoadTemplateNodeContexts(projectId, unitProjectId);
+        var documents = _repository.ListGeneratedDocuments(projectId, unitProjectId, "InspectionBatch", "Active");
+        var results = new List<InspectionBatchSummarySource>();
+        foreach (var document in documents)
         {
-            var module = _moduleManager.FindModule(moduleGroup.Key);
-            if (module is not { IsValid: true, RulesDbPath: not null })
+            var detail = _repository.GetInspectionBatchDetail(document.DocumentId);
+            if (detail is null)
             {
-                foreach (var document in moduleGroup)
-                {
-                    WarnSkip(warnings, document, $"模块“{document.ModuleId}”不可用，无法反查分部分项层级。");
-                }
-
+                warnings.Add($"资料“{document.DocumentName}”缺少检验批详情，已跳过。");
                 continue;
             }
 
-            var paths = LoadCategoryPaths(module.RulesDbPath, module.Manifest!.ModuleId);
-            foreach (var document in moduleGroup)
+            if (!contexts.TryGetValue(detail.TemplateNodeId, out var context))
             {
-                if (!paths.TryGetValue(document.TemplateItemId, out var path))
-                {
-                    WarnSkip(warnings, document, "无法通过 TemplateItemId 反查完整分部、子分部、分项层级。");
-                    continue;
-                }
-
-                result.Add(new SummarySourceDocument(document, path));
+                warnings.Add($"资料“{document.DocumentName}”未找到模板树路径缓存，已跳过。");
+                continue;
             }
+
+            results.Add(new InspectionBatchSummarySource(document, detail, context));
         }
 
-        return result;
+        return results
+            .OrderBy(item => item.Context.DivisionName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Context.SubDivisionName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Context.SubItemName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Detail.InspectionPart, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Document.DocumentName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
-    private static IReadOnlyDictionary<long, SummaryCategoryPath> LoadCategoryPaths(string rulesDbPath, string moduleId)
-    {
-        using var connection = new SqliteConnection($"Data Source={rulesDbPath};Mode=ReadOnly");
-        connection.Open();
-
-        var categories = new List<CategoryInfo>();
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "SELECT Id, ParentId, Name, Level, SortOrder, CategoryType FROM TemplateCategory;";
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                categories.Add(new CategoryInfo(
-                    reader.GetInt64(0),
-                    reader.IsDBNull(1) ? null : reader.GetInt64(1),
-                    reader.GetString(2),
-                    reader.GetInt32(3),
-                    reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
-                    reader.IsDBNull(5) ? "" : reader.GetString(5)));
-            }
-        }
-
-        var categoryById = categories.ToDictionary(category => category.Id);
-        var result = new Dictionary<long, SummaryCategoryPath>();
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "SELECT Id, CategoryId FROM TemplateItem WHERE COALESCE(IsEnabled, 1) <> 0;";
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                var templateItemId = reader.GetInt64(0);
-                var categoryId = reader.GetInt64(1);
-                var chain = BuildCategoryChain(categoryById, categoryId);
-                if (TryResolvePath(moduleId, chain, out var path))
-                {
-                    result[templateItemId] = path;
-                }
-            }
-        }
-
-        return result;
-    }
-
-    private static IReadOnlyList<CategoryInfo> BuildCategoryChain(
-        IReadOnlyDictionary<long, CategoryInfo> categoryById,
-        long categoryId)
-    {
-        var stack = new Stack<CategoryInfo>();
-        var currentId = categoryId;
-        while (categoryById.TryGetValue(currentId, out var current))
-        {
-            stack.Push(current);
-            currentId = current.ParentId ?? 0;
-        }
-
-        return stack.ToArray();
-    }
-
-    private static bool TryResolvePath(
-        string moduleId,
-        IReadOnlyList<CategoryInfo> chain,
-        out SummaryCategoryPath path)
-    {
-        path = default!;
-        if (chain.Count < 3)
-        {
-            return false;
-        }
-
-        var division = FindCategory(chain, category =>
-            category.CategoryType.Contains("分部", StringComparison.Ordinal) &&
-            !category.CategoryType.Contains("子分部", StringComparison.Ordinal), 1) ?? chain[0];
-        var subDivision = FindCategory(chain, category =>
-            category.CategoryType.Contains("子分部", StringComparison.Ordinal), 2) ?? chain.Skip(1).FirstOrDefault();
-        var subItem = FindCategory(chain, category =>
-            category.CategoryType.Contains("分项", StringComparison.Ordinal), 3) ?? chain.Skip(2).FirstOrDefault();
-
-        if (subDivision is null || subItem is null)
-        {
-            return false;
-        }
-
-        path = new SummaryCategoryPath(
-            moduleId,
-            division.Id,
-            division.Name,
-            subDivision.Id,
-            subDivision.Name,
-            subItem.Id,
-            subItem.Name,
-            division.SortOrder,
-            subDivision.SortOrder,
-            subItem.SortOrder);
-        return true;
-    }
-
-    private static CategoryInfo? FindCategory(
-        IReadOnlyList<CategoryInfo> chain,
-        Func<CategoryInfo, bool> typePredicate,
-        int fallbackLevel)
-    {
-        return chain.FirstOrDefault(typePredicate)
-               ?? chain.FirstOrDefault(category => category.Level == fallbackLevel);
-    }
-
-    private static IReadOnlyList<SummaryTreeNodeDto> BuildTree(IReadOnlyList<SummarySourceDocument> documents)
+    private static IReadOnlyList<SummaryTreeNodeDto> BuildTree(IReadOnlyList<InspectionBatchSummarySource> documents)
     {
         return documents
-            .GroupBy(item => new { item.Path.ModuleId, item.Path.DivisionId })
-            .OrderBy(group => group.Min(item => item.Path.DivisionSortOrder))
-            .ThenBy(group => group.First().Path.DivisionName, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(item => new { item.Context.DivisionId, item.Context.DivisionName })
+            .OrderBy(group => group.Key.DivisionName, StringComparer.OrdinalIgnoreCase)
             .Select(divisionGroup =>
             {
-                var firstDivision = divisionGroup.First().Path;
                 var subDivisionNodes = divisionGroup
-                    .GroupBy(item => item.Path.SubDivisionId)
-                    .OrderBy(group => group.Min(item => item.Path.SubDivisionSortOrder))
-                    .ThenBy(group => group.First().Path.SubDivisionName, StringComparer.OrdinalIgnoreCase)
+                    .GroupBy(item => new { item.Context.SubDivisionId, item.Context.SubDivisionName })
+                    .OrderBy(group => group.Key.SubDivisionName, StringComparer.OrdinalIgnoreCase)
                     .Select(subDivisionGroup =>
                     {
-                        var firstSubDivision = subDivisionGroup.First().Path;
                         var subItemNodes = subDivisionGroup
-                            .GroupBy(item => item.Path.SubItemId)
-                            .OrderBy(group => group.Min(item => item.Path.SubItemSortOrder))
-                            .ThenBy(group => group.First().Path.SubItemName, StringComparer.OrdinalIgnoreCase)
-                            .Select(subItemGroup =>
-                            {
-                                var firstSubItem = subItemGroup.First().Path;
-                                return CreateNode(SubItem, firstSubItem, subItemGroup, []);
-                            })
+                            .GroupBy(item => new { item.Context.SubItemId, item.Context.SubItemName })
+                            .OrderBy(group => group.Key.SubItemName, StringComparer.OrdinalIgnoreCase)
+                            .Select(subItemGroup => BuildNode(SubItem, subItemGroup.ToArray()))
                             .ToArray();
-
-                        return CreateNode(SubDivision, firstSubDivision, subDivisionGroup, subItemNodes);
+                        return BuildNode(SubDivision, subDivisionGroup.ToArray(), subItemNodes);
                     })
                     .ToArray();
-
-                return CreateNode(Division, firstDivision, divisionGroup, subDivisionNodes);
+                return BuildNode(Division, divisionGroup.ToArray(), subDivisionNodes);
             })
             .ToArray();
     }
 
-    private static SummaryTreeNodeDto CreateNode(
+    private static SummaryTreeNodeDto BuildNode(
         string summaryType,
-        SummaryCategoryPath path,
-        IEnumerable<SummarySourceDocument> documents,
-        IReadOnlyList<SummaryTreeNodeDto> children)
+        IReadOnlyList<InspectionBatchSummarySource> items,
+        IReadOnlyList<SummaryTreeNodeDto>? children = null)
     {
-        var items = documents.ToArray();
-        var categoryId = CategoryNodeId(path.ModuleId, summaryType switch
+        var first = items[0];
+        var categoryId = summaryType switch
         {
-            Division => path.DivisionId,
-            SubDivision => path.SubDivisionId,
-            SubItem => path.SubItemId,
-            _ => path.SubItemId
-        });
+            Division => first.Context.DivisionId,
+            SubDivision => first.Context.SubDivisionId,
+            _ => first.Context.SubItemId
+        };
         var name = summaryType switch
         {
-            Division => path.DivisionName,
-            SubDivision => path.SubDivisionName,
-            SubItem => path.SubItemName,
-            _ => path.SubItemName
+            Division => first.Context.DivisionName,
+            SubDivision => first.Context.SubDivisionName,
+            _ => first.Context.SubItemName
         };
-
+        var nodeId = $"summary:{summaryType}:{ExtractModuleId(first.Context.TemplateNodeId)}:{categoryId}";
         return new SummaryTreeNodeDto(
-            $"summary:{summaryType}:{categoryId}",
-            items.FirstOrDefault()?.Document.ProjectId ?? "",
-            path.ModuleId,
+            nodeId,
+            first.Document.ProjectId,
+            ExtractModuleId(first.Context.TemplateNodeId),
             categoryId,
             summaryType,
             name,
-            path.DivisionName,
-            path.SubDivisionName,
-            path.SubItemName,
-            items.Length,
-            items.Length,
-            items.Select(item => item.Path.SubItemId).Distinct().Count(),
-            items.Select(item => item.Path.SubDivisionId).Distinct().Count(),
-            children);
+            first.Context.DivisionId,
+            first.Context.DivisionName,
+            first.Context.SubDivisionId,
+            first.Context.SubDivisionName,
+            first.Context.SubItemId,
+            first.Context.SubItemName,
+            items.Select(item => item.Document.DocumentId).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            items.Count,
+            items.Select(item => item.Context.SubItemId).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            items.Select(item => item.Context.SubDivisionId).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            children ?? []);
     }
 
-    private static IReadOnlyList<SummaryPreviewRow> BuildPreviewRows(
-        string summaryType,
-        IReadOnlyList<SummarySourceDocument> documents)
+    private static IReadOnlyList<SummaryPreviewRow> BuildPreviewRows(string summaryType, IReadOnlyList<InspectionBatchSummarySource> documents)
     {
         return summaryType switch
         {
@@ -379,19 +243,18 @@ public sealed class SummaryService
                 .Select((item, index) => new SummaryPreviewRow(
                     index + 1,
                     item.Document.DocumentName,
-                    item.Document.Capacity ?? "",
-                    item.Document.PartName,
+                    item.Detail.CapacitySummary,
+                    item.Detail.InspectionPart,
                     1,
                     ConstructorResult,
                     SupervisorConclusion))
                 .ToArray(),
             SubDivision => documents
-                .GroupBy(item => item.Path.SubItemId)
-                .OrderBy(group => group.Min(item => item.Path.SubItemSortOrder))
-                .ThenBy(group => group.First().Path.SubItemName, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(item => item.Context.SubItemId)
+                .OrderBy(group => group.First().Context.SubItemName, StringComparer.OrdinalIgnoreCase)
                 .Select((group, index) => new SummaryPreviewRow(
                     index + 1,
-                    group.First().Path.SubItemName,
+                    group.First().Context.SubItemName,
                     "",
                     "",
                     group.Count(),
@@ -399,15 +262,14 @@ public sealed class SummaryService
                     SupervisorConclusion))
                 .ToArray(),
             Division => documents
-                .GroupBy(item => item.Path.SubDivisionId)
-                .OrderBy(group => group.Min(item => item.Path.SubDivisionSortOrder))
-                .ThenBy(group => group.First().Path.SubDivisionName, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(item => item.Context.SubDivisionId)
+                .OrderBy(group => group.First().Context.SubDivisionName, StringComparer.OrdinalIgnoreCase)
                 .Select((group, index) => new SummaryPreviewRow(
                     index + 1,
-                    group.First().Path.SubDivisionName,
+                    group.First().Context.SubDivisionName,
                     "",
                     "",
-                    group.Select(item => item.Path.SubItemId).Distinct().Count(),
+                    group.Select(item => item.Context.SubItemId).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
                     ConstructorResult,
                     SupervisorConclusion))
                 .ToArray(),
@@ -415,32 +277,81 @@ public sealed class SummaryService
         };
     }
 
-    private static SummaryPreviewTotals BuildTotals(IReadOnlyList<SummarySourceDocument> documents)
+    private static SummaryPreviewTotals BuildTotals(IReadOnlyList<InspectionBatchSummarySource> documents)
     {
         return new SummaryPreviewTotals(
+            documents.Select(item => item.Document.DocumentId).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
             documents.Count,
-            documents.Count,
-            documents.Select(item => item.Path.SubItemId).Distinct().Count(),
-            documents.Select(item => item.Path.SubDivisionId).Distinct().Count());
+            documents.Select(item => item.Context.SubItemId).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            documents.Select(item => item.Context.SubDivisionId).Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 
-    private static bool MatchesCategory(
-        SummaryCategoryPath path,
-        string summaryType,
-        string moduleId,
-        long categoryId)
+    private static string BuildTitle(string summaryType, IReadOnlyList<InspectionBatchSummarySource> documents)
     {
-        if (!string.Equals(path.ModuleId, moduleId, StringComparison.OrdinalIgnoreCase))
+        var first = documents.FirstOrDefault();
+        if (first is null)
         {
-            return false;
+            return summaryType;
         }
 
         return summaryType switch
         {
-            Division => path.DivisionId == categoryId,
-            SubDivision => path.SubDivisionId == categoryId,
-            SubItem => path.SubItemId == categoryId,
+            SubItem => $"{first.Context.SubItemName}分项工程质量验收记录",
+            SubDivision => $"{first.Context.SubDivisionName}子分部工程质量验收记录",
+            Division => $"{first.Context.DivisionName}分部工程质量验收记录",
+            _ => summaryType
+        };
+    }
+
+    private static bool MatchesCategory(InspectionBatchSummarySource source, SummaryNodeRef target)
+    {
+        if (!string.Equals(ExtractModuleId(source.Context.TemplateNodeId), target.ModuleId, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return target.SummaryType switch
+        {
+            Division => string.Equals(source.Context.DivisionId, target.CategoryId, StringComparison.OrdinalIgnoreCase),
+            SubDivision => string.Equals(source.Context.SubDivisionId, target.CategoryId, StringComparison.OrdinalIgnoreCase),
+            SubItem => string.Equals(source.Context.SubItemId, target.CategoryId, StringComparison.OrdinalIgnoreCase),
             _ => false
+        };
+    }
+
+    private static SummaryNodeRef ParseSummaryNodeId(string categoryId, string summaryType)
+    {
+        if (SummaryNodeRegex.Match(categoryId) is { Success: true } match)
+        {
+            return new SummaryNodeRef(
+                match.Groups["summaryType"].Value,
+                match.Groups["moduleId"].Value,
+                match.Groups["categoryId"].Value,
+                categoryId);
+        }
+
+        var parts = categoryId.Split(':');
+        if (parts.Length >= 3 && string.Equals(parts[0], "module", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SummaryNodeRef(summaryType, parts[1], parts[^1], categoryId);
+        }
+
+        throw new InvalidOperationException($"汇总分类节点无效：{categoryId}");
+    }
+
+    private static string NormalizeSummaryType(string value)
+    {
+        return value.Trim() switch
+        {
+            Division => Division,
+            SubDivision => SubDivision,
+            SubItem => SubItem,
+            var item when item.Equals("division", StringComparison.OrdinalIgnoreCase) => Division,
+            var item when item.Equals("subdivision", StringComparison.OrdinalIgnoreCase) => SubDivision,
+            var item when item.Equals("sub_division", StringComparison.OrdinalIgnoreCase) => SubDivision,
+            var item when item.Equals("subitem", StringComparison.OrdinalIgnoreCase) => SubItem,
+            var item when item.Equals("sub_item", StringComparison.OrdinalIgnoreCase) => SubItem,
+            _ => throw new InvalidOperationException($"未知汇总类型：{value}")
         };
     }
 
@@ -462,7 +373,7 @@ public sealed class SummaryService
 
         return path is not null && File.Exists(path)
             ? path
-            : throw new FileNotFoundException($"未找到 {prefix} 汇总模板，请确认 Templates/Summary 中存在 .xlsx 工作模板。", directory);
+            : throw new FileNotFoundException($"未找到 {prefix} 汇总模板，请确认 Templates/Summary 中存在对应 .xlsx 工作模板。", directory);
     }
 
     private static void FillWorkbook(string filePath, string projectName, SummaryPreviewResult preview)
@@ -533,12 +444,7 @@ public sealed class SummaryService
         }
     }
 
-    private static void EnsureDataRows(
-        WorksheetPart worksheetPart,
-        uint dataStart,
-        uint dataEnd,
-        int requiredRows,
-        int lastColumnIndex)
+    private static void EnsureDataRows(WorksheetPart worksheetPart, uint dataStart, uint dataEnd, int requiredRows, int lastColumnIndex)
     {
         var reservedRows = (int)(dataEnd - dataStart + 1);
         if (requiredRows <= reservedRows)
@@ -549,12 +455,7 @@ public sealed class SummaryService
         InsertRows(worksheetPart.Worksheet, dataEnd + 1, requiredRows - reservedRows, dataEnd, lastColumnIndex);
     }
 
-    private static void InsertRows(
-        Worksheet worksheet,
-        uint insertAt,
-        int count,
-        uint styleRowIndex,
-        int lastColumnIndex)
+    private static void InsertRows(Worksheet worksheet, uint insertAt, int count, uint styleRowIndex, int lastColumnIndex)
     {
         var sheetData = worksheet.GetFirstChild<SheetData>() ?? worksheet.AppendChild(new SheetData());
         var styleRow = sheetData.Elements<Row>().FirstOrDefault(row => row.RowIndex?.Value == styleRowIndex)
@@ -723,12 +624,7 @@ public sealed class SummaryService
             : reference;
     }
 
-    private static bool TryParseRange(
-        string reference,
-        out string firstColumn,
-        out uint firstRow,
-        out string lastColumn,
-        out uint lastRow)
+    private static bool TryParseRange(string reference, out string firstColumn, out uint firstRow, out string lastColumn, out uint lastRow)
     {
         firstColumn = "";
         firstRow = 0;
@@ -753,38 +649,6 @@ public sealed class SummaryService
     private static int ExtraRows(uint dataStart, uint dataEnd, int requiredRows)
     {
         return Math.Max(0, requiredRows - (int)(dataEnd - dataStart + 1));
-    }
-
-    private static string NormalizeSummaryType(string value)
-    {
-        return value.Trim() switch
-        {
-            Division => Division,
-            SubDivision => SubDivision,
-            SubItem => SubItem,
-            var item when item.Equals("division", StringComparison.OrdinalIgnoreCase) => Division,
-            var item when item.Equals("subdivision", StringComparison.OrdinalIgnoreCase) => SubDivision,
-            var item when item.Equals("sub_division", StringComparison.OrdinalIgnoreCase) => SubDivision,
-            var item when item.Equals("subitem", StringComparison.OrdinalIgnoreCase) => SubItem,
-            var item when item.Equals("sub_item", StringComparison.OrdinalIgnoreCase) => SubItem,
-            _ => throw new InvalidOperationException($"未知汇总类型：{value}")
-        };
-    }
-
-    private static (string ModuleId, long CategoryId) ParseCategoryNodeId(string categoryId)
-    {
-        var match = CategoryNodeRegex.Match(categoryId);
-        if (!match.Success || !long.TryParse(match.Groups["categoryId"].Value, out var id))
-        {
-            throw new InvalidOperationException($"汇总分类节点无效：{categoryId}");
-        }
-
-        return (match.Groups["moduleId"].Value, id);
-    }
-
-    private static string CategoryNodeId(string moduleId, long categoryId)
-    {
-        return $"module:{moduleId}:category:{categoryId}";
     }
 
     private static string ResolveUniquePath(string directory, string fileName)
@@ -815,9 +679,7 @@ public sealed class SummaryService
             sanitized = sanitized.Replace(invalid, '_');
         }
 
-        return sanitized.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)
-            ? sanitized
-            : $"{sanitized}.xlsx";
+        return sanitized.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) ? sanitized : $"{sanitized}.xlsx";
     }
 
     private static string SanitizePathSegment(string value)
@@ -849,34 +711,27 @@ public sealed class SummaryService
         return name;
     }
 
-    private static void WarnSkip(List<string> warnings, ProjectDocumentInfo document, string reason)
+    private static string ExtractModuleId(string templateNodeId)
     {
-        var message = $"资料“{document.DocumentName}”已跳过：{reason}";
-        warnings.Add(message);
-        Log.Warning("分部分项汇总跳过资料。DocumentId={DocumentId}, Reason={Reason}", document.Id, reason);
+        const string prefix = "module:";
+        const string marker = ":template:";
+        if (!templateNodeId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return "";
+        }
+
+        var markerIndex = templateNodeId.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        return markerIndex < 0 ? "" : templateNodeId[prefix.Length..markerIndex];
     }
 
-    private sealed record CategoryInfo(
-        long Id,
-        long? ParentId,
-        string Name,
-        int Level,
-        int SortOrder,
-        string CategoryType);
+    private sealed record InspectionBatchSummarySource(
+        GeneratedDocumentIndexInfo Document,
+        InspectionBatchDocumentDetailInfo Detail,
+        TemplateNodeContext Context);
 
-    private sealed record SummaryCategoryPath(
+    private sealed record SummaryNodeRef(
+        string SummaryType,
         string ModuleId,
-        long DivisionId,
-        string DivisionName,
-        long SubDivisionId,
-        string SubDivisionName,
-        long SubItemId,
-        string SubItemName,
-        int DivisionSortOrder,
-        int SubDivisionSortOrder,
-        int SubItemSortOrder);
-
-    private sealed record SummarySourceDocument(
-        ProjectDocumentInfo Document,
-        SummaryCategoryPath Path);
+        string CategoryId,
+        string RawId);
 }

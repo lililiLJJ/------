@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -26,6 +27,7 @@ public sealed class GeneratedFormService
     };
 
     private readonly TemplateTreeRepository _repository;
+    private readonly BatchPlanRepository _batchPlanRepository;
     private readonly TemplateService _templateService;
     private readonly ProjectManager _projectManager;
     private readonly UnitProjectService _unitProjectService;
@@ -35,6 +37,7 @@ public sealed class GeneratedFormService
 
     public GeneratedFormService(
         TemplateTreeRepository repository,
+        BatchPlanRepository batchPlanRepository,
         TemplateService templateService,
         ProjectManager projectManager,
         UnitProjectService unitProjectService,
@@ -43,6 +46,7 @@ public sealed class GeneratedFormService
         TemplateMappingService templateMappingService)
     {
         _repository = repository;
+        _batchPlanRepository = batchPlanRepository;
         _templateService = templateService;
         _projectManager = projectManager;
         _unitProjectService = unitProjectService;
@@ -51,152 +55,239 @@ public sealed class GeneratedFormService
         _templateMappingService = templateMappingService;
     }
 
-    public GeneratedFormInfo GetGeneratedForm(string nodeId)
+    public GeneratedDocumentInfo GetDocument(string documentId, string? projectId, string? unitProjectId)
     {
-        return GetProjectDocument(nodeId, null, null);
+        var document = _repository.GetGeneratedDocument(documentId)
+            ?? throw new FileNotFoundException("资料索引不存在。", documentId);
+        EnsureDocumentAccess(document, projectId, unitProjectId);
+
+        var template = TryResolveTemplate(document.TemplateNodeId);
+        var detail = string.Equals(document.DocumentType, "InspectionBatch", StringComparison.OrdinalIgnoreCase)
+            ? _repository.GetInspectionBatchDetail(document.DocumentId)
+            : null;
+
+        return new GeneratedDocumentInfo(
+            true,
+            document.DocumentId,
+            document.ProjectId,
+            document.UnitProjectId,
+            document.DocumentName,
+            document.DocumentType,
+            document.TemplateNodeId,
+            template?.TemplateCode ?? "",
+            _repository.ResolveStoredPath(document.FilePath),
+            true,
+            document.DocumentStatus,
+            document.SyncStatus,
+            string.IsNullOrWhiteSpace(document.SyncErrorMessage) ? null : document.SyncErrorMessage,
+            template?.TemplateName,
+            document.DocumentName,
+            document.SourceType,
+            document.SourceId,
+            detail?.PlanId,
+            detail?.PlanRowId,
+            detail?.CapacitySummary,
+            detail?.InspectionPart,
+            detail?.ConstructionDate,
+            document.LastSyncTime);
     }
 
-    public GeneratedFormInfo GetProjectDocument(string documentId, string? projectId, string? unitProjectId)
+    public IReadOnlyList<GeneratedDocumentIndexInfo> ListDocuments(
+        string? projectId,
+        string? unitProjectId,
+        string? documentType = null,
+        string? documentStatus = null)
     {
-        var document = _repository.GetProjectDocument(documentId);
-        if (document is not null)
-        {
-            EnsureProjectDocumentAccess(document, projectId, unitProjectId);
-            var documentPath = _repository.ResolveStoredPath(document.FilePath);
-            if (!File.Exists(documentPath))
-            {
-                throw new FileNotFoundException($"资料表文件不存在：{documentPath}", documentPath);
-            }
-
-            return new GeneratedFormInfo(
-                true,
-                document.Id,
-                document.DocumentName,
-                document.TemplateItemId.ToString(),
-                documentPath,
-                true,
-                BuildProjectDocumentParentId(document),
-                document.Id,
-                null,
-                document.DocumentName);
-        }
-
-        var node = _repository.GetNode(documentId) ?? throw new FileNotFoundException("资料表节点不存在。", documentId);
-        EnsureLegacyNodeAccess(node, projectId);
-        if (node.NodeType != "document" || string.IsNullOrWhiteSpace(node.GeneratedFilePath))
-        {
-            throw new InvalidOperationException("当前节点不是已创建的资料表。");
-        }
-
-        var filePath = _repository.ResolveStoredPath(node.GeneratedFilePath);
-        if (!File.Exists(filePath))
-        {
-            throw new FileNotFoundException($"资料表文件不存在：{filePath}", filePath);
-        }
-
-        return new GeneratedFormInfo(
-            true,
-            node.Id,
-            node.Name,
-            node.TemplateCode ?? "",
-            filePath,
-            true,
-            node.TemplateNodeId ?? node.ParentId,
-            node.Id,
-            node.TemplateName,
-            node.FormName ?? node.Name);
+        var project = _projectManager.ResolveProject(projectId);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, unitProjectId);
+        return _repository.ListGeneratedDocuments(project.ProjectId, unitProject.Id, documentType, documentStatus);
     }
 
-    public GeneratedFormCreateResult CreateGeneratedForm(CreateGeneratedFormRequest request)
+    public GeneratedDocumentCreateResult CreateDocument(CreateGeneratedDocumentRequest request, string? projectId = null)
     {
-        if (string.IsNullOrWhiteSpace(request.ProjectId))
-        {
-            throw new InvalidOperationException("项目ID不能为空。");
-        }
-
-        if (string.IsNullOrWhiteSpace(request.FormName))
-        {
-            throw new InvalidOperationException("部位名称不能为空。");
-        }
-
-        var project = _projectManager.ResolveProject(request.ProjectId);
+        var project = _projectManager.ResolveProject(projectId);
         var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, request.UnitProjectId);
         var template = _templateService.ResolveTemplate(request.TemplateNodeId);
-        var templateCode = template.TemplateCode;
-        var targetDirectory = project.IsDefault
-            ? Path.Combine(
-                _repository.GetProjectsRootPath(),
-                SanitizePathSegment(project.ProjectId),
-                "GeneratedForms",
-                SanitizePathSegment(templateCode))
-            : _pathResolver.ResolveGeneratedFormDirectory(project, request.TemplateNodeId, template.TemplateName);
+        var targetDirectory = _pathResolver.ResolveGeneratedFormDirectory(project, request.TemplateNodeId, template.TemplateName);
+        var fields = request.Fields ?? new Dictionary<string, string>();
+        var targetPath = CreateSpreadsheetFile(template, request.DocumentName, targetDirectory, fields);
+
+        var now = DateTimeOffset.Now;
+        var documentId = $"generated-document:{Guid.NewGuid():N}";
+        var document = new GeneratedDocumentIndexInfo(
+            documentId,
+            project.ProjectId,
+            unitProject.Id,
+            string.IsNullOrWhiteSpace(request.DocumentType) ? "InspectionBatch" : request.DocumentType.Trim(),
+            request.DocumentName.Trim(),
+            string.IsNullOrWhiteSpace(request.SourceType) ? "Manual" : request.SourceType.Trim(),
+            string.IsNullOrWhiteSpace(request.SourceId) ? documentId : request.SourceId.Trim(),
+            request.TemplateNodeId,
+            _repository.ToStoredPath(targetPath),
+            "Active",
+            "Normal",
+            "",
+            now,
+            now,
+            now,
+            null,
+            null,
+            null);
+        _repository.InsertGeneratedDocument(document);
+
+        if (string.Equals(document.SourceType, "InspectionBatchPlanRow", StringComparison.OrdinalIgnoreCase))
+        {
+            _repository.UpsertInspectionBatchDetail(new InspectionBatchDocumentDetailInfo(
+                document.DocumentId,
+                request.PlanId,
+                request.PlanRowId ?? document.SourceId,
+                GetField(fields, "partName", "检验批部位"),
+                GetField(fields, "constructionDate", "施工日期"),
+                GetField(fields, "capacity", "检验批容量"),
+                request.TemplateNodeId));
+        }
+
+        return new GeneratedDocumentCreateResult(
+            true,
+            ToTreeNode(document, template.TemplateName, template.TemplateItemId, template.TemplateCode),
+            targetPath,
+            "资料表已创建。",
+            documentId);
+    }
+
+    public GeneratedDocumentCreateResult CreateInspectionBatchDocument(
+        ProjectContext project,
+        UnitProjectInfo unitProject,
+        InspectionBatchPlanDto plan,
+        InspectionBatchPlanRowDto row,
+        IReadOnlyDictionary<string, string>? requestFields,
+        bool overwrite)
+    {
+        var activeDocument = _repository.GetActiveDocumentByPlanRowId(row.PlanRowId);
+        if (activeDocument is not null && !overwrite)
+        {
+            throw new InvalidOperationException("该行已生成表格，请先删除或选择覆盖生成。");
+        }
+
+        if (activeDocument is not null)
+        {
+            UpdateDocumentStatus(activeDocument, "Replaced", moveFileToTrash: true, propagatePlanRowDeletion: false);
+        }
+
+        var template = _templateService.ResolveTemplate(row.TemplateNodeId);
+        var targetDirectory = Path.Combine(
+            project.GeneratedFormsPath,
+            SanitizePathSegment(unitProject.UnitProjectName),
+            "InspectionPlans",
+            SanitizePathSegment(plan.PlanName));
         Directory.CreateDirectory(targetDirectory);
 
-        var templateExtension = Path.GetExtension(template.TemplatePath);
-        if (string.IsNullOrWhiteSpace(templateExtension))
+        var fields = BuildInspectionBatchFields(project, unitProject, row, requestFields);
+        var documentName = BuildDocumentName(row);
+        var targetPath = CreateSpreadsheetFile(template, documentName, targetDirectory, fields);
+        var now = DateTimeOffset.Now;
+        var document = new GeneratedDocumentIndexInfo(
+            $"generated-document:{Guid.NewGuid():N}",
+            project.ProjectId,
+            unitProject.Id,
+            "InspectionBatch",
+            documentName,
+            "InspectionBatchPlanRow",
+            row.PlanRowId,
+            row.TemplateNodeId,
+            _repository.ToStoredPath(targetPath),
+            "Active",
+            "Normal",
+            "",
+            now,
+            now,
+            now,
+            null,
+            null,
+            null);
+        _repository.InsertGeneratedDocument(document);
+        _repository.UpsertInspectionBatchDetail(new InspectionBatchDocumentDetailInfo(
+            document.DocumentId,
+            plan.PlanId,
+            row.PlanRowId,
+            row.InspectionPart,
+            row.ConstructionDate,
+            row.CapacitySummary,
+            row.TemplateNodeId));
+        _batchPlanRepository.UpdatePlanRowGenerateStatus(row.PlanRowId, "Generated");
+
+        return new GeneratedDocumentCreateResult(
+            true,
+            ToTreeNode(document, row.TemplateName, row.TemplateItemId, template.TemplateCode),
+            targetPath,
+            "资料表已创建。",
+            document.DocumentId);
+    }
+
+    public void SyncInspectionBatchDocument(
+        string documentId,
+        ProjectContext project,
+        UnitProjectInfo unitProject,
+        InspectionBatchPlanRowDto row,
+        IReadOnlyDictionary<string, string>? requestFields = null)
+    {
+        var document = _repository.GetGeneratedDocument(documentId)
+            ?? throw new InvalidOperationException("资料索引不存在。");
+        if (!string.Equals(document.DocumentStatus, "Active", StringComparison.OrdinalIgnoreCase))
         {
-            templateExtension = ".xlsx";
+            throw new InvalidOperationException("只有活动资料才能同步。");
         }
 
-        var fields = request.Fields ?? new Dictionary<string, string>();
-        var targetPath = ResolveUniquePath(targetDirectory, $"{SanitizePathSegment(request.FormName)}{templateExtension}");
-        File.Copy(template.TemplatePath, targetPath);
-        var rowHeightBaseline = _rowHeightBalanceService.CaptureBaseline(targetPath);
-        if (_templateMappingService.ShouldUseAdaptation(template))
+        try
         {
-            var layoutBaseline = TemplateWorkbookHelper.CaptureLayoutSnapshot(targetPath);
-            _templateMappingService.Apply(targetPath, template, fields);
-            _rowHeightBalanceService.ApplyLight(targetPath, request.FormName, fields, rowHeightBaseline);
-            var layoutResult = TemplateWorkbookHelper.CompareLayout(layoutBaseline, targetPath);
-            if (!layoutResult.Success)
+            var template = _templateService.ResolveTemplate(row.TemplateNodeId);
+            var fields = BuildInspectionBatchFields(project, unitProject, row, requestFields);
+            var path = _repository.ResolveStoredPath(document.FilePath);
+            ApplyTemplateFields(path, template, row.InspectionPart, fields);
+
+            _repository.UpdateDocument(document with
             {
-                throw new TemplateAdaptationException(
-                    $"模板“{template.TemplateName}”写入后版式保护校验失败：{string.Join("；", layoutResult.Differences)}",
-                    template.TemplateNodeId,
-                    template.TemplateName,
-                    adaptationStatus: "layout_changed");
-            }
+                DocumentName = BuildDocumentName(row),
+                SyncStatus = "Normal",
+                SyncErrorMessage = "",
+                LastSyncTime = DateTimeOffset.Now,
+                UpdatedTime = DateTimeOffset.Now
+            });
+            var detail = _repository.GetInspectionBatchDetail(documentId);
+            _repository.UpsertInspectionBatchDetail(new InspectionBatchDocumentDetailInfo(
+                documentId,
+                detail?.PlanId,
+                row.PlanRowId,
+                row.InspectionPart,
+                row.ConstructionDate,
+                row.CapacitySummary,
+                row.TemplateNodeId));
+            _batchPlanRepository.UpdatePlanRowGenerateStatus(row.PlanRowId, "Generated");
         }
-        else
+        catch (Exception ex)
         {
-            ApplyFields(targetPath, request.FormName, fields);
-            _rowHeightBalanceService.ApplyLight(targetPath, request.FormName, fields, rowHeightBaseline);
+            _repository.UpdateDocument(document with
+            {
+                SyncStatus = "WriteFailed",
+                SyncErrorMessage = ex.Message,
+                LastSyncTime = DateTimeOffset.Now,
+                UpdatedTime = DateTimeOffset.Now
+            });
+            _batchPlanRepository.UpdatePlanRowGenerateStatus(row.PlanRowId, "NeedSync");
+            throw;
         }
-
-        var node = template.ModuleId == "legacy"
-            ? _repository.InsertGeneratedForm(
-                project.ProjectId,
-                template.TemplateNodeId,
-                request.FormName.Trim(),
-                templateCode,
-                targetPath)
-            : _repository.InsertProjectDocument(
-                project.ProjectId,
-                unitProject.Id,
-                template.ModuleId,
-                template.TemplateItemId,
-                template.TemplateNodeId,
-                request.FormName.Trim(),
-                request.FormName.Trim(),
-                GetField(fields, "capacity", "检验批容量"),
-                templateCode,
-                targetPath);
-
-        return new GeneratedFormCreateResult(true, node, targetPath, "资料表已创建。");
     }
 
-    public DeleteGeneratedFormResult DeleteGeneratedForm(string nodeId)
+    public DeleteGeneratedDocumentResult DeleteDocument(string documentId, string? projectId, string? unitProjectId)
     {
-        return DeleteProjectDocument(nodeId, null, null);
+        var document = _repository.GetGeneratedDocument(documentId)
+            ?? throw new InvalidOperationException("资料索引不存在。");
+        EnsureDocumentAccess(document, projectId, unitProjectId);
+        return UpdateDocumentStatus(document, "Deleted", moveFileToTrash: true, propagatePlanRowDeletion: true);
     }
 
-    public DeleteGeneratedFormResult DeleteProjectDocument(string documentId, string? projectId, string? unitProjectId)
-    {
-        return DeleteProjectDocumentCore(documentId, projectId, unitProjectId);
-    }
-
-    public BatchDeleteProjectDocumentsResult BatchDeleteProjectDocuments(
-        BatchDeleteProjectDocumentsRequest request,
+    public BatchDeleteGeneratedDocumentsResult BatchDeleteDocuments(
+        BatchDeleteGeneratedDocumentsRequest request,
         string? projectId,
         string? unitProjectId)
     {
@@ -211,47 +302,51 @@ public sealed class GeneratedFormService
         }
 
         var deletedIds = new List<string>();
-        var failedItems = new List<BatchDeleteProjectDocumentsFailedItem>();
+        var failedItems = new List<BatchDeleteGeneratedDocumentsFailedItem>();
         foreach (var documentId in documentIds)
         {
-            var result = DeleteProjectDocumentCore(documentId, projectId, unitProjectId);
-            if (result.Success)
+            try
             {
-                deletedIds.Add(result.DocumentId ?? documentId);
-                continue;
+                var result = DeleteDocument(documentId, projectId, unitProjectId);
+                if (result.Success)
+                {
+                    deletedIds.Add(result.DocumentId);
+                }
+                else
+                {
+                    failedItems.Add(new BatchDeleteGeneratedDocumentsFailedItem(documentId, result.Message, result.DocumentName));
+                }
             }
-
-            failedItems.Add(new BatchDeleteProjectDocumentsFailedItem(
-                result.DocumentId ?? documentId,
-                result.Message,
-                result.FormName));
+            catch (Exception ex)
+            {
+                failedItems.Add(new BatchDeleteGeneratedDocumentsFailedItem(documentId, ex.Message));
+            }
         }
 
-        var message = failedItems.Count == 0
-            ? $"已删除 {deletedIds.Count} 个资料表"
-            : $"成功删除 {deletedIds.Count} 个，失败 {failedItems.Count} 个";
-        return new BatchDeleteProjectDocumentsResult(
+        return new BatchDeleteGeneratedDocumentsResult(
             failedItems.Count == 0,
             deletedIds,
             failedItems,
-            message);
+            failedItems.Count == 0
+                ? $"已删除 {deletedIds.Count} 个资料表。"
+                : $"成功删除 {deletedIds.Count} 个，失败 {failedItems.Count} 个。");
     }
 
-    public GeneratedFormBackupResult BackupGeneratedForm(string nodeId)
+    public GeneratedDocumentBackupResult BackupDocument(string documentId, string? projectId, string? unitProjectId)
     {
-        var info = GetGeneratedForm(nodeId);
+        var info = GetDocument(documentId, projectId, unitProjectId);
         var sourcePath = Path.GetFullPath(info.GeneratedFilePath);
         if (!File.Exists(sourcePath))
         {
             throw new FileNotFoundException($"资料表文件不存在：{sourcePath}", sourcePath);
         }
 
-        var project = _projectManager.GetCurrentProject();
-        var backupDirectory = Path.Combine(project.VersionsPath, "RowHeightFit");
+        var project = _projectManager.ResolveProject(projectId ?? info.ProjectId);
+        var backupDirectory = Path.Combine(project.VersionsPath, "GeneratedDocumentBackups");
         Directory.CreateDirectory(backupDirectory);
 
         var now = DateTimeOffset.Now;
-        var backupId = $"row-height-{now:yyyyMMddHHmmssfff}";
+        var backupId = $"generated-document-{now:yyyyMMddHHmmssfff}";
         var extension = Path.GetExtension(sourcePath);
         var backupFileName = $"{Path.GetFileNameWithoutExtension(sourcePath)}.{backupId}{extension}";
         var backupPath = Path.Combine(backupDirectory, backupFileName);
@@ -262,13 +357,55 @@ public sealed class GeneratedFormService
             source.CopyTo(target);
         }
 
-        return new GeneratedFormBackupResult(
-            true,
-            backupId,
-            sourcePath,
-            backupPath,
-            now,
-            "已备份当前资料表。");
+        return new GeneratedDocumentBackupResult(true, backupId, sourcePath, backupPath, now, "资料表已备份。");
+    }
+
+    public GeneratedDocumentInfo RestoreDocument(string documentId, string? projectId, string? unitProjectId)
+    {
+        var document = _repository.GetGeneratedDocument(documentId)
+            ?? throw new InvalidOperationException("资料索引不存在。");
+        EnsureDocumentAccess(document, projectId, unitProjectId);
+        if (string.IsNullOrWhiteSpace(document.RestoreToken))
+        {
+            throw new InvalidOperationException("当前资料没有可恢复的删除记录。");
+        }
+
+        var restoreInfo = ParseRestoreToken(document.RestoreToken);
+        var originalPath = _repository.ResolveStoredPath(restoreInfo.OriginalStoredPath);
+        var trashPath = _repository.ResolveStoredPath(restoreInfo.TrashStoredPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(originalPath)!);
+
+        var syncStatus = "Normal";
+        var syncErrorMessage = "";
+        if (File.Exists(trashPath))
+        {
+            File.Move(trashPath, originalPath, overwrite: true);
+        }
+        else
+        {
+            syncStatus = "NeedSync";
+            syncErrorMessage = "回收站文件不存在，请重新生成或重新同步。";
+        }
+
+        _repository.UpdateDocument(document with
+        {
+            FilePath = restoreInfo.OriginalStoredPath,
+            DocumentStatus = "Active",
+            SyncStatus = syncStatus,
+            SyncErrorMessage = syncErrorMessage,
+            DeleteTime = null,
+            RestoreToken = null,
+            LastSyncTime = DateTimeOffset.Now,
+            UpdatedTime = DateTimeOffset.Now
+        });
+
+        if (string.Equals(document.SourceType, "InspectionBatchPlanRow", StringComparison.OrdinalIgnoreCase))
+        {
+            _batchPlanRepository.UpdatePlanRowLifecycleStatus(document.SourceId, "Active");
+            _batchPlanRepository.UpdatePlanRowGenerateStatus(document.SourceId, syncStatus == "Normal" ? "Generated" : "NeedSync");
+        }
+
+        return GetDocument(documentId, projectId, unitProjectId);
     }
 
     internal static void ApplyFields(string filePath, string formName, IReadOnlyDictionary<string, string> fields)
@@ -326,10 +463,7 @@ public sealed class GeneratedFormService
                 }
 
                 item.RemoveAllChildren();
-                item.AppendChild(new Text(replacement)
-                {
-                    Space = SpaceProcessingModeValues.Preserve
-                });
+                item.AppendChild(new Text(replacement) { Space = SpaceProcessingModeValues.Preserve });
             }
 
             sharedStringTable.Save();
@@ -344,8 +478,7 @@ public sealed class GeneratedFormService
                     cell.InlineString.Text.Text = ReplacePlaceholders(inlineText, replacements);
                 }
 
-                if (cell.CellValue?.Text is { } cellText &&
-                    cell.DataType?.Value == CellValues.String)
+                if (cell.CellValue?.Text is { } cellText && cell.DataType?.Value == CellValues.String)
                 {
                     cell.CellValue.Text = ReplacePlaceholders(cellText, replacements);
                 }
@@ -353,6 +486,231 @@ public sealed class GeneratedFormService
 
             ApplyAdjacentLabelFields(worksheetPart, workbookPart.SharedStringTablePart?.SharedStringTable, replacements);
             worksheetPart.Worksheet.Save();
+        }
+    }
+
+    private TemplateTreeNodeDto ToTreeNode(GeneratedDocumentIndexInfo document, string? templateName, long? templateItemId, string? templateCode)
+    {
+        return new TemplateTreeNodeDto(
+            document.DocumentId,
+            document.TemplateNodeId,
+            document.ProjectId,
+            document.DocumentName,
+            "document",
+            null,
+            templateCode,
+            null,
+            _repository.ResolveStoredPath(document.FilePath),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            templateItemId,
+            100000,
+            [],
+            document.TemplateNodeId,
+            document.DocumentId,
+            templateName,
+            document.DocumentName,
+            document.CreatedTime,
+            document.UpdatedTime,
+            null,
+            null,
+            null,
+            document.DocumentStatus,
+            document.SyncStatus);
+    }
+
+    private string CreateSpreadsheetFile(
+        TemplateResolution template,
+        string documentName,
+        string targetDirectory,
+        IReadOnlyDictionary<string, string> fields)
+    {
+        Directory.CreateDirectory(targetDirectory);
+        var extension = Path.GetExtension(template.TemplatePath);
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            extension = ".xlsx";
+        }
+
+        var targetPath = ResolveUniquePath(targetDirectory, $"{SanitizePathSegment(documentName)}{extension}");
+        File.Copy(template.TemplatePath, targetPath);
+        ApplyTemplateFields(targetPath, template, documentName, fields);
+        return targetPath;
+    }
+
+    private void ApplyTemplateFields(string targetPath, TemplateResolution template, string formName, IReadOnlyDictionary<string, string> fields)
+    {
+        var rowHeightBaseline = _rowHeightBalanceService.CaptureBaseline(targetPath);
+        if (_templateMappingService.ShouldUseAdaptation(template))
+        {
+            var layoutBaseline = TemplateWorkbookHelper.CaptureLayoutSnapshot(targetPath);
+            _templateMappingService.Apply(targetPath, template, fields);
+            _rowHeightBalanceService.ApplyLight(targetPath, formName, fields, rowHeightBaseline);
+            var layoutResult = TemplateWorkbookHelper.CompareLayout(layoutBaseline, targetPath);
+            if (!layoutResult.Success)
+            {
+                throw new TemplateAdaptationException(
+                    $"模板“{template.TemplateName}”写入后版式保护校验失败：{string.Join("；", layoutResult.Differences)}",
+                    template.TemplateNodeId,
+                    template.TemplateName,
+                    adaptationStatus: "layout_changed");
+            }
+        }
+        else
+        {
+            ApplyFields(targetPath, formName, fields);
+            _rowHeightBalanceService.ApplyLight(targetPath, formName, fields, rowHeightBaseline);
+        }
+    }
+
+    private DeleteGeneratedDocumentResult UpdateDocumentStatus(
+        GeneratedDocumentIndexInfo document,
+        string targetStatus,
+        bool moveFileToTrash,
+        bool propagatePlanRowDeletion)
+    {
+        var storedPath = document.FilePath;
+        var restoreToken = document.RestoreToken;
+        var fileMoved = false;
+
+        if (moveFileToTrash && !string.IsNullOrWhiteSpace(document.FilePath))
+        {
+            var moved = MoveFileToTrash(document.ProjectId, document.FilePath);
+            fileMoved = moved.Moved;
+            if (moved.Moved)
+            {
+                storedPath = moved.TrashStoredPath;
+                restoreToken = moved.RestoreToken;
+            }
+        }
+
+        var now = DateTimeOffset.Now;
+        _repository.UpdateDocument(document with
+        {
+            FilePath = storedPath,
+            DocumentStatus = targetStatus,
+            SyncStatus = string.Equals(targetStatus, "Active", StringComparison.OrdinalIgnoreCase) ? document.SyncStatus : "NeedSync",
+            SyncErrorMessage = string.Equals(targetStatus, "Active", StringComparison.OrdinalIgnoreCase) ? document.SyncErrorMessage : "",
+            DeleteTime = string.Equals(targetStatus, "Active", StringComparison.OrdinalIgnoreCase) ? null : now,
+            RestoreToken = string.Equals(targetStatus, "Active", StringComparison.OrdinalIgnoreCase) ? null : restoreToken,
+            UpdatedTime = now
+        });
+
+        if (propagatePlanRowDeletion &&
+            string.Equals(document.SourceType, "InspectionBatchPlanRow", StringComparison.OrdinalIgnoreCase))
+        {
+            _batchPlanRepository.UpdatePlanRowLifecycleStatus(document.SourceId, "Deleted", now);
+            _batchPlanRepository.UpdatePlanRowGenerateStatus(document.SourceId, "None");
+        }
+
+        return new DeleteGeneratedDocumentResult(
+            true,
+            document.DocumentId,
+            document.TemplateNodeId,
+            string.Equals(targetStatus, "Deleted", StringComparison.OrdinalIgnoreCase) ? "资料表已删除。" : "资料表状态已更新。",
+            document.DocumentName,
+            _repository.ResolveStoredPath(storedPath),
+            fileMoved,
+            restoreToken);
+    }
+
+    private (bool Moved, string TrashStoredPath, string RestoreToken) MoveFileToTrash(string projectId, string originalStoredPath)
+    {
+        var project = _projectManager.ResolveProject(projectId);
+        var originalPath = _repository.ResolveStoredPath(originalStoredPath);
+        if (!File.Exists(originalPath))
+        {
+            return (false, originalStoredPath, "");
+        }
+
+        var trashDirectory = Path.Combine(project.ProjectRootPath, ".trash", "forms");
+        Directory.CreateDirectory(trashDirectory);
+        var trashFileName = $"{DateTimeOffset.Now:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}{Path.GetExtension(originalPath)}";
+        var trashPath = Path.Combine(trashDirectory, trashFileName);
+        File.Move(originalPath, trashPath, overwrite: true);
+
+        var trashStoredPath = _repository.ToStoredPath(trashPath);
+        var payload = $"{originalStoredPath}|{trashStoredPath}|{DateTimeOffset.Now:O}";
+        var restoreToken = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
+        return (true, trashStoredPath, restoreToken);
+    }
+
+    private static (string OriginalStoredPath, string TrashStoredPath) ParseRestoreToken(string restoreToken)
+    {
+        var payload = Encoding.UTF8.GetString(Convert.FromBase64String(restoreToken));
+        var parts = payload.Split('|');
+        if (parts.Length < 2)
+        {
+            throw new InvalidOperationException("恢复令牌无效。");
+        }
+
+        return (parts[0], parts[1]);
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildInspectionBatchFields(
+        ProjectContext project,
+        UnitProjectInfo unitProject,
+        InspectionBatchPlanRowDto row,
+        IReadOnlyDictionary<string, string>? requestFields)
+    {
+        var fields = new Dictionary<string, string>(requestFields ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
+        {
+            ["projectName"] = project.ProjectName,
+            ["工程名称"] = project.ProjectName,
+            ["constructorUnitName"] = unitProject.ConstructionUnit,
+            ["施工单位"] = unitProject.ConstructionUnit,
+            ["supervisorUnitName"] = unitProject.SupervisionUnit,
+            ["监理单位"] = unitProject.SupervisionUnit,
+            ["partName"] = row.InspectionPart,
+            ["检验批部位"] = row.InspectionPart,
+            ["施工部位"] = row.InspectionPart,
+            ["capacity"] = row.CapacitySummary,
+            ["检验批容量"] = row.CapacitySummary,
+            ["constructionDate"] = row.ConstructionDate,
+            ["施工日期"] = row.ConstructionDate,
+            ["remark"] = row.Remark,
+            ["备注"] = row.Remark
+        };
+        return fields;
+    }
+
+    private static string BuildDocumentName(InspectionBatchPlanRowDto row)
+    {
+        var parts = new[] { row.TemplateName, row.InspectionPart, row.ConstructionDate }
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .Select(part => part.Trim())
+            .ToArray();
+        return parts.Length == 0 ? $"检验批资料-{DateTime.Now:yyyyMMddHHmmss}" : string.Join("-", parts);
+    }
+
+    private TemplateResolution? TryResolveTemplate(string templateNodeId)
+    {
+        try
+        {
+            return _templateService.ResolveTemplate(templateNodeId);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void EnsureDocumentAccess(GeneratedDocumentIndexInfo document, string? projectId, string? unitProjectId)
+    {
+        if (!string.IsNullOrWhiteSpace(projectId) &&
+            !string.Equals(document.ProjectId, projectId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("资料表不属于当前工程。");
+        }
+
+        if (!string.IsNullOrWhiteSpace(unitProjectId) &&
+            !string.Equals(document.UnitProjectId, unitProjectId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("资料表不属于当前单位工程。");
         }
     }
 
@@ -569,135 +927,6 @@ public sealed class GeneratedFormService
         }
 
         return "";
-    }
-
-    private DeleteGeneratedFormResult DeleteProjectDocumentCore(string documentId, string? projectId, string? unitProjectId)
-    {
-        var document = _repository.GetProjectDocument(documentId);
-        if (document is not null)
-        {
-            EnsureProjectDocumentAccess(document, projectId, unitProjectId);
-            var parentId = BuildProjectDocumentParentId(document);
-            var generatedFilePath = _repository.ResolveStoredPath(document.FilePath);
-            try
-            {
-                var fileDeleted = DeleteGeneratedFile(generatedFilePath);
-                var projectDocumentDeleted = _repository.DeleteProjectDocument(documentId);
-                return new DeleteGeneratedFormResult(
-                    projectDocumentDeleted,
-                    documentId,
-                    documentId,
-                    parentId,
-                    projectDocumentDeleted ? "资料表已删除。" : "资料表记录不存在。",
-                    document.DocumentName,
-                    generatedFilePath,
-                    fileDeleted,
-                    projectDocumentDeleted,
-                    false);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                return new DeleteGeneratedFormResult(
-                    false,
-                    documentId,
-                    documentId,
-                    parentId,
-                    ex.Message,
-                    document.DocumentName,
-                    generatedFilePath);
-            }
-        }
-
-        var legacyNode = _repository.GetNode(documentId);
-        if (legacyNode is null)
-        {
-            return new DeleteGeneratedFormResult(false, documentId, documentId, null, "资料表节点不存在。");
-        }
-
-        EnsureLegacyNodeAccess(legacyNode, projectId);
-        if (legacyNode.NodeType != "document")
-        {
-            return new DeleteGeneratedFormResult(false, documentId, documentId, legacyNode.ParentId, "当前节点不是已创建的资料表。");
-        }
-
-        var legacyFilePath = ResolveLegacyGeneratedFilePath(legacyNode);
-        try
-        {
-            var fileDeleted = DeleteGeneratedFile(legacyFilePath);
-            var legacyNodeDeleted = _repository.DeleteGeneratedForm(documentId);
-            return new DeleteGeneratedFormResult(
-                legacyNodeDeleted,
-                documentId,
-                documentId,
-                legacyNode.ParentId,
-                legacyNodeDeleted ? "资料表已删除。" : "资料表节点不存在。",
-                legacyNode.FormName ?? legacyNode.Name,
-                legacyFilePath,
-                fileDeleted,
-                false,
-                legacyNodeDeleted);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return new DeleteGeneratedFormResult(
-                false,
-                documentId,
-                documentId,
-                legacyNode.ParentId,
-                ex.Message,
-                legacyNode.FormName ?? legacyNode.Name,
-                legacyFilePath);
-        }
-    }
-
-    private static bool DeleteGeneratedFile(string? generatedFilePath)
-    {
-        if (string.IsNullOrWhiteSpace(generatedFilePath) || !File.Exists(generatedFilePath))
-        {
-            return false;
-        }
-
-        File.Delete(generatedFilePath);
-        return true;
-    }
-
-    private static void EnsureProjectDocumentAccess(ProjectDocumentInfo document, string? projectId, string? unitProjectId)
-    {
-        if (!string.IsNullOrWhiteSpace(projectId) &&
-            !string.Equals(document.ProjectId, projectId, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("资料表不属于当前工程。");
-        }
-
-        if (!string.IsNullOrWhiteSpace(unitProjectId) &&
-            !string.Equals(document.UnitProjectId, unitProjectId, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("资料表不属于当前单位工程。");
-        }
-    }
-
-    private static void EnsureLegacyNodeAccess(TemplateTreeNodeDto node, string? projectId)
-    {
-        if (!string.IsNullOrWhiteSpace(projectId) &&
-            !string.Equals(node.ProjectId, projectId, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("资料表不属于当前工程。");
-        }
-    }
-
-    private static string BuildProjectDocumentParentId(ProjectDocumentInfo document)
-    {
-        return $"module:{document.ModuleId}:template:{document.TemplateItemId}";
-    }
-
-    private string? ResolveLegacyGeneratedFilePath(TemplateTreeNodeDto? legacyNode)
-    {
-        if (legacyNode is null || string.IsNullOrWhiteSpace(legacyNode.GeneratedFilePath))
-        {
-            return null;
-        }
-
-        return _repository.ResolveStoredPath(legacyNode.GeneratedFilePath);
     }
 
     private static string ResolveUniquePath(string directory, string fileName)

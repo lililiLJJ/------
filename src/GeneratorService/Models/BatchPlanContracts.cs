@@ -1,172 +1,201 @@
 namespace GeneratorService.Models;
 
-public sealed record BatchPlanListResult(
+public sealed record InspectionPlanListResult(
     bool Success,
     string ProjectId,
     string UnitProjectId,
-    IReadOnlyList<BatchPlanInfo> Plans);
+    string? CurrentPlanId,
+    IReadOnlyList<InspectionBatchPlanDto> Plans);
 
-public sealed record BatchPlanInfo(
-    string Id,
+public sealed record InspectionBatchPlanDto(
+    string PlanId,
     string ProjectId,
     string UnitProjectId,
-    string Name,
+    string PlanName,
     string Remark,
     string Status,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt,
-    IReadOnlyList<BatchPlanItemInfo> Items);
+    int RowCount,
+    int GeneratedCount,
+    DateTimeOffset CreatedTime,
+    DateTimeOffset UpdatedTime,
+    DateTimeOffset? DeletedTime,
+    IReadOnlyList<InspectionBatchPlanRowDto> Rows);
 
-public sealed record BatchPlanItemInfo(
-    string Id,
-    string BatchPlanId,
+public sealed record InspectionBatchPlanRowDto(
+    string PlanRowId,
+    string PlanId,
     string ProjectId,
     string UnitProjectId,
-    string ModuleId,
+    string DivisionId,
+    string DivisionName,
+    string SubDivisionId,
+    string SubDivisionName,
+    string SubItemId,
+    string SubItemName,
+    string TemplateNodeId,
     long TemplateItemId,
     string TemplateName,
-    string PartName,
-    string Capacity,
-    string QuantityUnit,
+    string InspectionPart,
     string ConstructionDate,
-    IReadOnlyDictionary<string, decimal> DeviceQuantities,
-    string? GeneratedDocumentId,
+    string CapacitySummary,
+    string Remark,
     string Status,
-    string ErrorMessage,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    string GenerateStatus,
+    string? ActiveDocumentId,
+    DateTimeOffset CreatedTime,
+    DateTimeOffset UpdatedTime,
+    DateTimeOffset? DeletedTime,
+    IReadOnlyList<PlanRowCapacityDto> Capacities);
 
-public sealed record BatchPlanSaveRequest(
-    string? ProjectId,
+public sealed record PlanRowCapacityDto(
+    string CapacityId,
+    string PlanRowId,
+    string CapacityKey,
+    string CapacityName,
+    string Value,
+    string Unit,
+    int SortOrder,
+    DateTimeOffset CreatedTime,
+    DateTimeOffset UpdatedTime);
+
+public sealed record InspectionPlanSaveRequest(
     string? UnitProjectId,
-    string? Name,
+    string? PlanName,
     string? Remark,
-    IReadOnlyList<BatchPlanItemSaveRequest>? Items);
+    IReadOnlyList<InspectionPlanRowSaveRequest>? Rows);
 
-public sealed record BatchPlanItemSaveRequest(
-    string? Id,
-    string? ModuleId,
+public sealed record InspectionPlanRowSaveRequest(
+    string? PlanRowId,
+    string? DivisionId,
+    string? DivisionName,
+    string? SubDivisionId,
+    string? SubDivisionName,
+    string? SubItemId,
+    string? SubItemName,
+    string? TemplateNodeId,
     long? TemplateItemId,
     string? TemplateName,
-    string? PartName,
-    string? Capacity,
-    string? QuantityUnit,
+    string? InspectionPart,
     string? ConstructionDate,
-    IReadOnlyDictionary<string, decimal?>? DeviceQuantities,
+    string? Remark,
     string? Status,
-    string? ErrorMessage);
+    string? GenerateStatus,
+    IReadOnlyList<PlanRowCapacitySaveItem>? Capacities);
 
-public sealed record BatchPlanSaveResult(
+public sealed record PlanRowCapacitySaveItem(
+    string? CapacityId,
+    string? CapacityKey,
+    string? CapacityName,
+    string? Value,
+    string? Unit,
+    int? SortOrder);
+
+public sealed record InspectionPlanSaveResult(
     bool Success,
-    BatchPlanInfo Plan,
+    InspectionBatchPlanDto Plan,
     string Message);
 
-public sealed record BatchPlanPreviewResult(
+public sealed record InspectionPlanDeleteResult(
+    bool Success,
+    string PlanId,
+    string Message);
+
+public sealed record CapacityFieldConfigInfo(
+    string ConfigId,
+    string ProjectId,
+    string UnitProjectId,
+    string TemplateNodeId,
+    string CapacityKey,
+    string CapacityName,
+    string DefaultUnit,
+    bool Required,
+    int SortOrder,
+    bool Enabled,
+    bool IsOverride);
+
+public sealed record CapacityFieldConfigResult(
     bool Success,
     string ProjectId,
     string UnitProjectId,
-    string BatchPlanId,
+    string TemplateNodeId,
+    IReadOnlyList<CapacityFieldConfigInfo> Items);
+
+public sealed record SaveCapacityFieldConfigRequest(
+    string? UnitProjectId,
+    string TemplateNodeId,
+    IReadOnlyList<SaveCapacityFieldConfigItem>? Items);
+
+public sealed record SaveCapacityFieldConfigItem(
+    string? ConfigId,
+    string? CapacityKey,
+    string? CapacityName,
+    string? DefaultUnit,
+    bool? Required,
+    int? SortOrder,
+    bool? Enabled);
+
+public sealed record InspectionPlanPreviewResult(
+    bool Success,
+    string ProjectId,
+    string UnitProjectId,
+    string PlanId,
     int TotalCount,
     int GeneratableCount,
     int BlockedCount,
-    IReadOnlyList<BatchPlanPreviewRow> Rows,
+    IReadOnlyList<InspectionPlanPreviewRow> Rows,
     IReadOnlyList<string> Warnings);
 
-public sealed record BatchPlanPreviewRow(
+public sealed record InspectionPlanPreviewRow(
     int RowIndex,
-    string ItemId,
-    string ModuleId,
-    long TemplateItemId,
+    string PlanRowId,
+    string TemplateNodeId,
     string TemplateName,
-    string PartName,
-    string Capacity,
-    string QuantityUnit,
+    string DivisionName,
+    string SubDivisionName,
+    string SubItemName,
+    string InspectionPart,
     string ConstructionDate,
-    string OutputName,
-    IReadOnlyDictionary<string, decimal> DeviceQuantities,
-    IReadOnlyList<DeviceMappingPreview> Mappings,
+    string CapacitySummary,
+    string Status,
+    string GenerateStatus,
+    string? ActiveDocumentId,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> Errors,
     bool CanGenerate);
 
-public sealed record DeviceMappingPreview(
-    string DeviceFieldKey,
-    string DeviceDisplayName,
-    decimal Quantity,
-    string InspectionItemName,
-    string FillMode,
-    bool HasTargetCells,
-    bool HasPlaceholderFallback,
-    string Source);
+public sealed record InspectionPlanGenerateRequest(
+    IReadOnlyList<string>? SelectedRowIds,
+    bool Overwrite,
+    IReadOnlyDictionary<string, string>? Fields);
 
-public sealed record BatchPlanGenerateResult(
+public sealed record InspectionPlanGenerateResult(
     bool Success,
     string ProjectId,
     string UnitProjectId,
-    string BatchPlanId,
+    string PlanId,
     int SuccessCount,
     int FailedCount,
     int SkippedCount,
-    IReadOnlyList<BatchPlanGenerateRowResult> Rows,
+    IReadOnlyList<InspectionPlanGenerateRowResult> Rows,
     string Message);
 
-public sealed record BatchPlanGenerateRequest(
-    IReadOnlyDictionary<string, string>? Fields);
-
-public sealed record BatchPlanGenerateRowResult(
+public sealed record InspectionPlanGenerateRowResult(
     int RowIndex,
-    string ItemId,
+    string PlanRowId,
     bool Success,
     bool Skipped,
     string? DocumentId,
     string? FilePath,
     string Message);
 
-public sealed record DeviceFieldInfo(
-    string Key,
-    string DisplayName,
-    string Unit,
-    int SortOrder);
-
-public sealed record DeviceFieldsResult(
+public sealed record FieldMappingOverrideResult(
     bool Success,
-    string ModuleId,
-    long TemplateItemId,
-    IReadOnlyList<DeviceFieldInfo> Fields);
+    string ProjectId,
+    string UnitProjectId,
+    string TemplateNodeId,
+    IReadOnlyDictionary<string, string> Data);
 
-public sealed record DeviceMappingInfo(
-    string Id,
-    string ModuleId,
-    long TemplateItemId,
-    long? RuleId,
-    string InspectionItemName,
-    string DeviceFieldKey,
-    string DeviceDisplayName,
-    IReadOnlyDictionary<string, string> TargetCells,
-    string FillMode,
-    bool IsEnabled,
-    int SortOrder,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
-
-public sealed record DeviceMappingsResult(
-    bool Success,
-    string ModuleId,
-    long TemplateItemId,
-    IReadOnlyList<DeviceMappingInfo> Mappings);
-
-public sealed record DeviceMappingsSaveRequest(
-    string? ModuleId,
-    long? TemplateItemId,
-    IReadOnlyList<DeviceMappingSaveItem>? Mappings);
-
-public sealed record DeviceMappingSaveItem(
-    string? Id,
-    long? RuleId,
-    string? InspectionItemName,
-    string? DeviceFieldKey,
-    string? DeviceDisplayName,
-    IReadOnlyDictionary<string, string>? TargetCells,
-    string? FillMode,
-    bool? IsEnabled,
-    int? SortOrder);
+public sealed record SaveFieldMappingOverrideRequest(
+    string? UnitProjectId,
+    string TemplateNodeId,
+    IReadOnlyDictionary<string, string>? Data);

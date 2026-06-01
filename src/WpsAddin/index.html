@@ -202,6 +202,13 @@
           <button id="batchPlanGenerate" type="button" class="primary">批量创建</button>
         </div>
       </div>
+      <div class="batchPlanListShell">
+        <div class="batchPlanListHeader">
+          <strong>计划列表</strong>
+          <span id="batchPlanListSummary">0 个计划</span>
+        </div>
+        <div id="batchPlanList" class="batchPlanList"></div>
+      </div>
       <div class="batchPlanHeaderGrid">
         <label>计划名称<input id="batchPlanName" value="检验批划分计划"></label>
         <label>备注<input id="batchPlanRemark" placeholder="可填写楼栋、专业或批次说明"></label>
@@ -212,6 +219,11 @@
           <button id="batchPlanApplyUnit" type="button">应用单位</button>
           <button id="batchPlanUseSelectedTemplate" type="button">使用当前模板新增</button>
         </div>
+      </div>
+      <div class="actions compactActions batchPlanTopActions">
+        <button id="batchPlanCreatePlan" type="button">新建计划</button>
+        <button id="batchPlanDeletePlan" type="button" class="danger">删除计划</button>
+        <button id="batchPlanToggleHierarchy" type="button">折叠层级</button>
       </div>
       <div class="batchPlanTableWrap">
         <table class="batchPlanTable">
@@ -885,6 +897,25 @@
     </section>
   </div>
 
-  <script src="./app.js?v=20260526-project-selector"></script>
+  <div id="batchPlanCapacityModal" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="batchPlanCapacityTitle">
+    <section class="modalPanel compactModal">
+      <div class="modalHeader">
+        <div>
+          <h2 id="batchPlanCapacityTitle">容量详情</h2>
+          <p id="batchPlanCapacitySummary">根据模板动态填写容量项。</p>
+        </div>
+        <button id="closeBatchPlanCapacityModal" class="iconButton" title="关闭">×</button>
+      </div>
+      <form id="batchPlanCapacityForm" class="generatedFormForm">
+        <div id="batchPlanCapacityFields" class="batchPlanCapacityFields"></div>
+        <div class="actions compactActions">
+          <button id="cancelBatchPlanCapacity" type="button">取消</button>
+          <button id="saveBatchPlanCapacity" type="submit" class="primary">保存容量</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <script type="module" src="./app.js?v=20260602-project-v2-clean"></script>
 </body>
 </html>

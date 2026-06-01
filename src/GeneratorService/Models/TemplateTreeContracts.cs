@@ -24,7 +24,12 @@ public sealed record TemplateTreeNodeDto(
     string? TemplateName = null,
     string? FormName = null,
     DateTimeOffset? CreatedAt = null,
-    DateTimeOffset? UpdatedAt = null);
+    DateTimeOffset? UpdatedAt = null,
+    IReadOnlyList<string>? PathIds = null,
+    string? FullPath = null,
+    string? Breadcrumb = null,
+    string? Status = null,
+    string? SyncStatus = null);
 
 public sealed record TemplateTreeResult(
     bool Success,
@@ -32,63 +37,79 @@ public sealed record TemplateTreeResult(
     string ProjectName,
     string UnitProjectId,
     string UnitProjectName,
+    string ModuleId,
+    string ModuleName,
+    string ModuleVersion,
     IReadOnlyList<TemplateTreeNodeDto> Nodes);
 
-public sealed record CreateGeneratedFormRequest(
-    string ProjectId,
+public sealed record CreateGeneratedDocumentRequest(
     string? UnitProjectId,
     string TemplateNodeId,
-    string FormName,
+    string DocumentName,
+    string? DocumentType,
+    string? SourceType,
+    string? SourceId,
+    string? PlanId,
+    string? PlanRowId,
     IReadOnlyDictionary<string, string>? Fields);
 
-public sealed record GeneratedFormInfo(
+public sealed record GeneratedDocumentInfo(
     bool Success,
-    string Id,
-    string Name,
+    string DocumentId,
+    string ProjectId,
+    string UnitProjectId,
+    string DocumentName,
+    string DocumentType,
+    string TemplateNodeId,
     string TemplateCode,
     string GeneratedFilePath,
     bool CanEdit,
-    string? TemplateNodeId = null,
-    string? DocumentId = null,
+    string DocumentStatus,
+    string SyncStatus,
+    string? SyncErrorMessage,
     string? TemplateName = null,
-    string? FormName = null);
+    string? FormName = null,
+    string? SourceType = null,
+    string? SourceId = null,
+    string? PlanId = null,
+    string? PlanRowId = null,
+    string? CapacitySummary = null,
+    string? InspectionPart = null,
+    string? ConstructionDate = null,
+    DateTimeOffset? LastSyncTime = null);
 
-public sealed record GeneratedFormCreateResult(
+public sealed record GeneratedDocumentCreateResult(
     bool Success,
     TemplateTreeNodeDto Node,
     string GeneratedFilePath,
     string Message,
-    IReadOnlyList<string>? MissingFields = null,
-    string? TemplateNodeId = null,
-    string? AdaptationStatus = null);
+    string? DocumentId = null);
 
-public sealed record DeleteGeneratedFormResult(
+public sealed record DeleteGeneratedDocumentResult(
     bool Success,
-    string Id,
-    string? DocumentId,
+    string DocumentId,
     string? ParentId,
     string Message,
-    string? FormName = null,
+    string? DocumentName = null,
     string? GeneratedFilePath = null,
-    bool FileDeleted = false,
-    bool ProjectDocumentDeleted = false,
-    bool LegacyNodeDeleted = false);
+    bool FileMoved = false,
+    string? RestoreToken = null);
 
-public sealed record BatchDeleteProjectDocumentsRequest(
+public sealed record BatchDeleteGeneratedDocumentsRequest(
     IReadOnlyList<string>? DocumentIds);
 
-public sealed record BatchDeleteProjectDocumentsFailedItem(
+public sealed record BatchDeleteGeneratedDocumentsFailedItem(
     string DocumentId,
     string Reason,
-    string? FormName = null);
+    string? DocumentName = null);
 
-public sealed record BatchDeleteProjectDocumentsResult(
+public sealed record BatchDeleteGeneratedDocumentsResult(
     bool Success,
     IReadOnlyList<string> DeletedIds,
-    IReadOnlyList<BatchDeleteProjectDocumentsFailedItem> FailedItems,
+    IReadOnlyList<BatchDeleteGeneratedDocumentsFailedItem> FailedItems,
     string Message);
 
-public sealed record GeneratedFormBackupResult(
+public sealed record GeneratedDocumentBackupResult(
     bool Success,
     string BackupId,
     string SourcePath,
@@ -96,19 +117,34 @@ public sealed record GeneratedFormBackupResult(
     DateTimeOffset CreatedAt,
     string Message);
 
-public sealed record ProjectDocumentInfo(
-    string Id,
+public sealed record GeneratedDocumentIndexInfo(
+    string DocumentId,
     string ProjectId,
-    string? UnitProjectId,
-    string ModuleId,
-    long TemplateItemId,
+    string UnitProjectId,
+    string DocumentType,
     string DocumentName,
-    string PartName,
-    string? Capacity,
+    string SourceType,
+    string SourceId,
+    string TemplateNodeId,
     string FilePath,
-    string Status,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    string DocumentStatus,
+    string SyncStatus,
+    string SyncErrorMessage,
+    DateTimeOffset? LastSyncTime,
+    DateTimeOffset CreatedTime,
+    DateTimeOffset UpdatedTime,
+    DateTimeOffset? DeleteTime,
+    string? RestoreToken,
+    string? ReplacedByDocumentId);
+
+public sealed record InspectionBatchDocumentDetailInfo(
+    string DocumentId,
+    string? PlanId,
+    string? PlanRowId,
+    string InspectionPart,
+    string ConstructionDate,
+    string CapacitySummary,
+    string TemplateNodeId);
 
 public sealed record SummaryTreeResult(
     bool Success,
@@ -126,8 +162,11 @@ public sealed record SummaryTreeNodeDto(
     string CategoryId,
     string SummaryType,
     string Name,
+    string DivisionId,
     string DivisionName,
+    string SubDivisionId,
     string SubDivisionName,
+    string SubItemId,
     string SubItemName,
     int SourceDocumentCount,
     int InspectionBatchCount,
@@ -172,23 +211,7 @@ public sealed record GenerateSummaryRequest(
 
 public sealed record GenerateSummaryResult(
     bool Success,
-    SummaryDocumentInfo? SummaryDocument,
+    GeneratedDocumentIndexInfo? SummaryDocument,
     string FilePath,
     string Message,
     IReadOnlyList<string> Warnings);
-
-public sealed record SummaryDocumentInfo(
-    string Id,
-    string ProjectId,
-    string? UnitProjectId,
-    string ModuleId,
-    string SummaryType,
-    string DivisionName,
-    string SubDivisionName,
-    string SubItemName,
-    string DocumentName,
-    string FilePath,
-    int SourceDocumentCount,
-    string Status,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);

@@ -47,19 +47,11 @@ public sealed class UnitProjectRepository
             """;
         command.ExecuteNonQuery();
 
-        EnsureColumnIfTableExists(connection, "ProjectDocument", "UnitProjectId", "TEXT NULL");
-        EnsureColumnIfTableExists(connection, "SummaryDocument", "UnitProjectId", "TEXT NULL");
         EnsureColumnIfTableExists(connection, "MaterialEntry", "UnitProjectId", "TEXT NULL");
-        EnsureColumnIfTableExists(connection, "BatchPlan", "UnitProjectId", "TEXT NULL");
-        EnsureColumnIfTableExists(connection, "BatchPlanItem", "UnitProjectId", "TEXT NULL");
-        CreateIndexIfTableExists(connection, "ProjectDocument", "idx_project_document_unit_project",
-            "CREATE INDEX IF NOT EXISTS idx_project_document_unit_project ON ProjectDocument(ProjectId, UnitProjectId, ModuleId, TemplateItemId);");
-        CreateIndexIfTableExists(connection, "SummaryDocument", "idx_summary_document_unit_project",
-            "CREATE INDEX IF NOT EXISTS idx_summary_document_unit_project ON SummaryDocument(ProjectId, UnitProjectId, ModuleId, SummaryType, Status);");
         CreateIndexIfTableExists(connection, "MaterialEntry", "idx_material_entry_unit_project",
             "CREATE INDEX IF NOT EXISTS idx_material_entry_unit_project ON MaterialEntry(ProjectId, UnitProjectId, EntryDate, MaterialName);");
-        CreateIndexIfTableExists(connection, "BatchPlan", "idx_batch_plan_unit_project",
-            "CREATE INDEX IF NOT EXISTS idx_batch_plan_unit_project ON BatchPlan(ProjectId, UnitProjectId, Status, UpdatedAt);");
+        CreateIndexIfTableExists(connection, "GeneratedDocumentIndex", "idx_generated_document_unit_project",
+            "CREATE INDEX IF NOT EXISTS idx_generated_document_unit_project ON GeneratedDocumentIndex(ProjectId, UnitProjectId, DocumentType, DocumentStatus, UpdatedTime);");
     }
 
     public UnitProjectInfo EnsureDefault(string projectId, string projectName, string defaultModule, string templateVersion)
@@ -301,7 +293,7 @@ public sealed class UnitProjectRepository
     {
         return item with
         {
-            DocumentCount = CountRows(connection, "ProjectDocument", item.ProjectId, item.Id),
+            DocumentCount = CountRows(connection, "GeneratedDocumentIndex", item.ProjectId, item.Id),
             MaterialCount = CountRows(connection, "MaterialEntry", item.ProjectId, item.Id)
         };
     }
@@ -314,8 +306,8 @@ public sealed class UnitProjectRepository
         }
 
         using var command = connection.CreateCommand();
-        var statusFilter = tableName == "ProjectDocument"
-            ? " AND Status NOT IN ('Deleted', 'Invalid')"
+        var statusFilter = tableName == "GeneratedDocumentIndex"
+            ? " AND DocumentStatus = 'Active'"
             : tableName == "MaterialEntry"
                 ? " AND DeletedAt IS NULL"
                 : "";
@@ -333,7 +325,7 @@ public sealed class UnitProjectRepository
 
     private static void BackfillLegacyRows(SqliteConnection connection, string projectId, string unitProjectId)
     {
-        foreach (var tableName in new[] { "ProjectDocument", "SummaryDocument", "BatchPlan", "BatchPlanItem" })
+        foreach (var tableName in new[] { "GeneratedDocumentIndex", "InspectionBatchPlan", "InspectionBatchPlanRow" })
         {
             if (!TableExists(connection, tableName) || !ColumnExists(connection, tableName, "UnitProjectId"))
             {

@@ -826,6 +826,11 @@ app.MapGet("/api/template-library/tree", (string? projectId, string? unitProject
     return Results.Ok(service.GetTree(projectId, unitProjectId));
 });
 
+app.MapGet("/api/v2/projects/{projectId}/template-tree", (string projectId, string? unitProjectId, TemplateTreeService service) =>
+{
+    return Results.Ok(service.GetTree(projectId, unitProjectId));
+});
+
 app.MapGet("/api/templates/{templateNodeId}/rules", (string templateNodeId, RuleService service) =>
 {
     try
@@ -1060,7 +1065,7 @@ app.MapGet("/api/generated-forms/{nodeId}", (string nodeId, GeneratedFormService
 {
     try
     {
-        return Results.Ok(service.GetGeneratedForm(nodeId));
+        return Results.Ok(service.GetDocument(nodeId, null, null));
     }
     catch (Exception ex)
     {
@@ -1076,7 +1081,7 @@ app.MapGet("/api/project-documents/{documentId}", (string documentId, string? pr
 {
     try
     {
-        return Results.Ok(service.GetProjectDocument(documentId, projectId, unitProjectId));
+        return Results.Ok(service.GetDocument(documentId, projectId, unitProjectId));
     }
     catch (Exception ex)
     {
@@ -1088,11 +1093,11 @@ app.MapGet("/api/project-documents/{documentId}", (string documentId, string? pr
     }
 });
 
-app.MapPost("/api/generated-forms", (CreateGeneratedFormRequest request, GeneratedFormService service) =>
+app.MapPost("/api/generated-forms", (CreateGeneratedDocumentRequest request, GeneratedFormService service) =>
 {
     try
     {
-        return Results.Ok(service.CreateGeneratedForm(request));
+        return Results.Ok(service.CreateDocument(request));
     }
     catch (Exception ex)
     {
@@ -1118,14 +1123,14 @@ app.MapPost("/api/generated-forms", (CreateGeneratedFormRequest request, Generat
 });
 
 app.MapPost("/api/project-documents/batch-delete", (
-    BatchDeleteProjectDocumentsRequest request,
+    BatchDeleteGeneratedDocumentsRequest request,
     string? projectId,
     string? unitProjectId,
     GeneratedFormService service) =>
 {
     try
     {
-        return Results.Ok(service.BatchDeleteProjectDocuments(request, projectId, unitProjectId));
+        return Results.Ok(service.BatchDeleteDocuments(request, projectId, unitProjectId));
     }
     catch (Exception ex)
     {
@@ -1144,7 +1149,7 @@ app.MapPost("/api/generated-forms/{nodeId}/open", (
 {
     try
     {
-        var form = formService.GetGeneratedForm(nodeId);
+        var form = formService.GetDocument(nodeId, null, null);
         openService.OpenSpreadsheet(form.GeneratedFilePath);
         return Results.Ok(new
         {
@@ -1172,7 +1177,7 @@ app.MapPost("/api/project-documents/{documentId}/open", (
 {
     try
     {
-        var form = formService.GetProjectDocument(documentId, projectId, unitProjectId);
+        var form = formService.GetDocument(documentId, projectId, unitProjectId);
         openService.OpenSpreadsheet(form.GeneratedFilePath);
         return Results.Ok(new
         {
@@ -1195,7 +1200,7 @@ app.MapPost("/api/generated-forms/{nodeId}/backups", (string nodeId, GeneratedFo
 {
     try
     {
-        return Results.Ok(service.BackupGeneratedForm(nodeId));
+        return Results.Ok(service.BackupDocument(nodeId, null, null));
     }
     catch (Exception ex)
     {
@@ -1211,7 +1216,7 @@ app.MapPost("/api/project-documents/{documentId}/backups", (string documentId, G
 {
     try
     {
-        return Results.Ok(service.BackupGeneratedForm(documentId));
+        return Results.Ok(service.BackupDocument(documentId, null, null));
     }
     catch (Exception ex)
     {
@@ -1227,7 +1232,7 @@ app.MapDelete("/api/generated-forms/{nodeId}", (string nodeId, GeneratedFormServ
 {
     try
     {
-        return Results.Ok(service.DeleteGeneratedForm(nodeId));
+        return Results.Ok(service.DeleteDocument(nodeId, null, null));
     }
     catch (Exception ex)
     {
@@ -1243,7 +1248,7 @@ app.MapDelete("/api/project-documents/{documentId}", (string documentId, string?
 {
     try
     {
-        return Results.Ok(service.DeleteProjectDocument(documentId, projectId, unitProjectId));
+        return Results.Ok(service.DeleteDocument(documentId, projectId, unitProjectId));
     }
     catch (Exception ex)
     {
@@ -1319,7 +1324,7 @@ app.MapGet("/api/batch-plans", (string? projectId, string? unitProjectId, BatchP
     }
 });
 
-app.MapPost("/api/batch-plans", (BatchPlanSaveRequest request, BatchPlanService service) =>
+app.MapPost("/api/batch-plans", (InspectionPlanSaveRequest request, BatchPlanService service) =>
 {
     try
     {
@@ -1335,7 +1340,7 @@ app.MapPost("/api/batch-plans", (BatchPlanSaveRequest request, BatchPlanService 
     }
 });
 
-app.MapPut("/api/batch-plans/{id}", (string id, BatchPlanSaveRequest request, BatchPlanService service) =>
+app.MapPut("/api/batch-plans/{id}", (string id, InspectionPlanSaveRequest request, BatchPlanService service) =>
 {
     try
     {
@@ -1371,10 +1376,10 @@ app.MapPost("/api/batch-plans/{id}/generate", async (string id, HttpRequest http
 {
     try
     {
-        BatchPlanGenerateRequest? request = null;
+        InspectionPlanGenerateRequest? request = null;
         if (httpRequest.ContentLength is > 0)
         {
-            request = await httpRequest.ReadFromJsonAsync<BatchPlanGenerateRequest>();
+            request = await httpRequest.ReadFromJsonAsync<InspectionPlanGenerateRequest>();
         }
 
         return Results.Ok(service.Generate(id, request));
@@ -1393,7 +1398,12 @@ app.MapGet("/api/device-fields", (string? moduleId, long? templateItemId, BatchP
 {
     try
     {
-        return Results.Ok(service.GetDeviceFields(moduleId, templateItemId));
+        if (string.IsNullOrWhiteSpace(moduleId) || templateItemId is null or <= 0)
+        {
+            return Results.BadRequest(new { success = false, message = "moduleId 和 templateItemId 不能为空。" });
+        }
+
+        return Results.Ok(service.GetCapacityFieldConfigs(null, null, $"module:{moduleId}:template:{templateItemId.Value}"));
     }
     catch (Exception ex)
     {
@@ -1409,7 +1419,12 @@ app.MapGet("/api/device-mappings", (string? moduleId, long? templateItemId, Batc
 {
     try
     {
-        return Results.Ok(service.GetDeviceMappings(moduleId, templateItemId));
+        if (string.IsNullOrWhiteSpace(moduleId) || templateItemId is null or <= 0)
+        {
+            return Results.BadRequest(new { success = false, message = "moduleId 和 templateItemId 不能为空。" });
+        }
+
+        return Results.Ok(service.GetFieldMappings(null, null, $"module:{moduleId}:template:{templateItemId.Value}"));
     }
     catch (Exception ex)
     {
@@ -1421,11 +1436,11 @@ app.MapGet("/api/device-mappings", (string? moduleId, long? templateItemId, Batc
     }
 });
 
-app.MapPut("/api/device-mappings", (DeviceMappingsSaveRequest request, BatchPlanService service) =>
+app.MapPut("/api/device-mappings", (SaveFieldMappingOverrideRequest request, BatchPlanService service) =>
 {
     try
     {
-        return Results.Ok(service.SaveDeviceMappings(request));
+        return Results.Ok(service.SaveFieldMappings(null, request));
     }
     catch (Exception ex)
     {
@@ -1434,6 +1449,382 @@ app.MapPut("/api/device-mappings", (DeviceMappingsSaveRequest request, BatchPlan
             success = false,
             message = ex.Message
         });
+    }
+});
+
+app.MapGet("/api/v2/projects/{projectId}/documents", (
+    string projectId,
+    string? unitProjectId,
+    string? documentType,
+    string? documentStatus,
+    GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.ListDocuments(projectId, unitProjectId, documentType, documentStatus));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapGet("/api/v2/projects/{projectId}/documents/{documentId}", (
+    string projectId,
+    string documentId,
+    string? unitProjectId,
+    GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetDocument(documentId, projectId, unitProjectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPost("/api/v2/projects/{projectId}/documents", (
+    string projectId,
+    CreateGeneratedDocumentRequest request,
+    GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.CreateDocument(request, projectId));
+    }
+    catch (Exception ex)
+    {
+        if (ex is TemplateAdaptationException adaptationEx)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = adaptationEx.Message,
+                missingFields = adaptationEx.MissingFields,
+                templateNodeId = adaptationEx.TemplateNodeId,
+                adaptationStatus = adaptationEx.AdaptationStatus,
+                canOpenAdaptationPanel = adaptationEx.CanOpenAdaptationPanel
+            });
+        }
+
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPost("/api/v2/projects/{projectId}/documents/{documentId}/open", (
+    string projectId,
+    string documentId,
+    string? unitProjectId,
+    GeneratedFormService formService,
+    SpreadsheetOpenService openService) =>
+{
+    try
+    {
+        var form = formService.GetDocument(documentId, projectId, unitProjectId);
+        openService.OpenSpreadsheet(form.GeneratedFilePath);
+        return Results.Ok(new { success = true, path = form.GeneratedFilePath, message = "已打开资料表。" });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPost("/api/v2/projects/{projectId}/documents/{documentId}/backups", (
+    string projectId,
+    string documentId,
+    string? unitProjectId,
+    GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.BackupDocument(documentId, projectId, unitProjectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapDelete("/api/v2/projects/{projectId}/documents/{documentId}", (
+    string projectId,
+    string documentId,
+    string? unitProjectId,
+    GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.DeleteDocument(documentId, projectId, unitProjectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPost("/api/v2/projects/{projectId}/documents/batch-delete", (
+    string projectId,
+    BatchDeleteGeneratedDocumentsRequest request,
+    string? unitProjectId,
+    GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.BatchDeleteDocuments(request, projectId, unitProjectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPost("/api/v2/projects/{projectId}/documents/{documentId}/restore", (
+    string projectId,
+    string documentId,
+    string? unitProjectId,
+    GeneratedFormService service) =>
+{
+    try
+    {
+        return Results.Ok(service.RestoreDocument(documentId, projectId, unitProjectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapGet("/api/v2/projects/{projectId}/summary/tree", (string projectId, string? unitProjectId, SummaryService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetTree(projectId, unitProjectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapGet("/api/v2/projects/{projectId}/summary/preview", (
+    string projectId,
+    string? unitProjectId,
+    string type,
+    string categoryId,
+    SummaryService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetPreview(projectId, unitProjectId, type, categoryId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPost("/api/v2/projects/{projectId}/summary/generate", (
+    string projectId,
+    GenerateSummaryRequest request,
+    SummaryService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Generate(request with { ProjectId = projectId }));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapGet("/api/v2/projects/{projectId}/inspection-plans", (string projectId, string? unitProjectId, BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.List(projectId, unitProjectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPost("/api/v2/projects/{projectId}/inspection-plans", (
+    string projectId,
+    InspectionPlanSaveRequest request,
+    BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Create(request, projectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapGet("/api/v2/projects/{projectId}/inspection-plans/{planId}", (
+    string projectId,
+    string planId,
+    BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Get(planId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPut("/api/v2/projects/{projectId}/inspection-plans/{planId}", (
+    string projectId,
+    string planId,
+    InspectionPlanSaveRequest request,
+    BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Update(planId, request, projectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapDelete("/api/v2/projects/{projectId}/inspection-plans/{planId}", (
+    string projectId,
+    string planId,
+    string? unitProjectId,
+    BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Delete(planId, projectId, unitProjectId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapGet("/api/v2/projects/{projectId}/inspection-plans/{planId}/rows", (
+    string projectId,
+    string planId,
+    BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Get(planId).Rows);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPost("/api/v2/projects/{projectId}/inspection-plans/{planId}/preview", (
+    string projectId,
+    string planId,
+    BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.Preview(planId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPost("/api/v2/projects/{projectId}/inspection-plans/{planId}/generate", async (
+    string projectId,
+    string planId,
+    HttpRequest httpRequest,
+    BatchPlanService service) =>
+{
+    try
+    {
+        InspectionPlanGenerateRequest? request = null;
+        if (httpRequest.ContentLength is > 0)
+        {
+            request = await httpRequest.ReadFromJsonAsync<InspectionPlanGenerateRequest>();
+        }
+
+        return Results.Ok(service.Generate(planId, request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapGet("/api/v2/projects/{projectId}/capacity-configs", (
+    string projectId,
+    string? unitProjectId,
+    string templateNodeId,
+    BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetCapacityFieldConfigs(projectId, unitProjectId, templateNodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPut("/api/v2/projects/{projectId}/capacity-configs", (
+    string projectId,
+    SaveCapacityFieldConfigRequest request,
+    BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.SaveCapacityFieldConfigs(projectId, request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapGet("/api/v2/projects/{projectId}/field-mappings", (
+    string projectId,
+    string? unitProjectId,
+    string templateNodeId,
+    BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.GetFieldMappings(projectId, unitProjectId, templateNodeId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapPut("/api/v2/projects/{projectId}/field-mappings", (
+    string projectId,
+    SaveFieldMappingOverrideRequest request,
+    BatchPlanService service) =>
+{
+    try
+    {
+        return Results.Ok(service.SaveFieldMappings(projectId, request));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { success = false, message = ex.Message });
     }
 });
 

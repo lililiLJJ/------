@@ -435,6 +435,46 @@ textarea {
   box-shadow: 0 0 0 2px rgb(23 107 93 / 14%);
 }
 
+.specTreeList,
+.summaryTreeList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.specTreeNodeButton,
+.summaryTreeButton {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.summaryTreeNode {
+  display: grid;
+  gap: 8px;
+}
+
+.summaryTreeButton {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(57, 113, 177, 0.14);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.summaryTreeButton.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(57, 113, 177, 0.12);
+  background: #f3f8ff;
+}
+
 .specTreeActions {
   display: inline-flex;
   align-items: center;
@@ -1054,6 +1094,61 @@ textarea {
   margin-bottom: 12px;
 }
 
+.batchPlanListShell {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f3f7fb 100%);
+}
+
+.batchPlanListHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  color: var(--muted);
+}
+
+.batchPlanList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.batchPlanListItem {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.batchPlanListItem.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(57, 113, 177, 0.12);
+}
+
+.batchPlanListItemTitle {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.batchPlanListMeta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.batchPlanTopActions {
+  margin-bottom: 12px;
+}
+
 .batchPlanHeaderGrid label {
   display: grid;
   gap: 5px;
@@ -1099,6 +1194,11 @@ textarea {
   outline-color: var(--primary);
 }
 
+.batchPlanTable td.batchPlanReadonlyCell {
+  background: #f6f8fb;
+  color: var(--muted);
+}
+
 .batchPlanTable select {
   width: 100%;
   min-width: 220px;
@@ -1131,6 +1231,59 @@ textarea {
 
 .batchPlanPreviewHeader strong {
   color: var(--text);
+}
+
+.batchPlanCellActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.batchPlanStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 74px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #edf2f7;
+  color: #4b5a6a;
+}
+
+.batchPlanStatusBadge.generated {
+  background: #e8f7ef;
+  color: #1f7a45;
+}
+
+.batchPlanStatusBadge.needsync {
+  background: #fff6e3;
+  color: #946200;
+}
+
+.batchPlanStatusBadge.failed,
+.batchPlanStatusBadge.deleted {
+  background: #fdeaea;
+  color: #b33f3f;
+}
+
+.batchPlanCapacityFields {
+  display: grid;
+  gap: 12px;
+}
+
+.batchPlanCapacityFieldRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  gap: 10px;
+  align-items: end;
+}
+
+.batchPlanCapacityFieldRow label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
 }
 
 .templateInfoGrid {

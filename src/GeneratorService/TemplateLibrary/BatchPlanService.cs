@@ -1,95 +1,136 @@
-using System.Globalization;
-using System.Text.RegularExpressions;
-using DocumentFormat.OpenXml;
-using DocumentFormat.OpenXml.Packaging;
-using DocumentFormat.OpenXml.Spreadsheet;
 using GeneratorService.Models;
+using GeneratorService.Modules;
 using GeneratorService.Projects;
 
 namespace GeneratorService.TemplateLibrary;
 
 public sealed class BatchPlanService
 {
-    private static readonly Regex SimplePlaceholderRegex = new(@"\{\{(?<name>[^:{}]+)\}\}", RegexOptions.Compiled);
-    private static readonly Regex CellReferenceRegex = new(@"^[A-Z]{1,3}[1-9][0-9]*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    private static readonly IReadOnlyList<DeviceFieldInfo> DefaultDeviceFields =
-    [
-        new("SmokeDetectorCount", "感烟探测器数量", "个", 10),
-        new("HeatDetectorCount", "感温探测器数量", "个", 20),
-        new("ManualAlarmButtonCount", "手动报警按钮数量", "个", 30),
-        new("FireHydrantCount", "消火栓数量", "个", 40),
-        new("SprayHeadCount", "喷头数量", "个", 50),
-        new("PipeLength", "管道长度", "m", 60),
-        new("ValveCount", "阀门数量", "个", 70),
-        new("CableLength", "电缆长度", "m", 80),
-        new("DistributionBoxCount", "配电箱数量", "台", 90),
-        new("DeviceTotalCount", "设备总数", "个", 100)
-    ];
-
     private readonly BatchPlanRepository _repository;
     private readonly TemplateTreeRepository _templateTreeRepository;
+    private readonly GeneratedFormService _generatedFormService;
     private readonly TemplateService _templateService;
+    private readonly TemplateValidationService _templateValidationService;
     private readonly ProjectManager _projectManager;
     private readonly UnitProjectService _unitProjectService;
-    private readonly RowHeightBalanceService _rowHeightBalanceService;
-    private readonly TemplateMappingService _templateMappingService;
-    private readonly TemplateValidationService _templateValidationService;
+    private readonly ModuleManager _moduleManager;
 
     public BatchPlanService(
         BatchPlanRepository repository,
         TemplateTreeRepository templateTreeRepository,
+        GeneratedFormService generatedFormService,
         TemplateService templateService,
+        TemplateValidationService templateValidationService,
         ProjectManager projectManager,
         UnitProjectService unitProjectService,
-        RowHeightBalanceService rowHeightBalanceService,
-        TemplateMappingService templateMappingService,
-        TemplateValidationService templateValidationService)
+        ModuleManager moduleManager)
     {
         _repository = repository;
         _templateTreeRepository = templateTreeRepository;
+        _generatedFormService = generatedFormService;
         _templateService = templateService;
+        _templateValidationService = templateValidationService;
         _projectManager = projectManager;
         _unitProjectService = unitProjectService;
-        _rowHeightBalanceService = rowHeightBalanceService;
-        _templateMappingService = templateMappingService;
-        _templateValidationService = templateValidationService;
+        _moduleManager = moduleManager;
     }
 
-    public BatchPlanListResult List(string? projectId, string? unitProjectId)
+    public InspectionPlanListResult List(string? projectId, string? unitProjectId)
     {
         var project = _projectManager.ResolveProject(projectId);
         var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, unitProjectId);
-        return new BatchPlanListResult(true, project.ProjectId, unitProject.Id, _repository.ListPlans(project.ProjectId, unitProject.Id));
+        var plans = EnrichPlans(_repository.ListPlans(project.ProjectId, unitProject.Id));
+        return new InspectionPlanListResult(
+            true,
+            project.ProjectId,
+            unitProject.Id,
+            plans.FirstOrDefault()?.PlanId,
+            plans);
     }
 
-    public BatchPlanSaveResult Create(BatchPlanSaveRequest request)
+    public InspectionBatchPlanDto Get(string planId)
     {
-        var project = _projectManager.ResolveProject(request.ProjectId);
+        return EnrichPlan(_repository.GetPlan(planId) ?? throw new InvalidOperationException("检验批计划不存在。"));
+    }
+
+    public InspectionPlanSaveResult Create(InspectionPlanSaveRequest request, string? projectId = null)
+    {
+        var project = _projectManager.ResolveProject(projectId);
         var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, request.UnitProjectId);
         var plan = _repository.SavePlan(null, project.ProjectId, unitProject.Id, request);
-        return new BatchPlanSaveResult(true, plan, "检验批划分计划已创建。");
+        return new InspectionPlanSaveResult(true, EnrichPlan(plan), "检验批计划已创建。");
     }
 
-    public BatchPlanSaveResult Update(string id, BatchPlanSaveRequest request)
+    public InspectionPlanSaveResult Update(string planId, InspectionPlanSaveRequest request, string? projectId = null)
     {
-        var existing = _repository.GetPlan(id) ?? throw new InvalidOperationException("检验批划分计划不存在。");
-        var project = _projectManager.ResolveProject(request.ProjectId ?? existing.ProjectId);
+        var existing = _repository.GetPlan(planId, includeDeletedRows: true) ?? throw new InvalidOperationException("检验批计划不存在。");
+        var project = _projectManager.ResolveProject(projectId ?? existing.ProjectId);
         var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, request.UnitProjectId ?? existing.UnitProjectId);
-        var plan = _repository.SavePlan(id, project.ProjectId, unitProject.Id, request);
-        return new BatchPlanSaveResult(true, plan, "检验批划分计划已保存。");
+        var existingRowsById = existing.Rows.ToDictionary(row => row.PlanRowId, StringComparer.OrdinalIgnoreCase);
+
+        var saved = _repository.SavePlan(planId, project.ProjectId, unitProject.Id, request);
+        var enriched = EnrichPlan(saved);
+        var updatedRowsById = enriched.Rows.ToDictionary(row => row.PlanRowId, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var existingRow in existing.Rows)
+        {
+            var activeDocument = !string.IsNullOrWhiteSpace(existingRow.ActiveDocumentId)
+                ? _templateTreeRepository.GetActiveDocumentByPlanRowId(existingRow.PlanRowId)
+                : null;
+            if (activeDocument is null)
+            {
+                continue;
+            }
+
+            if (!updatedRowsById.TryGetValue(existingRow.PlanRowId, out var updatedRow) ||
+                string.Equals(updatedRow.Status, "Deleted", StringComparison.OrdinalIgnoreCase))
+            {
+                _generatedFormService.DeleteDocument(activeDocument.DocumentId, project.ProjectId, unitProject.Id);
+                continue;
+            }
+
+            if (HasTemplateIdentityChanged(existingRow, updatedRow))
+            {
+                TryRegenerate(project, unitProject, enriched, updatedRow, overwrite: true);
+                continue;
+            }
+
+            if (HasSyncRelevantChanges(existingRow, updatedRow))
+            {
+                TrySync(project, unitProject, activeDocument.DocumentId, updatedRow);
+            }
+        }
+
+        return new InspectionPlanSaveResult(true, EnrichPlan(_repository.GetPlan(planId) ?? enriched), "检验批计划已保存。");
     }
 
-    public BatchPlanPreviewResult Preview(string id)
+    public InspectionPlanDeleteResult Delete(string planId, string? projectId = null, string? unitProjectId = null)
     {
-        var plan = _repository.GetPlan(id) ?? throw new InvalidOperationException("检验批划分计划不存在。");
-        var rows = BuildPreviewRows(plan).ToArray();
-        var warnings = rows.SelectMany(row => row.Warnings.Select(warning => $"第 {row.RowIndex} 行：{warning}")).ToArray();
-        return new BatchPlanPreviewResult(
+        var plan = _repository.GetPlan(planId) ?? throw new InvalidOperationException("检验批计划不存在。");
+        var project = _projectManager.ResolveProject(projectId ?? plan.ProjectId);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, unitProjectId ?? plan.UnitProjectId);
+        var enriched = EnrichPlan(plan);
+        foreach (var row in enriched.Rows.Where(row => !string.IsNullOrWhiteSpace(row.ActiveDocumentId)))
+        {
+            _generatedFormService.DeleteDocument(row.ActiveDocumentId!, project.ProjectId, unitProject.Id);
+        }
+
+        return _repository.DeletePlan(planId);
+    }
+
+    public InspectionPlanPreviewResult Preview(string planId)
+    {
+        var plan = EnrichPlan(_repository.GetPlan(planId) ?? throw new InvalidOperationException("检验批计划不存在。"));
+        var rows = plan.Rows
+            .Select((row, index) => BuildPreviewRow(index + 1, row))
+            .ToArray();
+        var warnings = rows.SelectMany(row => row.Warnings.Select(item => $"第 {row.RowIndex} 行：{item}")).ToArray();
+
+        return new InspectionPlanPreviewResult(
             true,
             plan.ProjectId,
             plan.UnitProjectId,
-            plan.Id,
+            plan.PlanId,
             rows.Length,
             rows.Count(row => row.CanGenerate),
             rows.Count(row => !row.CanGenerate),
@@ -97,161 +138,189 @@ public sealed class BatchPlanService
             warnings);
     }
 
-    public BatchPlanGenerateResult Generate(string id, BatchPlanGenerateRequest? request)
+    public InspectionPlanGenerateResult Generate(string planId, InspectionPlanGenerateRequest? request)
     {
-        var plan = _repository.GetPlan(id) ?? throw new InvalidOperationException("检验批划分计划不存在。");
-        var previewRows = BuildPreviewRows(plan).ToArray();
+        var plan = EnrichPlan(_repository.GetPlan(planId) ?? throw new InvalidOperationException("检验批计划不存在。"));
         var project = _projectManager.ResolveProject(plan.ProjectId);
         var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, plan.UnitProjectId);
-        var itemsById = plan.Items.ToDictionary(item => item.Id, StringComparer.OrdinalIgnoreCase);
-        var results = new List<BatchPlanGenerateRowResult>();
+        var selectedRows = request?.SelectedRowIds is { Count: > 0 }
+            ? new HashSet<string>(request.SelectedRowIds.Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim()), StringComparer.OrdinalIgnoreCase)
+            : null;
+        var previewRows = plan.Rows
+            .Where(row => selectedRows is null || selectedRows.Contains(row.PlanRowId))
+            .Select((row, index) => BuildPreviewRow(index + 1, row))
+            .ToArray();
+        var results = new List<InspectionPlanGenerateRowResult>();
 
-        foreach (var row in previewRows)
+        foreach (var previewRow in previewRows)
         {
-            if (!itemsById.TryGetValue(row.ItemId, out var item))
+            if (!previewRow.CanGenerate)
             {
-                results.Add(new BatchPlanGenerateRowResult(row.RowIndex, row.ItemId, false, true, null, null, "计划行不存在，已跳过。"));
+                _repository.UpdatePlanRowGenerateStatus(previewRow.PlanRowId, "Failed");
+                results.Add(new InspectionPlanGenerateRowResult(
+                    previewRow.RowIndex,
+                    previewRow.PlanRowId,
+                    false,
+                    true,
+                    previewRow.ActiveDocumentId,
+                    null,
+                    string.Join("；", previewRow.Errors)));
                 continue;
             }
 
-            if (!row.CanGenerate)
-            {
-                var message = string.Join("；", row.Errors);
-                _repository.MarkItemFailed(item.Id, message);
-                results.Add(new BatchPlanGenerateRowResult(row.RowIndex, item.Id, false, true, null, null, message));
-                continue;
-            }
-
+            var row = plan.Rows.First(item => string.Equals(item.PlanRowId, previewRow.PlanRowId, StringComparison.OrdinalIgnoreCase));
             try
             {
-                var result = GenerateOne(project, unitProject, plan, item, row, request?.Fields ?? new Dictionary<string, string>());
-                _repository.MarkItemGenerated(item.Id, result.Node.Id);
-                results.Add(new BatchPlanGenerateRowResult(row.RowIndex, item.Id, true, false, result.Node.Id, result.GeneratedFilePath, "生成成功。"));
+                var created = _generatedFormService.CreateInspectionBatchDocument(
+                    project,
+                    unitProject,
+                    plan,
+                    row,
+                    request?.Fields,
+                    request?.Overwrite == true);
+                results.Add(new InspectionPlanGenerateRowResult(
+                    previewRow.RowIndex,
+                    previewRow.PlanRowId,
+                    true,
+                    false,
+                    created.DocumentId,
+                    created.GeneratedFilePath,
+                    "生成成功。"));
             }
             catch (Exception ex)
             {
-                _repository.MarkItemFailed(item.Id, ex.Message);
-                results.Add(new BatchPlanGenerateRowResult(row.RowIndex, item.Id, false, false, null, null, ex.Message));
+                _repository.UpdatePlanRowGenerateStatus(previewRow.PlanRowId, "Failed");
+                results.Add(new InspectionPlanGenerateRowResult(
+                    previewRow.RowIndex,
+                    previewRow.PlanRowId,
+                    false,
+                    false,
+                    previewRow.ActiveDocumentId,
+                    null,
+                    ex.Message));
             }
         }
 
         var successCount = results.Count(item => item.Success);
         var skippedCount = results.Count(item => item.Skipped);
         var failedCount = results.Count - successCount - skippedCount;
-        return new BatchPlanGenerateResult(
+        return new InspectionPlanGenerateResult(
             failedCount == 0 && successCount > 0,
             plan.ProjectId,
-            unitProject.Id,
-            plan.Id,
+            plan.UnitProjectId,
+            plan.PlanId,
             successCount,
             failedCount,
             skippedCount,
             results,
-            $"批量创建完成：成功 {successCount} 张，失败 {failedCount} 张，跳过 {skippedCount} 张。");
+            $"批量创建完成：成功 {successCount} 条，失败 {failedCount} 条，跳过 {skippedCount} 条。");
     }
 
-    public DeviceFieldsResult GetDeviceFields(string? moduleId, long? templateItemId)
+    public CapacityFieldConfigResult GetCapacityFieldConfigs(string? projectId, string? unitProjectId, string templateNodeId)
     {
-        var normalizedModuleId = moduleId?.Trim() ?? "";
-        var normalizedTemplateItemId = templateItemId ?? 0;
-        var mappingFields = _repository
-            .ListMappings(normalizedModuleId, normalizedTemplateItemId)
-            .Select(item => new DeviceFieldInfo(item.DeviceFieldKey, item.DeviceDisplayName, "", item.SortOrder))
-            .ToArray();
-
-        var fields = DefaultDeviceFields
-            .Concat(mappingFields)
-            .GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(group =>
-            {
-                var configured = group.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.DisplayName) && item.SortOrder != 0);
-                return configured ?? group.First();
-            })
-            .OrderBy(item => item.SortOrder)
-            .ThenBy(item => item.DisplayName)
-            .ToArray();
-
-        return new DeviceFieldsResult(true, normalizedModuleId, normalizedTemplateItemId, fields);
+        var project = _projectManager.ResolveProject(projectId);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, unitProjectId);
+        var items = ResolveCapacityFieldConfigs(project.ProjectId, unitProject.Id, templateNodeId);
+        return new CapacityFieldConfigResult(true, project.ProjectId, unitProject.Id, templateNodeId, items);
     }
 
-    public DeviceMappingsResult GetDeviceMappings(string? moduleId, long? templateItemId)
+    public CapacityFieldConfigResult SaveCapacityFieldConfigs(string? projectId, SaveCapacityFieldConfigRequest request)
     {
-        var normalizedModuleId = moduleId?.Trim() ?? "";
-        var normalizedTemplateItemId = templateItemId ?? 0;
-        return new DeviceMappingsResult(
+        var project = _projectManager.ResolveProject(projectId);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, request.UnitProjectId);
+        _repository.SaveCapacityFieldOverrides(project.ProjectId, unitProject.Id, request.TemplateNodeId, request.Items ?? []);
+        return GetCapacityFieldConfigs(project.ProjectId, unitProject.Id, request.TemplateNodeId);
+    }
+
+    public FieldMappingOverrideResult GetFieldMappings(string? projectId, string? unitProjectId, string templateNodeId)
+    {
+        var project = _projectManager.ResolveProject(projectId);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, unitProjectId);
+        return new FieldMappingOverrideResult(
             true,
-            normalizedModuleId,
-            normalizedTemplateItemId,
-            _repository.ListMappings(normalizedModuleId, normalizedTemplateItemId));
+            project.ProjectId,
+            unitProject.Id,
+            templateNodeId,
+            _repository.GetFieldMappingOverride(project.ProjectId, unitProject.Id, templateNodeId));
     }
 
-    public DeviceMappingsResult SaveDeviceMappings(DeviceMappingsSaveRequest request)
+    public FieldMappingOverrideResult SaveFieldMappings(string? projectId, SaveFieldMappingOverrideRequest request)
     {
-        var moduleId = request.ModuleId?.Trim();
-        if (string.IsNullOrWhiteSpace(moduleId))
-        {
-            throw new InvalidOperationException("ModuleId 不能为空。");
-        }
-
-        var templateItemId = request.TemplateItemId ?? 0;
-        if (templateItemId <= 0)
-        {
-            throw new InvalidOperationException("TemplateItemId 不能为空。");
-        }
-
-        var mappings = _repository.SaveMappings(moduleId, templateItemId, request.Mappings ?? Array.Empty<DeviceMappingSaveItem>());
-        return new DeviceMappingsResult(true, moduleId, templateItemId, mappings);
+        var project = _projectManager.ResolveProject(projectId);
+        var unitProject = _unitProjectService.ResolveUnitProject(project.ProjectId, request.UnitProjectId);
+        var data = _repository.SaveFieldMappingOverride(project.ProjectId, unitProject.Id, request.TemplateNodeId, request.Data ?? new Dictionary<string, string>());
+        return new FieldMappingOverrideResult(true, project.ProjectId, unitProject.Id, request.TemplateNodeId, data);
     }
 
-    private IEnumerable<BatchPlanPreviewRow> BuildPreviewRows(BatchPlanInfo plan)
+    private InspectionBatchPlanDto EnrichPlan(InspectionBatchPlanDto plan)
     {
-        var usedOutputNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (var index = 0; index < plan.Items.Count; index++)
+        var activeDocuments = _templateTreeRepository.ListGeneratedDocuments(plan.ProjectId, plan.UnitProjectId, "InspectionBatch", "Active")
+            .Where(item => string.Equals(item.SourceType, "InspectionBatchPlanRow", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(item => item.SourceId, item => item.DocumentId, StringComparer.OrdinalIgnoreCase);
+
+        var rows = plan.Rows
+            .Select(row => row with
+            {
+                ActiveDocumentId = activeDocuments.TryGetValue(row.PlanRowId, out var documentId) ? documentId : null
+            })
+            .ToArray();
+        return plan with
         {
-            var item = plan.Items[index];
-            var warnings = new List<string>();
-            var errors = new List<string>();
+            GeneratedCount = rows.Count(row => string.Equals(row.GenerateStatus, "Generated", StringComparison.OrdinalIgnoreCase)),
+            Rows = rows
+        };
+    }
 
-            if (string.IsNullOrWhiteSpace(item.ModuleId))
+    private IReadOnlyList<InspectionBatchPlanDto> EnrichPlans(IReadOnlyList<InspectionBatchPlanDto> plans)
+    {
+        return plans.Select(EnrichPlan).ToArray();
+    }
+
+    private InspectionPlanPreviewRow BuildPreviewRow(int rowIndex, InspectionBatchPlanRowDto row)
+    {
+        var warnings = new List<string>();
+        var errors = new List<string>();
+
+        if (string.Equals(row.Status, "Deleted", StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add("计划行已删除。");
+        }
+
+        if (string.IsNullOrWhiteSpace(row.TemplateNodeId))
+        {
+            errors.Add("未选择检验批模板。");
+        }
+
+        if (string.IsNullOrWhiteSpace(row.InspectionPart))
+        {
+            errors.Add("未填写部位。");
+        }
+
+        if (string.IsNullOrWhiteSpace(row.ConstructionDate))
+        {
+            errors.Add("未填写施工日期。");
+        }
+
+        foreach (var config in ResolveCapacityFieldConfigs(row.ProjectId, row.UnitProjectId, row.TemplateNodeId).Where(item => item.Required && item.Enabled))
+        {
+            var value = row.Capacities.FirstOrDefault(item => string.Equals(item.CapacityKey, config.CapacityKey, StringComparison.OrdinalIgnoreCase))?.Value;
+            if (string.IsNullOrWhiteSpace(value))
             {
-                errors.Add("未选择模块。");
+                errors.Add($"必填容量未填写：{config.CapacityName}");
             }
+        }
 
-            if (item.TemplateItemId <= 0)
-            {
-                errors.Add("未选择检验批模板。");
-            }
-
-            if (string.IsNullOrWhiteSpace(item.TemplateName))
-            {
-                errors.Add("检验批名称为空。");
-            }
-
-            if (string.IsNullOrWhiteSpace(item.PartName))
-            {
-                errors.Add("检验批部位不能为空。");
-            }
-
-            if (string.IsNullOrWhiteSpace(item.ConstructionDate))
-            {
-                warnings.Add("施工日期为空，生成资料时对应字段留空。");
-            }
-
-            if (item.DeviceQuantities.Count == 0)
-            {
-                warnings.Add("未填写设备数量，验收项目抽样数量将不自动填写。");
-            }
-
-            var templateNodeId = BuildTemplateNodeId(item.ModuleId, item.TemplateItemId);
+        if (!string.IsNullOrWhiteSpace(row.TemplateNodeId))
+        {
             try
             {
-                var template = _templateService.ResolveTemplate(templateNodeId);
-                if (_templateMappingService.ShouldUseAdaptation(template))
+                var template = _templateService.ResolveTemplate(row.TemplateNodeId);
+                if (TemplateAdaptationFields.IsManagedModule(template.ModuleId))
                 {
                     var validation = _templateValidationService.Validate(template);
                     if (!validation.CanGenerate)
                     {
-                        errors.AddRange(validation.MissingFields.Select(fieldKey => $"缺少字段映射：{TemplateAdaptationFields.GetDisplayName(fieldKey)}"));
+                        errors.AddRange(validation.MissingFields.Select(fieldKey => $"缺少模板映射：{TemplateAdaptationFields.GetDisplayName(fieldKey)}"));
                     }
                 }
             }
@@ -259,416 +328,166 @@ public sealed class BatchPlanService
             {
                 errors.Add($"模板无法解析：{ex.Message}");
             }
-
-            var outputName = BuildOutputName(item.TemplateName, item.PartName, item.ConstructionDate);
-            if (!usedOutputNames.Add(outputName))
-            {
-                warnings.Add("存在重复文件名，生成时会自动追加序号。");
-            }
-
-            var mappings = BuildMappingPreview(item).ToArray();
-            foreach (var quantity in item.DeviceQuantities.Where(q => q.Value != 0))
-            {
-                if (!mappings.Any(mapping => string.Equals(mapping.DeviceFieldKey, quantity.Key, StringComparison.OrdinalIgnoreCase)))
-                {
-                    warnings.Add($"{quantity.Key} 未配置验收项目映射，仅会尝试模板占位符替换。");
-                }
-            }
-
-            yield return new BatchPlanPreviewRow(
-                index + 1,
-                item.Id,
-                item.ModuleId,
-                item.TemplateItemId,
-                item.TemplateName,
-                item.PartName,
-                item.Capacity,
-                item.QuantityUnit,
-                item.ConstructionDate,
-                outputName,
-                item.DeviceQuantities,
-                mappings,
-                warnings,
-                errors,
-                errors.Count == 0);
         }
-    }
 
-    private IEnumerable<DeviceMappingPreview> BuildMappingPreview(BatchPlanItemInfo item)
-    {
-        var enabledMappings = _repository
-            .ListMappings(item.ModuleId, item.TemplateItemId)
-            .Where(mapping => mapping.IsEnabled)
-            .ToArray();
-
-        foreach (var mapping in enabledMappings)
+        if (!string.IsNullOrWhiteSpace(row.ActiveDocumentId))
         {
-            if (!item.DeviceQuantities.TryGetValue(mapping.DeviceFieldKey, out var quantity) || quantity == 0)
-            {
-                continue;
-            }
-
-            yield return new DeviceMappingPreview(
-                mapping.DeviceFieldKey,
-                mapping.DeviceDisplayName,
-                quantity,
-                mapping.InspectionItemName,
-                mapping.FillMode,
-                mapping.TargetCells.Count > 0,
-                true,
-                mapping.TargetCells.Count > 0 ? "InspectionItemDeviceMapping" : "placeholder");
+            warnings.Add("当前计划行已存在已生成表格。");
         }
+
+        if (row.Capacities.Count == 0)
+        {
+            warnings.Add("未填写容量详情。");
+        }
+
+        return new InspectionPlanPreviewRow(
+            rowIndex,
+            row.PlanRowId,
+            row.TemplateNodeId,
+            row.TemplateName,
+            row.DivisionName,
+            row.SubDivisionName,
+            row.SubItemName,
+            row.InspectionPart,
+            row.ConstructionDate,
+            row.CapacitySummary,
+            row.Status,
+            row.GenerateStatus,
+            row.ActiveDocumentId,
+            warnings,
+            errors,
+            errors.Count == 0);
     }
 
-    private GeneratedFormCreateResult GenerateOne(
-        ProjectContext project,
-        UnitProjectInfo unitProject,
-        BatchPlanInfo plan,
-        BatchPlanItemInfo item,
-        BatchPlanPreviewRow preview,
-        IReadOnlyDictionary<string, string> requestFields)
+    private IReadOnlyList<CapacityFieldConfigInfo> ResolveCapacityFieldConfigs(string projectId, string unitProjectId, string templateNodeId)
     {
-        var templateNodeId = BuildTemplateNodeId(item.ModuleId, item.TemplateItemId);
+        if (string.IsNullOrWhiteSpace(templateNodeId))
+        {
+            return [];
+        }
+
+        var overrides = _repository.ListCapacityFieldOverrides(projectId, unitProjectId, templateNodeId);
+        if (overrides.Count > 0)
+        {
+            return overrides;
+        }
+
         var template = _templateService.ResolveTemplate(templateNodeId);
-        var targetDirectory = Path.Combine(project.GeneratedFormsPath, SanitizePathSegment(unitProject.UnitProjectName), "BatchPlans", SanitizePathSegment(plan.Name));
-        Directory.CreateDirectory(targetDirectory);
+        return BuildDefaultCapacityConfigs(projectId, unitProjectId, template);
+    }
 
-        var extension = Path.GetExtension(template.TemplatePath);
-        if (string.IsNullOrWhiteSpace(extension))
+    private static IReadOnlyList<CapacityFieldConfigInfo> BuildDefaultCapacityConfigs(string projectId, string unitProjectId, TemplateResolution template)
+    {
+        var name = template.TemplateName;
+        var items = new List<(string Key, string Name, string Unit, bool Required, int SortOrder)>();
+        if (name.Contains("报警", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("探测器", StringComparison.OrdinalIgnoreCase))
         {
-            extension = ".xlsx";
+            items.Add(("smoke_detector_count", "感烟探测器数量", "个", true, 10));
+            items.Add(("heat_detector_count", "感温探测器数量", "个", true, 20));
+            items.Add(("manual_alarm_button_count", "手动报警按钮数量", "个", false, 30));
+            items.Add(("sound_light_alarm_count", "声光警报器数量", "个", false, 40));
         }
-
-        var outputPath = ResolveUniquePath(targetDirectory, $"{SanitizePathSegment(preview.OutputName)}{extension}");
-        File.Copy(template.TemplatePath, outputPath);
-
-        var fields = BuildFields(project, item, requestFields);
-        var baseline = _rowHeightBalanceService.CaptureBaseline(outputPath);
-        TemplateLayoutSnapshot? layoutBaseline = null;
-        if (_templateMappingService.ShouldUseAdaptation(template))
+        else if (name.Contains("喷淋", StringComparison.OrdinalIgnoreCase))
         {
-            layoutBaseline = TemplateWorkbookHelper.CaptureLayoutSnapshot(outputPath);
-            _templateMappingService.Apply(outputPath, template, fields);
+            items.Add(("pipe_length", "管道长度", "m", true, 10));
+            items.Add(("sprinkler_count", "喷头数量", "个", true, 20));
+            items.Add(("valve_count", "阀门数量", "个", false, 30));
+        }
+        else if (name.Contains("管道", StringComparison.OrdinalIgnoreCase) ||
+                 name.Contains("给水", StringComparison.OrdinalIgnoreCase))
+        {
+            items.Add(("pipe_length", "管道长度", "m", true, 10));
+            items.Add(("valve_count", "阀门数量", "个", false, 20));
+            items.Add(("support_count", "支架数量", "个", false, 30));
+        }
+        else if (name.Contains("电缆", StringComparison.OrdinalIgnoreCase) ||
+                 name.Contains("桥架", StringComparison.OrdinalIgnoreCase))
+        {
+            items.Add(("cable_length", "电缆长度", "m", true, 10));
+            items.Add(("box_count", "箱盒数量", "个", false, 20));
         }
         else
         {
-            GeneratedFormService.ApplyFields(outputPath, item.PartName, fields);
+            items.Add(("quantity", "数量", "项", true, 10));
         }
 
-        var deviceMappings = _repository
-            .ListMappings(item.ModuleId, item.TemplateItemId)
-            .Where(mapping => mapping.IsEnabled)
-            .ToArray();
-        ApplyDeviceValues(outputPath, item, deviceMappings);
-        _rowHeightBalanceService.ApplyLight(outputPath, item.PartName, fields, baseline);
-        if (layoutBaseline is not null)
-        {
-            var layoutResult = TemplateWorkbookHelper.CompareLayout(layoutBaseline, outputPath);
-            if (!layoutResult.Success)
-            {
-                throw new TemplateAdaptationException(
-                    $"模板“{template.TemplateName}”写入后版式保护校验失败：{string.Join("；", layoutResult.Differences)}",
-                    template.TemplateNodeId,
-                    template.TemplateName,
-                    adaptationStatus: "layout_changed");
-            }
-        }
-
-        var documentName = preview.OutputName;
-        var node = _templateTreeRepository.InsertProjectDocument(
-            project.ProjectId,
-            unitProject.Id,
-            template.ModuleId,
-            template.TemplateItemId,
+        return items.Select(item => new CapacityFieldConfigInfo(
+            $"default-capacity-config:{template.TemplateNodeId}:{item.Key}",
+            projectId,
+            unitProjectId,
             template.TemplateNodeId,
-            documentName,
-            item.PartName,
-            BuildCapacityText(item),
-            template.TemplateCode,
-            outputPath);
-
-        return new GeneratedFormCreateResult(true, node, outputPath, "资料表已创建。");
+            item.Key,
+            item.Name,
+            item.Unit,
+            item.Required,
+            item.SortOrder,
+            true,
+            false)).ToArray();
     }
 
-    private static IReadOnlyDictionary<string, string> BuildFields(
-        ProjectContext project,
-        BatchPlanItemInfo item,
-        IReadOnlyDictionary<string, string> requestFields)
+    private static bool HasTemplateIdentityChanged(InspectionBatchPlanRowDto existingRow, InspectionBatchPlanRowDto updatedRow)
     {
-        var fields = new Dictionary<string, string>(requestFields, StringComparer.OrdinalIgnoreCase)
-        {
-            ["projectName"] = project.ProjectName,
-            ["工程名称"] = project.ProjectName,
-            ["partName"] = item.PartName,
-            ["检验批部位"] = item.PartName,
-            ["施工部位"] = item.PartName,
-            ["capacity"] = BuildCapacityText(item),
-            ["检验批容量"] = BuildCapacityText(item),
-            ["constructionDate"] = item.ConstructionDate,
-            ["施工日期"] = item.ConstructionDate
-        };
-
-        return fields;
+        return !string.Equals(existingRow.TemplateNodeId, updatedRow.TemplateNodeId, StringComparison.OrdinalIgnoreCase) ||
+               existingRow.TemplateItemId != updatedRow.TemplateItemId;
     }
 
-    private static void ApplyDeviceValues(
-        string filePath,
-        BatchPlanItemInfo item,
-        IReadOnlyList<DeviceMappingInfo> mappings)
+    private static bool HasSyncRelevantChanges(InspectionBatchPlanRowDto existingRow, InspectionBatchPlanRowDto updatedRow)
     {
-        if (!string.Equals(Path.GetExtension(filePath), ".xlsx", StringComparison.OrdinalIgnoreCase))
+        return !string.Equals(existingRow.InspectionPart, updatedRow.InspectionPart, StringComparison.Ordinal) ||
+               !string.Equals(existingRow.ConstructionDate, updatedRow.ConstructionDate, StringComparison.Ordinal) ||
+               !string.Equals(existingRow.CapacitySummary, updatedRow.CapacitySummary, StringComparison.Ordinal) ||
+               !string.Equals(existingRow.Remark, updatedRow.Remark, StringComparison.Ordinal) ||
+               !CapacitiesEqual(existingRow.Capacities, updatedRow.Capacities);
+    }
+
+    private static bool CapacitiesEqual(IReadOnlyList<PlanRowCapacityDto> left, IReadOnlyList<PlanRowCapacityDto> right)
+    {
+        if (left.Count != right.Count)
         {
-            return;
+            return false;
         }
 
-        var replacements = BuildDeviceReplacements(item.DeviceQuantities);
-        using var document = SpreadsheetDocument.Open(filePath, true);
-        var workbookPart = document.WorkbookPart ?? throw new InvalidOperationException("模板缺少 WorkbookPart。");
-        ReplaceSimplePlaceholders(workbookPart, replacements);
-
-        WriteMappedDeviceCells(workbookPart, item.DeviceQuantities, mappings);
-        workbookPart.Workbook.Save();
+        return left.OrderBy(item => item.SortOrder).ThenBy(item => item.CapacityKey, StringComparer.OrdinalIgnoreCase)
+            .Zip(
+                right.OrderBy(item => item.SortOrder).ThenBy(item => item.CapacityKey, StringComparer.OrdinalIgnoreCase),
+                (a, b) =>
+                    string.Equals(a.CapacityKey, b.CapacityKey, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(a.CapacityName, b.CapacityName, StringComparison.Ordinal) &&
+                    string.Equals(a.Value, b.Value, StringComparison.Ordinal) &&
+                    string.Equals(a.Unit, b.Unit, StringComparison.Ordinal) &&
+                    a.SortOrder == b.SortOrder)
+            .All(item => item);
     }
 
-    private static Dictionary<string, string> BuildDeviceReplacements(IReadOnlyDictionary<string, decimal> quantities)
+    private void TrySync(ProjectContext project, UnitProjectInfo unitProject, string documentId, InspectionBatchPlanRowDto row)
     {
-        var replacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in quantities)
+        try
         {
-            var value = FormatQuantity(item.Value);
-            replacements[item.Key] = value;
-            replacements[$"{item.Key}SampleQuantity"] = value;
-            replacements[$"{item.Key}ActualQuantity"] = value;
-            replacements[$"{item.Key}CheckRecord"] = $"抽查 {value} 处";
-            replacements[$"{item.Key}QualifiedCount"] = $"合格 {value} 处";
-            replacements[$"{item.Key}Qualified"] = $"合格 {value} 处";
+            _generatedFormService.SyncInspectionBatchDocument(documentId, project, unitProject, row);
         }
-
-        return replacements;
+        catch
+        {
+            _repository.UpdatePlanRowGenerateStatus(row.PlanRowId, "NeedSync");
+        }
     }
 
-    private static void ReplaceSimplePlaceholders(WorkbookPart workbookPart, IReadOnlyDictionary<string, string> replacements)
+    private void TryRegenerate(ProjectContext project, UnitProjectInfo unitProject, InspectionBatchPlanDto plan, InspectionBatchPlanRowDto row, bool overwrite)
     {
-        if (replacements.Count == 0)
+        try
         {
-            return;
-        }
-
-        if (workbookPart.SharedStringTablePart?.SharedStringTable is { } sharedStringTable)
-        {
-            foreach (var item in sharedStringTable.Elements<SharedStringItem>())
+            var previewRow = BuildPreviewRow(0, row);
+            if (!previewRow.CanGenerate)
             {
-                var replacement = ReplaceSimple(item.InnerText, replacements);
-                if (replacement == item.InnerText)
-                {
-                    continue;
-                }
-
-                item.RemoveAllChildren();
-                item.AppendChild(new Text(replacement) { Space = SpaceProcessingModeValues.Preserve });
+                _repository.UpdatePlanRowGenerateStatus(row.PlanRowId, "NeedSync");
+                return;
             }
 
-            sharedStringTable.Save();
+            _generatedFormService.CreateInspectionBatchDocument(project, unitProject, plan, row, null, overwrite);
         }
-
-        foreach (var worksheetPart in workbookPart.WorksheetParts)
+        catch
         {
-            foreach (var cell in worksheetPart.Worksheet.Descendants<Cell>())
-            {
-                if (cell.InlineString?.Text?.Text is { } inlineText)
-                {
-                    cell.InlineString.Text.Text = ReplaceSimple(inlineText, replacements);
-                }
-
-                if (cell.CellValue?.Text is { } cellText &&
-                    cell.DataType?.Value == CellValues.String)
-                {
-                    cell.CellValue.Text = ReplaceSimple(cellText, replacements);
-                }
-            }
-
-            worksheetPart.Worksheet.Save();
+            _repository.UpdatePlanRowGenerateStatus(row.PlanRowId, "NeedSync");
         }
-    }
-
-    private static void WriteMappedDeviceCells(
-        WorkbookPart workbookPart,
-        IReadOnlyDictionary<string, decimal> quantities,
-        IReadOnlyList<DeviceMappingInfo> mappings)
-    {
-        if (quantities.Count == 0 || mappings.Count == 0)
-        {
-            return;
-        }
-
-        var worksheetPart = workbookPart.WorksheetParts.FirstOrDefault();
-        if (worksheetPart is null)
-        {
-            return;
-        }
-
-        foreach (var mapping in mappings)
-        {
-            if (!mapping.IsEnabled ||
-                !quantities.TryGetValue(mapping.DeviceFieldKey, out var quantity) ||
-                quantity == 0)
-            {
-                continue;
-            }
-
-            var value = FormatQuantity(quantity);
-            WriteMappedCell(worksheetPart, mapping.TargetCells, value, ["sampleQuantityCell", "sampleCell", "targetSampleCell"]);
-            WriteMappedCell(worksheetPart, mapping.TargetCells, value, ["actualQuantityCell", "actualSampleCell", "targetActualSampleCell"]);
-            WriteMappedCell(worksheetPart, mapping.TargetCells, $"抽查 {value} 处", ["checkRecordCell", "recordCell", "targetCheckRecordCell"]);
-            WriteMappedCell(worksheetPart, mapping.TargetCells, $"合格 {value} 处", ["qualifiedCountCell", "qualifiedCell", "targetQualifiedCell"]);
-        }
-
-        worksheetPart.Worksheet.Save();
-    }
-
-    private static void WriteMappedCell(
-        WorksheetPart worksheetPart,
-        IReadOnlyDictionary<string, string> targetCells,
-        string value,
-        IReadOnlyList<string> keys)
-    {
-        var cellReference = keys
-            .Select(key => targetCells.TryGetValue(key, out var cell) ? cell : "")
-            .FirstOrDefault(cell => !string.IsNullOrWhiteSpace(cell));
-        if (string.IsNullOrWhiteSpace(cellReference))
-        {
-            return;
-        }
-
-        cellReference = cellReference.Trim().ToUpperInvariant();
-        if (!CellReferenceRegex.IsMatch(cellReference))
-        {
-            return;
-        }
-
-        WriteCellText(GetOrCreateCell(worksheetPart.Worksheet, cellReference), value);
-    }
-
-    private static Cell GetOrCreateCell(Worksheet worksheet, string cellReference)
-    {
-        var rowIndex = GetRowIndex(cellReference);
-        var sheetData = worksheet.GetFirstChild<SheetData>() ?? worksheet.AppendChild(new SheetData());
-        var row = sheetData.Elements<Row>().FirstOrDefault(item => item.RowIndex?.Value == rowIndex);
-        if (row is null)
-        {
-            row = new Row { RowIndex = rowIndex };
-            sheetData.Append(row);
-        }
-
-        var cell = row.Elements<Cell>().FirstOrDefault(item => string.Equals(item.CellReference?.Value, cellReference, StringComparison.OrdinalIgnoreCase));
-        if (cell is not null)
-        {
-            return cell;
-        }
-
-        cell = new Cell { CellReference = cellReference };
-        var nextCell = row.Elements<Cell>()
-            .FirstOrDefault(item => string.Compare(item.CellReference?.Value, cellReference, StringComparison.OrdinalIgnoreCase) > 0);
-        if (nextCell is null)
-        {
-            row.Append(cell);
-        }
-        else
-        {
-            row.InsertBefore(cell, nextCell);
-        }
-
-        return cell;
-    }
-
-    private static uint GetRowIndex(string cellReference)
-    {
-        var rowName = new string(cellReference.SkipWhile(char.IsLetter).ToArray());
-        return uint.TryParse(rowName, out var rowIndex) ? rowIndex : 1;
-    }
-
-    private static void WriteCellText(Cell cell, string value)
-    {
-        cell.DataType = CellValues.String;
-        cell.CellValue = new CellValue(value);
-        cell.InlineString = null;
-    }
-
-    private static string ReplaceSimple(string text, IReadOnlyDictionary<string, string> replacements)
-    {
-        if (!text.Contains("{{", StringComparison.Ordinal))
-        {
-            return text;
-        }
-
-        return SimplePlaceholderRegex.Replace(text, match =>
-        {
-            var name = match.Groups["name"].Value.Trim();
-            return replacements.TryGetValue(name, out var value) ? value : match.Value;
-        });
-    }
-
-    private static string BuildTemplateNodeId(string moduleId, long templateItemId)
-    {
-        return $"module:{moduleId}:template:{templateItemId}";
-    }
-
-    private static string BuildOutputName(string templateName, string partName, string constructionDate)
-    {
-        var parts = new[] { templateName, partName, constructionDate }
-            .Where(part => !string.IsNullOrWhiteSpace(part))
-            .Select(part => part.Trim())
-            .ToArray();
-        return parts.Length == 0 ? $"检验批资料-{DateTime.Now:yyyyMMddHHmmss}" : string.Join("-", parts);
-    }
-
-    private static string BuildCapacityText(BatchPlanItemInfo item)
-    {
-        if (string.IsNullOrWhiteSpace(item.Capacity))
-        {
-            return "";
-        }
-
-        return string.IsNullOrWhiteSpace(item.QuantityUnit)
-            ? item.Capacity.Trim()
-            : $"{item.Capacity.Trim()}{item.QuantityUnit.Trim()}";
-    }
-
-    private static string ResolveUniquePath(string directory, string fileName)
-    {
-        var path = Path.Combine(directory, fileName);
-        if (!File.Exists(path))
-        {
-            return path;
-        }
-
-        var name = Path.GetFileNameWithoutExtension(fileName);
-        var extension = Path.GetExtension(fileName);
-        for (var index = 2; ; index++)
-        {
-            path = Path.Combine(directory, $"{name}-{index}{extension}");
-            if (!File.Exists(path))
-            {
-                return path;
-            }
-        }
-    }
-
-    private static string SanitizePathSegment(string value)
-    {
-        var sanitized = string.IsNullOrWhiteSpace(value) ? "未命名" : value.Trim();
-        foreach (var invalid in Path.GetInvalidFileNameChars())
-        {
-            sanitized = sanitized.Replace(invalid, '_');
-        }
-
-        return sanitized;
-    }
-
-    private static string FormatQuantity(decimal value)
-    {
-        return value % 1 == 0
-            ? value.ToString("0", CultureInfo.InvariantCulture)
-            : value.ToString("0.###", CultureInfo.InvariantCulture);
     }
 }

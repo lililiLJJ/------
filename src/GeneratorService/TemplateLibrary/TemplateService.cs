@@ -5,59 +5,31 @@ namespace GeneratorService.TemplateLibrary;
 public sealed class TemplateService
 {
     private readonly ModuleManager _moduleManager;
-    private readonly TemplateTreeRepository _repository;
 
-    public TemplateService(ModuleManager moduleManager, TemplateTreeRepository repository)
+    public TemplateService(ModuleManager moduleManager)
     {
         _moduleManager = moduleManager;
-        _repository = repository;
     }
 
     public TemplateResolution ResolveTemplate(string templateNodeId)
     {
-        var moduleTemplate = _moduleManager.ResolveTemplate(templateNodeId);
-        if (moduleTemplate is not null)
+        var moduleTemplate = _moduleManager.ResolveTemplate(templateNodeId)
+            ?? throw new FileNotFoundException("模板节点不存在或未绑定有效模块模板。", templateNodeId);
+        if (!File.Exists(moduleTemplate.TemplatePath))
         {
-            if (!File.Exists(moduleTemplate.TemplatePath))
-            {
-                throw new FileNotFoundException($"模板文件不存在：{moduleTemplate.TemplatePath}", moduleTemplate.TemplatePath);
-            }
-
-            return new TemplateResolution(
-                templateNodeId,
-                moduleTemplate.ModuleId,
-                moduleTemplate.ModuleVersion,
-                moduleTemplate.TemplateItemId,
-                moduleTemplate.TemplateName,
-                string.IsNullOrWhiteSpace(moduleTemplate.TemplateCode) ? "template" : moduleTemplate.TemplateCode,
-                moduleTemplate.TemplateType,
-                moduleTemplate.TemplateFile,
-                moduleTemplate.TemplatePath);
-        }
-
-        var legacyNode = _repository.GetNode(templateNodeId)
-            ?? throw new FileNotFoundException("模板节点不存在。", templateNodeId);
-        if (legacyNode.NodeType != "template" || string.IsNullOrWhiteSpace(legacyNode.TemplateFilePath))
-        {
-            throw new InvalidOperationException("请选择检验批模板节点后再新建资料。");
-        }
-
-        var templatePath = _repository.ResolveStoredPath(legacyNode.TemplateFilePath);
-        if (!File.Exists(templatePath))
-        {
-            throw new FileNotFoundException($"模板文件不存在：{templatePath}", templatePath);
+            throw new FileNotFoundException($"模板文件不存在：{moduleTemplate.TemplatePath}", moduleTemplate.TemplatePath);
         }
 
         return new TemplateResolution(
             templateNodeId,
-            legacyNode.ModuleId ?? "legacy",
-            "",
-            legacyNode.TemplateItemId ?? 0,
-            legacyNode.Name,
-            string.IsNullOrWhiteSpace(legacyNode.TemplateCode) ? "template" : legacyNode.TemplateCode,
-            legacyNode.FolderLevel ?? "检验批",
-            legacyNode.TemplateFilePath ?? "",
-            templatePath);
+            moduleTemplate.ModuleId,
+            moduleTemplate.ModuleVersion,
+            moduleTemplate.TemplateItemId,
+            moduleTemplate.TemplateName,
+            string.IsNullOrWhiteSpace(moduleTemplate.TemplateCode) ? "template" : moduleTemplate.TemplateCode,
+            moduleTemplate.TemplateType,
+            moduleTemplate.TemplateFile,
+            moduleTemplate.TemplatePath);
     }
 }
 

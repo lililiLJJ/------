@@ -403,7 +403,9 @@ async function refreshUnitProjectWorkspace(resultSelector = "#unitProjectResult"
   materialLedgerRows = [];
   materialLedgerSelectedIds.clear();
   materialLedgerColumnFilters.clear();
-  await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+  if (shouldLoadTemplateManagementWorkspace()) {
+    await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+  }
   await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
   await loadBatchPlans().catch((error) => showResult("#batchPlanResult", error));
   await loadMaterials().catch((error) => showResult("#materialResult", error));
@@ -517,7 +519,9 @@ async function refreshProjectWorkspace(project, resultSelector = "#projectManage
   currentBatchPreview = null;
 
   await loadUnitProjects(resultSelector).catch((error) => showResult("#unitProjectResult", error));
-  await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+  if (shouldLoadTemplateManagementWorkspace()) {
+    await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+  }
   await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
   await loadBatchPlans().catch((error) => showResult("#batchPlanResult", error));
   await loadMaterials().catch((error) => showResult("#materialResult", error));
@@ -969,7 +973,9 @@ async function retryServiceStatus() {
   await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
   await loadUnitProjects().catch((error) => showResult("#unitProjectResult", error));
   await loadRecentProjects().catch((error) => showResult("#projectSelectionResult", error));
-  await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+  if (shouldLoadTemplateManagementWorkspace()) {
+    await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+  }
   await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
   await loadBatchPlans().catch((error) => showResult("#batchPlanResult", error));
   await loadMaterials().catch((error) => showResult("#materialResult", error));
@@ -1086,7 +1092,9 @@ async function refreshTemplateManagement() {
   try {
     await rescanModules();
     await loadTemplates();
-    await loadTemplateLibraryTree();
+    if (shouldLoadTemplateManagementWorkspace()) {
+      await loadTemplateLibraryTree();
+    }
   } catch (error) {
     $("#templateSummary").textContent = "模板读取失败。";
     showResult("#templateResult", error);
@@ -2419,7 +2427,9 @@ async function createGeneratedForm(event) {
       })
     });
     closeGeneratedFormModal();
-    await loadTemplateLibraryTree();
+    if (shouldLoadTemplateManagementWorkspace()) {
+      await loadTemplateLibraryTree();
+    }
     await loadSummaryTree();
     await openGeneratedForm(result.node);
   } catch (error) {
@@ -2455,7 +2465,9 @@ async function createGeneratedFormDirectly(node) {
         fields: buildGeneratedFormFields(data)
       })
     });
-    await loadTemplateLibraryTree();
+    if (shouldLoadTemplateManagementWorkspace()) {
+      await loadTemplateLibraryTree();
+    }
     await loadSummaryTree();
     await openGeneratedForm(result.node);
   } catch (error) {
@@ -3309,7 +3321,9 @@ async function deleteGeneratedForm() {
   try {
     const result = await api(`/api/generated-forms/${encodeURIComponent(currentGeneratedForm.id)}`, { method: "DELETE" });
     showResult("#templateResult", result);
-    await loadTemplateLibraryTree();
+    if (shouldLoadTemplateManagementWorkspace()) {
+      await loadTemplateLibraryTree();
+    }
     await loadSummaryTree();
   } catch (error) {
     showResult("#templateResult", error);
@@ -5040,7 +5054,9 @@ async function generateBatchPlan() {
   });
   showResult("#batchPlanResult", result);
   $("#batchPlanSummary").textContent = result.message || "批量创建完成。";
-  await loadTemplateLibraryTree();
+  if (shouldLoadTemplateManagementWorkspace()) {
+    await loadTemplateLibraryTree();
+  }
   await loadBatchPlans();
 }
 
@@ -5261,6 +5277,10 @@ function isTemplateManagementStandaloneWindow() {
   const params = new URLSearchParams(window.location.search);
   return params.get("view") === templateManagementWindowHash
     || window.location.hash.replace("#", "") === templateManagementWindowHash;
+}
+
+function shouldLoadTemplateManagementWorkspace() {
+  return isTemplateManagementStandaloneWindow();
 }
 
 async function bootTemplateManagementStandaloneWindow() {
@@ -5968,7 +5988,9 @@ async function boot() {
   $("#rescanModules").addEventListener("click", async () => {
     try {
       await rescanModules();
-      await loadTemplateLibraryTree();
+      if (shouldLoadTemplateManagementWorkspace()) {
+        await loadTemplateLibraryTree();
+      }
       await loadSummaryTree();
       await loadBatchPlans();
     } catch (error) {
@@ -6003,7 +6025,9 @@ async function boot() {
     await loadCurrentProject().catch((error) => showResult("#projectManagerResult", error));
     await loadUnitProjects().catch((error) => showResult("#unitProjectResult", error));
     await loadRecentProjects().catch((error) => showResult("#projectSelectionResult", error));
-    await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+    if (shouldLoadTemplateManagementWorkspace()) {
+      await loadTemplateLibraryTree().catch((error) => showResult("#templateResult", error));
+    }
     await loadSummaryTree().catch((error) => showResult("#summaryResult", error));
     await loadBatchPlans().catch((error) => showResult("#batchPlanResult", error));
     await loadMaterials().catch((error) => showResult("#materialResult", error));
@@ -6725,7 +6749,9 @@ async function refreshTemplateManagement() {
   try {
     await rescanModules();
     await loadTemplates();
-    await loadTemplateLibraryTree();
+    if (shouldLoadTemplateManagementWorkspace()) {
+      await loadTemplateLibraryTree();
+    }
   } catch (error) {
     $("#templateSummary").textContent = "模板读取失败。";
     showResult("#templateResult", error);

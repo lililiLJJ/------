@@ -65,11 +65,12 @@ const engineeringDocsTabKeys = {
   paneId: "engineering_docs_taskpane_id",
   targetTab: "engineering_docs_target_tab",
   targetTabVersion: "engineering_docs_target_tab_version",
-  tabSignal: "engineering_docs_tab_signal"
+  tabSignal: "engineering_docs_tab_signal",
+  frontendMode: "engineering_docs_frontend_mode"
 };
 
 function openEngineeringDocsPane(tabName) {
-  const paneUrl = `${GetUrlPath()}/index.html#${tabName}`;
+  const paneUrl = `${GetUrlPath()}/${getEngineeringDocsEntryPath()}#${tabName}`;
   signalEngineeringDocsTab(tabName);
   let paneId = window.Application.PluginStorage.getItem(engineeringDocsTabKeys.paneId);
 
@@ -98,6 +99,33 @@ function createEngineeringDocsTaskPane(paneUrl) {
   const taskPane = window.Application.CreateTaskPane(paneUrl);
   window.Application.PluginStorage.setItem(engineeringDocsTabKeys.paneId, taskPane.ID);
   return taskPane;
+}
+
+function getEngineeringDocsEntryPath() {
+  const mode = getEngineeringDocsFrontendMode();
+  return mode === "development" ? "index.html" : "dist/index.html";
+}
+
+function getEngineeringDocsFrontendMode() {
+  try {
+    const pluginMode = window.Application?.PluginStorage?.getItem(engineeringDocsTabKeys.frontendMode);
+    if (pluginMode === "development" || pluginMode === "production") {
+      return pluginMode;
+    }
+  } catch {
+    // Ignore PluginStorage access failures.
+  }
+
+  try {
+    const localMode = window.localStorage?.getItem("engineering-docs.frontend-mode");
+    if (localMode === "development" || localMode === "production") {
+      return localMode;
+    }
+  } catch {
+    // Ignore localStorage access failures.
+  }
+
+  return "production";
 }
 
 function signalEngineeringDocsTab(tabName) {

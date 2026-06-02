@@ -23,6 +23,10 @@ export async function getInspectionPlan(projectId, planId) {
   return requestJson(buildInspectionBase(projectId, planId));
 }
 
+export async function getInspectionPlanRows(projectId, planId) {
+  return requestJson(`${buildInspectionBase(projectId, planId)}/rows`);
+}
+
 export async function createInspectionPlan(projectId, payload) {
   return requestJson(buildInspectionBase(projectId), {
     method: "POST",

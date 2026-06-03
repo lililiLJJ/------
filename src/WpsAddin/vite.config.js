@@ -5,6 +5,7 @@ import { defineConfig } from "vite";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 const distDir = resolve(rootDir, "dist");
+const frontendVersion = "20260603-global-portal";
 const htmlShellFiles = [
   "index.html",
   "inspection-batch-plan-center.html",
@@ -20,10 +21,15 @@ const staticDirectories = [
 ];
 
 function rewriteIndexShell(html) {
-  return html.replace(
-    /<script(?=[^>]*src="\.\/boot-loader\.js[^"]*")[\s\S]*?<\/script>/,
-    '<script src="./boot-loader.js" data-build-mode="production" data-bundle-src="./app.bundle.js"></script>'
-  );
+  return html
+    .replace(
+      /href="\.\/styles\.css[^"]*"/,
+      `href="./styles.css?v=${frontendVersion}"`
+    )
+    .replace(
+      /<script(?=[^>]*src="\.\/boot-loader\.js[^"]*")[\s\S]*?<\/script>/,
+      `<script src="./boot-loader.js?v=${frontendVersion}" data-build-mode="production" data-bundle-src="./app.bundle.js?v=${frontendVersion}"></script>`
+    );
 }
 
 function copyStaticShellPlugin() {

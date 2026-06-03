@@ -63,16 +63,25 @@ function OnGetEnabled() {
 
 const engineeringDocsTabKeys = {
   paneId: "engineering_docs_taskpane_id",
+  paneVersion: "engineering_docs_taskpane_frontend_version",
   targetTab: "engineering_docs_target_tab",
   targetTabVersion: "engineering_docs_target_tab_version",
   tabSignal: "engineering_docs_tab_signal",
   frontendMode: "engineering_docs_frontend_mode"
 };
 
+const engineeringDocsFrontendVersion = "20260603-global-portal";
+
 function openEngineeringDocsPane(tabName) {
-  const paneUrl = `${GetUrlPath()}/${getEngineeringDocsEntryPath()}#${tabName}`;
+  const paneUrl = `${GetUrlPath()}/${getEngineeringDocsEntryPath()}?v=${engineeringDocsFrontendVersion}#${tabName}`;
   signalEngineeringDocsTab(tabName);
   let paneId = window.Application.PluginStorage.getItem(engineeringDocsTabKeys.paneId);
+  const paneVersion = window.Application.PluginStorage.getItem(engineeringDocsTabKeys.paneVersion);
+  if (paneVersion !== engineeringDocsFrontendVersion) {
+    paneId = "";
+    window.Application.PluginStorage.setItem(engineeringDocsTabKeys.paneId, "");
+    window.Application.PluginStorage.setItem(engineeringDocsTabKeys.paneVersion, engineeringDocsFrontendVersion);
+  }
 
   if (!paneId) {
     const taskPane = createEngineeringDocsTaskPane(paneUrl);
@@ -98,6 +107,7 @@ function openEngineeringDocsPane(tabName) {
 function createEngineeringDocsTaskPane(paneUrl) {
   const taskPane = window.Application.CreateTaskPane(paneUrl);
   window.Application.PluginStorage.setItem(engineeringDocsTabKeys.paneId, taskPane.ID);
+  window.Application.PluginStorage.setItem(engineeringDocsTabKeys.paneVersion, engineeringDocsFrontendVersion);
   return taskPane;
 }
 

@@ -5,7 +5,8 @@ import { defineConfig } from "vite";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 const distDir = resolve(rootDir, "dist");
-const frontendVersion = "20260603-global-portal";
+const frontendVersion = process.env.ENGINEERING_DOCS_FRONTEND_VERSION
+  || `build-${new Date().toISOString().replace(/[-:.TZ]/g, "")}`;
 const htmlShellFiles = [
   "index.html",
   "inspection-batch-plan-center.html",

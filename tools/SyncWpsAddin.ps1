@@ -12,35 +12,49 @@ if (-not (Test-Path -LiteralPath $sourceDir)) {
 $packagePath = Join-Path $sourceDir "package.json"
 $package = Get-Content -Raw -LiteralPath $packagePath | ConvertFrom-Json
 
+Write-Host "Building WPS addin frontend..."
+Push-Location $sourceDir
+try {
+    npm run build
+}
+finally {
+    Pop-Location
+}
+
+if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "dist/index.html"))) {
+    throw "WpsAddin dist/index.html not found. Please run npm run build in src/WpsAddin first."
+}
+
+if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "dist/app.bundle.js"))) {
+    throw "WpsAddin dist/app.bundle.js not found. Please run npm run build in src/WpsAddin first."
+}
+
 New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
 
-$files = @(
-    "app.js",
-    "index.html",
-    "styles.css",
-    "ribbon.xml",
-    "manifest.xml",
-    "main.js",
-    "material-ledger.html",
-    "package.json"
+Get-ChildItem -LiteralPath $targetDir -Force -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force -ErrorAction Stop
+
+$excludedNames = @(
+    "node_modules"
 )
 
-foreach ($file in $files) {
-    $source = Join-Path $sourceDir $file
-    if (Test-Path -LiteralPath $source) {
-        Copy-Item -LiteralPath $source -Destination (Join-Path $targetDir $file) -Force
-    }
-}
-
-$sourceJsDir = Join-Path $sourceDir "js"
-$targetJsDir = Join-Path $targetDir "js"
-if (Test-Path -LiteralPath $sourceJsDir) {
-    if (Test-Path -LiteralPath $targetJsDir) {
-        Remove-Item -LiteralPath $targetJsDir -Recurse -Force
+Get-ChildItem -LiteralPath $sourceDir -Force |
+    Where-Object { $excludedNames -notcontains $_.Name } |
+    ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $targetDir -Recurse -Force
     }
 
-    Copy-Item -LiteralPath $sourceJsDir -Destination $targetDir -Recurse -Force
-}
+$hashFiles = @(
+    "index.html",
+    "inspection-batch-plan-center.html",
+    "styles.css",
+    "boot-loader.js",
+    "dist/index.html",
+    "dist/app.bundle.js",
+    "js/ribbon.js",
+    "manifest.xml",
+    "package.json"
+)
 
 Write-Host "WPS addin synced."
 Write-Host "Source: $sourceDir"
@@ -48,15 +62,6 @@ Write-Host "Target: $targetDir"
 Write-Host "Addin version: $($package.version)"
 Write-Host ""
 Write-Host "Key file hashes:"
-
-$hashFiles = @(
-    "app.js",
-    "index.html",
-    "styles.css",
-    "ribbon.xml",
-    "manifest.xml",
-    "package.json"
-)
 
 $hashFiles |
     ForEach-Object {
@@ -72,5 +77,8 @@ $hashFiles |
     } |
     Format-Table -AutoSize
 
+Write-Host ""
+Write-Host "Production entry:"
+Write-Host (Join-Path $targetDir "dist/index.html")
 Write-Host ""
 Write-Host "If WPS is already open, refresh the task pane or restart WPS."

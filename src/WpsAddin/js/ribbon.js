@@ -70,7 +70,7 @@ const engineeringDocsTabKeys = {
   frontendMode: "engineering_docs_frontend_mode"
 };
 
-const engineeringDocsFrontendVersion = "20260603-global-portal";
+const engineeringDocsFrontendVersion = `session-${Date.now()}`;
 
 function openEngineeringDocsPane(tabName) {
   const paneUrl = `${GetUrlPath()}/${getEngineeringDocsEntryPath()}?v=${engineeringDocsFrontendVersion}#${tabName}`;

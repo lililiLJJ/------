@@ -115,7 +115,31 @@ npm run build
 - Vite 构建成功生成 `dist/app.bundle.js`
 - 已通过 `tools/SyncWpsAddin.ps1` 同步到 WPS 加载项目录
 
-## 5. 验收要点
+## 5. WPS 加载缓存策略
+
+WPS 加载项存在多层缓存：
+
+- Ribbon 会缓存任务窗格 ID，可能复用旧 WebView。
+- WebView 会缓存本地 `dist/index.html`、`app.bundle.js`、`styles.css`。
+- 如果只复制源码但没有重新构建 `dist`，生产入口仍会加载旧 bundle。
+
+为避免每次改动后手工处理缓存，当前策略为：
+
+- Ribbon 每次随 WPS 加载时生成新的 session 版本。
+- session 版本变化时，自动丢弃旧任务窗格 ID，强制创建新任务窗格。
+- Vite 每次构建时自动生成新的资源版本号。
+- `dist/index.html` 会自动给 `styles.css`、`boot-loader.js`、`app.bundle.js` 添加版本参数。
+- `tools/SyncWpsAddin.ps1` 会先执行 `npm run build`，再同步到 WPS 插件目录。
+
+推荐开发验证流程：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "tools/SyncWpsAddin.ps1"
+```
+
+同步后请完全退出并重新打开 WPS。重启后 Ribbon 会创建新的任务窗格，并加载最新构建产物。
+
+## 6. 验收要点
 
 在 WPS 中刷新任务窗格或重启 WPS 后验证：
 

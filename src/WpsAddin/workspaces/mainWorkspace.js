@@ -18,8 +18,13 @@ import {
 import { TemplateTree } from "../components/TemplateTree.js";
 import { DocumentViewer } from "../components/DocumentViewer.js";
 import { emit, EVENTS, on } from "../services/eventBus.js";
+import { initializeLegacyFeatureService, loadLegacyFeatureData } from "../services/legacyFeatureService.js";
 import { bindFormsChanged, emitFormsChanged } from "../services/syncService.js";
-import { openInspectionPlanCenter, registerInspectionPlanCenterFallbackHost } from "../services/windowHostService.js";
+import {
+  closeInspectionPlanCenterFallback,
+  openInspectionPlanCenter,
+  registerInspectionPlanCenterFallbackHost
+} from "../services/windowHostService.js";
 import { getState, patchState, setProjectContext } from "../state/projectState.js";
 
 function $(selector) {
@@ -73,6 +78,30 @@ function activateTabFromHash() {
   for (const panel of $$(".tabPanel")) {
     panel.classList.toggle("active", panel.id === activeId);
   }
+}
+
+const engineeringDocsTabKeys = {
+  targetTab: "engineering_docs_target_tab",
+  targetTabVersion: "engineering_docs_target_tab_version",
+  tabSignal: "engineering_docs_tab_signal"
+};
+
+const knownTabIds = new Set([
+  "panel",
+  "batchPlan",
+  "templates",
+  "summary",
+  "materials",
+  "modules",
+  "knowledge",
+  "license",
+  "settings",
+  "environment",
+  "logs"
+]);
+
+function normalizeRibbonTab(tabName) {
+  return tabName === "projectSelector" ? "panel" : tabName;
 }
 
 function getProjectFormData() {
@@ -173,6 +202,77 @@ export function bootstrapMainWorkspace() {
       unitProjectId: activeUnitProjectId,
       ...options
     });
+  }
+
+  function switchWorkspaceTab(tabName) {
+    const nextTab = normalizeRibbonTab(tabName);
+    if (!knownTabIds.has(nextTab)) {
+      return;
+    }
+    if (window.location.hash !== `#${nextTab}`) {
+      window.location.hash = nextTab;
+    }
+    activateTabFromHash();
+    closeInspectionPlanCenterFallback();
+  }
+
+  function bindWpsTabSwitchSignals() {
+    const handledVersions = new Set();
+    const handleMessage = (message = {}) => {
+      if (message.type !== "engineering-docs-switch-tab" || !message.tabName) {
+        return;
+      }
+      if (message.version && handledVersions.has(message.version)) {
+        return;
+      }
+      if (message.version) {
+        handledVersions.add(message.version);
+      }
+      switchWorkspaceTab(message.tabName);
+    };
+
+    try {
+      if (typeof BroadcastChannel === "function") {
+        const channel = new BroadcastChannel(engineeringDocsTabKeys.tabSignal);
+        channel.addEventListener("message", (event) => handleMessage(event.data));
+      }
+    } catch {
+      // Some WPS WebViews disable BroadcastChannel.
+    }
+
+    window.addEventListener("storage", (event) => {
+      if (event.key !== engineeringDocsTabKeys.tabSignal || !event.newValue) {
+        return;
+      }
+      try {
+        handleMessage(JSON.parse(event.newValue));
+      } catch {
+        // Ignore malformed tab switch messages.
+      }
+    });
+
+    let lastPluginStorageVersion = "";
+    const readPluginStorageTarget = () => {
+      try {
+        const storage = window.Application?.PluginStorage;
+        const tabName = storage?.getItem(engineeringDocsTabKeys.targetTab);
+        const version = storage?.getItem(engineeringDocsTabKeys.targetTabVersion);
+        if (!tabName || !version || version === lastPluginStorageVersion) {
+          return;
+        }
+        lastPluginStorageVersion = version;
+        handleMessage({
+          type: "engineering-docs-switch-tab",
+          tabName,
+          version
+        });
+      } catch {
+        // PluginStorage is unavailable in browser previews.
+      }
+    };
+
+    readPluginStorageTarget();
+    window.setInterval(readPluginStorageTarget, 500);
   }
 
   const templateTree = new TemplateTree({
@@ -395,12 +495,19 @@ export function bootstrapMainWorkspace() {
     await loadProjectContext();
     await Promise.all([
       loadTemplateWorkspace(),
-      loadSummaryWorkspace()
+      loadSummaryWorkspace(),
+      loadLegacyFeatureData()
     ]);
   }
 
   function bindUiEvents() {
-    window.addEventListener("hashchange", activateTabFromHash);
+    bindWpsTabSwitchSignals();
+    initializeLegacyFeatureService();
+    window.addEventListener("hashchange", () => {
+      activateTabFromHash();
+      closeInspectionPlanCenterFallback();
+    });
+    window.addEventListener("engineering-docs-project-context-refresh", () => refreshWorkspace().catch((error) => showResult("#projectManagerResult", error)));
     $("#refreshStatus")?.addEventListener("click", () => boot().catch((error) => showResult("#projectManagerResult", error)));
     $("#retryServiceStatus")?.addEventListener("click", () => boot().catch((error) => showResult("#projectManagerResult", error)));
     $("#refreshCurrentProject")?.addEventListener("click", () => refreshWorkspace().catch((error) => showResult("#projectManagerResult", error)));

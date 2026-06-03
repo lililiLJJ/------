@@ -91,6 +91,38 @@ let recentProjects = [];
 let selectedRecentProjectId = "";
 let ledgerRows = [];
 const selectedLedgerIds = new Set();
+let materialLedgerWindowRef = null;
+let templateManagementWindowRef = null;
+
+function getStandaloneMode() {
+  try {
+    return new URL(window.location.href).searchParams.get("standalone") || "";
+  } catch {
+    return "";
+  }
+}
+
+function openManagedPopup(currentRef, url, name, features) {
+  if (currentRef && !currentRef.closed) {
+    try {
+      currentRef.focus();
+      return currentRef;
+    } catch {
+      // Fall through and create a new popup reference.
+    }
+  }
+
+  try {
+    if (typeof window.open === "function") {
+      const opened = window.open(url, name, features);
+      opened?.focus?.();
+      return opened || null;
+    }
+  } catch {
+    // Embedded hosts can block popup windows.
+  }
+  return null;
+}
 
 function renderModules(items = []) {
   const grid = $("#moduleGrid");
@@ -415,7 +447,19 @@ function renderLedgerTable() {
   $("#materialLedgerStatusText").textContent = `已加载 ${ledgerRows.length} 条材料台账记录。`;
 }
 
-async function openMaterialLedgerDialog() {
+export async function openMaterialLedgerDialog() {
+  if (getStandaloneMode() !== "material-ledger") {
+    materialLedgerWindowRef = openManagedPopup(
+      materialLedgerWindowRef,
+      "./material-ledger.html#material-ledger-window",
+      "engineering-docs-material-ledger",
+      "popup=yes,width=1480,height=920,resizable=yes,scrollbars=yes"
+    );
+    if (materialLedgerWindowRef) {
+      return;
+    }
+  }
+
   openStandaloneModal("materialLedgerDialog", {
     windowSelector: ".materialLedgerWindow",
     dragHandleSelector: "#materialLedgerDragHandle",
@@ -853,7 +897,19 @@ async function pickProjectFolder() {
   showResult("#projectSelectionResult", result);
 }
 
-function openTemplateManagementCenter() {
+export function openTemplateManagementCenter() {
+  if (getStandaloneMode() !== "template-management") {
+    templateManagementWindowRef = openManagedPopup(
+      templateManagementWindowRef,
+      "./template-management.html#template-management-window",
+      "engineering-docs-template-management",
+      "popup=yes,width=1480,height=920,resizable=yes,scrollbars=yes"
+    );
+    if (templateManagementWindowRef) {
+      return;
+    }
+  }
+
   const legacyHost = $("#templateLegacyHost");
   const windowBody = $("#templateManagementWindowBody");
   if (legacyHost && windowBody && legacyHost.parentElement !== windowBody) {
@@ -869,16 +925,6 @@ function openTemplateManagementCenter() {
     resizeHandleSelector: "[data-template-management-resize]",
     bodySelector: "#templateManagementWindowBody"
   });
-  showResult("#templateResult", "模板管理中心已在全局弹窗中打开。");
-  return;
-
-  const url = "./template-management.html#template-management-window";
-  const opened = null;
-  if (opened) {
-    opened.focus();
-    return;
-  }
-  $("#templateLegacyHost")?.classList.remove("hidden");
   showResult("#templateResult", "当前宿主无法打开独立窗口，已显示模板管理兼容区。");
 }
 

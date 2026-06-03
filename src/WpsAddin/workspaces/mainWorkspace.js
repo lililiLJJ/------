@@ -18,7 +18,12 @@ import {
 import { TemplateTree } from "../components/TemplateTree.js";
 import { DocumentViewer } from "../components/DocumentViewer.js";
 import { emit, EVENTS, on } from "../services/eventBus.js";
-import { initializeLegacyFeatureService, loadLegacyFeatureData } from "../services/legacyFeatureService.js";
+import {
+  initializeLegacyFeatureService,
+  loadLegacyFeatureData,
+  openMaterialLedgerDialog,
+  openTemplateManagementCenter
+} from "../services/legacyFeatureService.js";
 import { bindFormsChanged, emitFormsChanged } from "../services/syncService.js";
 import {
   closeInspectionPlanCenterFallback,
@@ -102,6 +107,14 @@ const knownTabIds = new Set([
 
 function normalizeRibbonTab(tabName) {
   return tabName === "projectSelector" ? "panel" : tabName;
+}
+
+function getStandaloneMode() {
+  try {
+    return new URL(window.location.href).searchParams.get("standalone") || "";
+  } catch {
+    return "";
+  }
 }
 
 function getProjectFormData() {
@@ -189,6 +202,7 @@ export function bootstrapMainWorkspace() {
   ensureTemplateContextMenuAction();
   registerInspectionPlanCenterFallbackHost();
   document.body.classList.remove("inspectionPlanCenterStandaloneBody");
+  let standaloneEntryOpened = false;
 
   function openPlanCenter(options = {}) {
     const { project, activeUnitProjectId } = getState();
@@ -498,6 +512,28 @@ export function bootstrapMainWorkspace() {
       loadSummaryWorkspace(),
       loadLegacyFeatureData()
     ]);
+    await openStandaloneEntryIfNeeded();
+  }
+
+  async function openStandaloneEntryIfNeeded() {
+    if (standaloneEntryOpened) {
+      return;
+    }
+    const mode = getStandaloneMode();
+    if (!mode) {
+      return;
+    }
+
+    standaloneEntryOpened = true;
+    if (mode === "material-ledger") {
+      document.body.classList.add("ledgerStandaloneMode");
+      await openMaterialLedgerDialog();
+      return;
+    }
+    if (mode === "template-management") {
+      document.body.classList.add("templateManagementStandaloneMode");
+      openTemplateManagementCenter();
+    }
   }
 
   function bindUiEvents() {

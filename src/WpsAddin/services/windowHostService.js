@@ -7,9 +7,11 @@ import {
 const COMMAND_CHANNEL = "engineering-docs-inspection-plan-center-command";
 const COMMAND_STORAGE_KEY = "engineering-docs.inspection-plan-center.command";
 const WINDOW_INSTANCE_ID = `plan-center-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+const STANDALONE_URL = "./inspection-batch-plan-center.html#inspection-plan-center-window";
 const EMBEDDED_URL = "./index.html?view=inspection-plan-center#inspection-plan-center-window";
 
 let fallbackHost = null;
+let popupWindowRef = null;
 
 function createCommandPayload(detail = {}) {
   return {
@@ -195,6 +197,14 @@ export function bindInspectionPlanCenterCommands(listener) {
 }
 
 export function focusInspectionPlanCenter() {
+  if (popupWindowRef && !popupWindowRef.closed) {
+    try {
+      popupWindowRef.focus();
+      return true;
+    } catch {
+      popupWindowRef = null;
+    }
+  }
   registerInspectionPlanCenterFallbackHost();
   return !!openStandaloneModal("inspectionPlanCenterDialog");
 }
@@ -206,6 +216,34 @@ export function closeInspectionPlanCenterFallback() {
 export function openInspectionPlanCenter(options = {}) {
   const payload = createCommandPayload(options);
   dispatchCommandPayload(payload);
+
+  if (popupWindowRef && !popupWindowRef.closed) {
+    try {
+      popupWindowRef.focus();
+      setTimeout(() => dispatchCommandPayload(payload), 180);
+      return { mode: "popup", payload };
+    } catch {
+      popupWindowRef = null;
+    }
+  }
+
+  try {
+    if (typeof window.open === "function") {
+      popupWindowRef = window.open(
+        STANDALONE_URL,
+        "engineering-docs-inspection-plan-center",
+        "popup=yes,width=1560,height=980,resizable=yes,scrollbars=yes"
+      );
+      if (popupWindowRef) {
+        popupWindowRef.focus();
+        setTimeout(() => dispatchCommandPayload(payload), 220);
+        return { mode: "popup", payload };
+      }
+    }
+  } catch {
+    popupWindowRef = null;
+  }
+
   registerInspectionPlanCenterFallbackHost();
   openStandaloneModal("inspectionPlanCenterDialog");
   setTimeout(() => dispatchCommandPayload(payload), 120);

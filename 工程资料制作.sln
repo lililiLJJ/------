@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GeneratorService", "src\Gen
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LicenseTool", "src\LicenseTool\LicenseTool.csproj", "{C0E500EE-F09C-4EC4-BE82-40CE08729107}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DesktopLauncher", "src\DesktopLauncher\DesktopLauncher.csproj", "{59C078D3-E1F5-4421-86F4-F26DA95F8139}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -43,6 +45,18 @@ Global
 		{C0E500EE-F09C-4EC4-BE82-40CE08729107}.Release|x64.Build.0 = Release|Any CPU
 		{C0E500EE-F09C-4EC4-BE82-40CE08729107}.Release|x86.ActiveCfg = Release|Any CPU
 		{C0E500EE-F09C-4EC4-BE82-40CE08729107}.Release|x86.Build.0 = Release|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Debug|x64.Build.0 = Debug|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Debug|x86.Build.0 = Debug|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Release|Any CPU.Build.0 = Release|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Release|x64.ActiveCfg = Release|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Release|x64.Build.0 = Release|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Release|x86.ActiveCfg = Release|Any CPU
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -50,5 +64,6 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{1E329C96-917C-4F78-803C-A5460EAFC903} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{C0E500EE-F09C-4EC4-BE82-40CE08729107} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{59C078D3-E1F5-4421-86F4-F26DA95F8139} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal
